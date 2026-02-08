@@ -77,19 +77,27 @@ if [ ! -x "$BINARY" ]; then
   exit 1
 fi
 
-# Isolate config per version (like jobs sandbox)
+# Isolate agent config per version, pass through everything else
 REAL_HOME="$HOME"
 VERSION_HOME="$VERSION_DIR/home"
 mkdir -p "$VERSION_HOME"
 
-# Symlink Library for Keychain, preferences, etc.
-# If Library exists but isn't a symlink, remove it (old installs created a directory)
+# Only these dirs get isolated per version - everything else is symlinked through
+ISOLATED=".claude .codex .gemini .cursor .opencode .agents"
+
+# Migration: clean up old Library directory (replaced by symlink)
 if [ -e "$VERSION_HOME/Library" ] && [ ! -L "$VERSION_HOME/Library" ]; then
   rm -rf "$VERSION_HOME/Library"
 fi
-if [ ! -e "$VERSION_HOME/Library" ] && [ -d "$REAL_HOME/Library" ]; then
-  ln -s "$REAL_HOME/Library" "$VERSION_HOME/Library"
-fi
+
+# Symlink all HOME entries except isolated agent config dirs
+for entry in "$REAL_HOME"/.[!.]* "$REAL_HOME"/*; do
+  [ -e "$entry" ] || [ -L "$entry" ] || continue
+  name="$(basename "$entry")"
+  case " $ISOLATED " in *" $name "*) continue ;; esac
+  target="$VERSION_HOME/$name"
+  [ -e "$target" ] || [ -L "$target" ] || ln -s "$entry" "$target" 2>/dev/null
+done
 
 export HOME="$VERSION_HOME"
 
