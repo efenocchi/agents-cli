@@ -11,7 +11,7 @@ import {
 } from './jobs.js';
 import { getRunsDir } from './state.js';
 import type { AgentId } from './types.js';
-import { prepareJobHome } from './sandbox.js';
+import { prepareJobHome, buildSpawnEnv } from './sandbox.js';
 
 export interface RunResult {
   meta: RunMeta;
@@ -93,7 +93,7 @@ export async function executeJob(config: JobConfig): Promise<RunResult> {
   const stdoutPath = path.join(runDir, 'stdout.log');
   const stdoutFd = fs.openSync(stdoutPath, 'w');
 
-  const spawnEnv = { ...process.env, HOME: overlayHome };
+  const spawnEnv = buildSpawnEnv(overlayHome);
 
   const meta: RunMeta = {
     jobName: config.name,
@@ -189,7 +189,7 @@ export async function executeJobDetached(config: JobConfig): Promise<RunMeta> {
   const stdoutPath = path.join(runDir, 'stdout.log');
   const stdoutFd = fs.openSync(stdoutPath, 'w');
 
-  const spawnEnv = { ...process.env, HOME: overlayHome };
+  const spawnEnv = buildSpawnEnv(overlayHome);
 
   const meta: RunMeta = {
     jobName: config.name,

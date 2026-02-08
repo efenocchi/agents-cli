@@ -6,6 +6,29 @@ import { getJobsDir } from './state.js';
 
 const REAL_HOME = os.homedir();
 
+const ENV_ALLOWLIST = [
+  'PATH',
+  'SHELL',
+  'TERM',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'USER',
+  'LOGNAME',
+  'TMPDIR',
+  'XDG_RUNTIME_DIR',
+  'XDG_CONFIG_HOME',
+  'XDG_DATA_HOME',
+  'XDG_CACHE_HOME',
+  'NODE_PATH',
+  'NVM_DIR',
+  'BUN_INSTALL',
+  'EDITOR',
+  'VISUAL',
+  'NO_COLOR',
+  'FORCE_COLOR',
+];
+
 const CLAUDE_TOOL_MAP: Record<string, string> = {
   web_search: 'WebSearch(*)',
   web_fetch: 'WebFetch(*)',
@@ -17,6 +40,22 @@ const CLAUDE_TOOL_MAP: Record<string, string> = {
   grep: 'Grep(*)',
   notebook_edit: 'NotebookEdit(*)',
 };
+
+export function buildSpawnEnv(overlayHome: string, extraEnv?: Record<string, string>): Record<string, string> {
+  const env: Record<string, string> = { HOME: overlayHome };
+
+  for (const key of ENV_ALLOWLIST) {
+    if (process.env[key]) {
+      env[key] = process.env[key]!;
+    }
+  }
+
+  if (extraEnv) {
+    Object.assign(env, extraEnv);
+  }
+
+  return env;
+}
 
 export function getJobHomePath(name: string): string {
   return path.join(getJobsDir(), name, 'home');

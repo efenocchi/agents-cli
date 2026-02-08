@@ -9,6 +9,7 @@ import {
   generateCodexConfig,
   generateGeminiConfig,
   symlinkAllowedDirs,
+  buildSpawnEnv,
 } from '../src/lib/sandbox.js';
 import type { JobConfig } from '../src/lib/jobs.js';
 
@@ -262,6 +263,58 @@ describe('symlinkAllowedDirs', () => {
 
     const expectedLink = join(overlayHome, '.agents-cli-test-symlink-target', 'nested');
     expect(existsSync(expectedLink)).toBe(true);
+  });
+});
+
+describe('buildSpawnEnv', () => {
+  it('sets HOME to overlay path', () => {
+    const env = buildSpawnEnv('/fake/overlay');
+    expect(env.HOME).toBe('/fake/overlay');
+  });
+
+  it('includes PATH from process.env', () => {
+    const env = buildSpawnEnv('/fake/overlay');
+    expect(env.PATH).toBe(process.env.PATH);
+  });
+
+  it('does not include sensitive env vars', () => {
+    const original = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'sk-test-secret';
+    process.env.AWS_SECRET_ACCESS_KEY = 'aws-secret';
+    process.env.OPENAI_API_KEY = 'openai-secret';
+
+    const env = buildSpawnEnv('/fake/overlay');
+
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(env.AWS_SECRET_ACCESS_KEY).toBeUndefined();
+    expect(env.OPENAI_API_KEY).toBeUndefined();
+
+    if (original) {
+      process.env.ANTHROPIC_API_KEY = original;
+    } else {
+      delete process.env.ANTHROPIC_API_KEY;
+    }
+    delete process.env.AWS_SECRET_ACCESS_KEY;
+    delete process.env.OPENAI_API_KEY;
+  });
+
+  it('does not include SSH_AUTH_SOCK', () => {
+    const original = process.env.SSH_AUTH_SOCK;
+    process.env.SSH_AUTH_SOCK = '/tmp/ssh-agent.sock';
+
+    const env = buildSpawnEnv('/fake/overlay');
+    expect(env.SSH_AUTH_SOCK).toBeUndefined();
+
+    if (original) {
+      process.env.SSH_AUTH_SOCK = original;
+    } else {
+      delete process.env.SSH_AUTH_SOCK;
+    }
+  });
+
+  it('merges extraEnv overrides', () => {
+    const env = buildSpawnEnv('/fake/overlay', { CUSTOM_VAR: 'hello' });
+    expect(env.CUSTOM_VAR).toBe('hello');
   });
 });
 
