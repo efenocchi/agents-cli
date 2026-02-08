@@ -78,8 +78,15 @@ if [ ! -x "$BINARY" ]; then
 fi
 
 # Isolate config per version (like jobs sandbox)
+REAL_HOME="$HOME"
 VERSION_HOME="$VERSION_DIR/home"
 mkdir -p "$VERSION_HOME"
+
+# Symlink Library for Keychain, preferences, etc.
+if [ ! -e "$VERSION_HOME/Library" ] && [ -d "$REAL_HOME/Library" ]; then
+  ln -s "$REAL_HOME/Library" "$VERSION_HOME/Library"
+fi
+
 export HOME="$VERSION_HOME"
 
 exec "$BINARY" "$@"
