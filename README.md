@@ -1,6 +1,6 @@
 # agents-cli
 
-**`systemctl` + `venv` for AI coding agents.** Manage, configure, schedule, and sandbox Claude, Codex, Gemini, and OpenCode from a single CLI.
+**`systemctl` + `venv` for AI coding agents.** Manage, configure, schedule, and sandbox Claude, Codex, Gemini, Cursor, and OpenCode from a single CLI.
 
 ```bash
 npm install -g @swarmify/agents-cli
