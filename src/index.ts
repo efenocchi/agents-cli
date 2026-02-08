@@ -130,6 +130,7 @@ import {
   setGlobalDefault,
   isVersionInstalled,
   getBinaryPath,
+  getVersionDir,
   getAgentVersionsState,
 } from './lib/versions.js';
 import {
@@ -2685,16 +2686,39 @@ program
   });
 
 program
-  .command('list')
+  .command('list [agent]')
   .description('List installed agent CLI versions')
-  .action(async () => {
+  .action(async (agentArg?: string) => {
     const cliStates = await getAllCliStates();
+
+    // Resolve agent filter
+    let filterAgentId: AgentId | undefined;
+    if (agentArg) {
+      const agentMap: Record<string, AgentId> = {
+        claude: 'claude',
+        'claude-code': 'claude',
+        codex: 'codex',
+        gemini: 'gemini',
+        cursor: 'cursor',
+        opencode: 'opencode',
+      };
+      filterAgentId = agentMap[agentArg.toLowerCase()];
+      if (!filterAgentId) {
+        console.log(chalk.red(`Unknown agent: ${agentArg}`));
+        console.log(chalk.gray(`Valid agents: claude, codex, gemini, cursor, opencode`));
+        process.exit(1);
+      }
+    }
+
+    const agentsToShow = filterAgentId ? [filterAgentId] : ALL_AGENT_IDS;
+    const showPaths = !!filterAgentId; // Show paths when filtering to single agent
+
     console.log(chalk.bold('Installed Agent CLIs\n'));
 
     let hasAny = false;
     let hasVersionManaged = false;
 
-    for (const agentId of ALL_AGENT_IDS) {
+    for (const agentId of agentsToShow) {
       const agent = AGENTS[agentId];
       const versions = listInstalledVersions(agentId);
       const globalDefault = getGlobalDefault(agentId);
@@ -2710,6 +2734,10 @@ program
           const isDefault = version === globalDefault;
           const marker = isDefault ? chalk.green(' (default)') : '';
           console.log(`    ${version}${marker}`);
+          if (showPaths) {
+            const versionDir = getVersionDir(agentId, version);
+            console.log(chalk.gray(`      ${versionDir}`));
+          }
         }
 
         // Check for project override
@@ -2724,18 +2752,25 @@ program
         hasAny = true;
         console.log(`  ${chalk.bold(agent.name)}`);
         console.log(`    ${cliState.version || 'installed'} ${chalk.gray('(global)')}`);
+        if (showPaths && cliState.path) {
+          console.log(chalk.gray(`      ${cliState.path}`));
+        }
+        console.log();
+      } else if (filterAgentId) {
+        // Filtered to a specific agent but not installed
+        console.log(`  ${chalk.bold(agent.name)}: ${chalk.gray('not installed')}`);
         console.log();
       }
     }
 
-    if (!hasAny) {
+    if (!hasAny && !filterAgentId) {
       console.log(chalk.gray('  No agent CLIs installed.'));
       console.log(chalk.gray('  Run: agents add claude@latest'));
       console.log();
     }
 
-    // Show shims path status
-    if (hasVersionManaged) {
+    // Show shims path status (only for full list)
+    if (hasVersionManaged && !filterAgentId) {
       const shimsDir = getShimsDir();
       if (isShimsInPath()) {
         console.log(chalk.gray(`Shims: ${shimsDir} (in PATH)`));
