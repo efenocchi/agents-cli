@@ -196,8 +196,24 @@ function getScopeLocalPath(scopeName: ScopeName): string | null {
 
 program
   .name('agents')
-  .description('Dotfiles manager for AI coding agents')
+  .description('Manage AI agent configs, CLIs, jobs, and sandboxes')
   .version(VERSION);
+
+program.addHelpText('after', `
+Quick start:
+  agents pull                     Sync from the configured .agents repo
+  agents status                   Show installed agents and resources
+  agents jobs run <name>          Run a job now
+  agents daemon start             Start the scheduler daemon
+
+Command groups:
+  Sync: status, pull, push, repo
+  Resources: commands, hooks, skills, instructions, mcp
+  CLI versions: add, remove, use, list, upgrade
+  Packages: registry, search, install
+  Automation: jobs, daemon
+  Context: drive
+`);
 
 // Check for updates before command runs, prompt to upgrade
 async function checkForUpdates(): Promise<void> {
@@ -261,7 +277,7 @@ program.hook('preAction', async () => {
 
 program
   .command('status [agent]')
-  .description('Show sync status, CLI versions, installed commands and MCP servers')
+  .description('Show installed agents, resources, and scopes')
   .action(async (agentFilter?: string) => {
     const spinner = ora({ text: 'Loading...', isSilent: !process.stdout.isTTY }).start();
 
@@ -474,13 +490,13 @@ type ResourceDecision = 'overwrite' | 'skip';
 
 program
   .command('pull [source] [agent]')
-  .description('Pull and sync from remote .agents repo')
-  .option('-y, --yes', 'Auto-confirm and skip all conflicts')
-  .option('-f, --force', 'Auto-confirm and overwrite all conflicts')
-  .option('-s, --scope <scope>', 'Target scope (default: user)', 'user')
+  .description('Sync config from a .agents repo')
+  .option('-y, --yes', 'Skip prompts and keep existing conflicts')
+  .option('-f, --force', 'Skip prompts and overwrite conflicts')
+  .option('-s, --scope <scope>', 'Target scope', 'user')
   .option('--dry-run', 'Show what would change')
-  .option('--skip-clis', 'Skip CLI version sync')
-  .option('--skip-mcp', 'Skip MCP registration')
+  .option('--skip-clis', 'Do not sync CLI versions')
+  .option('--skip-mcp', 'Do not register MCP servers')
   .action(async (arg1: string | undefined, arg2: string | undefined, options) => {
     // Parse source and agent filter from positional args
     let targetSource: string | undefined;
@@ -1223,9 +1239,9 @@ program
 
 program
   .command('push')
-  .description('Push local configuration to your .agents repo on GitHub')
-  .option('-s, --scope <scope>', 'Target scope (default: user)', 'user')
-  .option('--export-only', 'Only export to local repo, do not push to GitHub')
+  .description('Export local config and push to your .agents repo')
+  .option('-s, --scope <scope>', 'Source scope', 'user')
+  .option('--export-only', 'Export to local repo only (skip git push)')
   .option('-m, --message <msg>', 'Commit message', 'Update agent configuration')
   .action(async (options) => {
     try {
@@ -1449,7 +1465,7 @@ commandsCmd
 
 commandsCmd
   .command('add <source>')
-  .description('Add commands from Git repo or local path')
+  .description('Install commands from a repo or local path')
   .option('-a, --agents <list>', 'Comma-separated agents to install to')
   .action(async (source: string, options) => {
     const spinner = ora('Fetching commands...').start();
@@ -1492,7 +1508,7 @@ commandsCmd
 
 commandsCmd
   .command('remove <name>')
-  .description('Remove a command from all agents')
+  .description('Remove a command')
   .option('-a, --agents <list>', 'Comma-separated agents to remove from')
   .action((name: string, options) => {
     const agents = options.agents
@@ -1516,7 +1532,7 @@ commandsCmd
 
 commandsCmd
   .command('push <name>')
-  .description('Save project-scoped command to user scope')
+  .description('Promote a project command to user scope')
   .option('-a, --agents <list>', 'Comma-separated agents to push for')
   .action(async (name: string, options) => {
     const cwd = process.cwd();
@@ -1545,7 +1561,7 @@ commandsCmd
     }
   });
 
-const hooksCmd = program.command('hooks').description('Manage hooks');
+const hooksCmd = program.command('hooks').description('Manage agent hooks');
 
 hooksCmd
   .command('list')
@@ -1608,7 +1624,7 @@ hooksCmd
 
 hooksCmd
   .command('add <source>')
-  .description('Install hooks from git repo or local path')
+  .description('Install hooks from a repo or local path')
   .option('-a, --agent <agents>', 'Target agents (comma-separated)', 'claude,gemini')
   .action(async (source: string, options) => {
     const spinner = ora('Fetching hooks...').start();
@@ -1702,7 +1718,7 @@ hooksCmd
 
 hooksCmd
   .command('push <name>')
-  .description('Copy project-scoped hook to user scope')
+  .description('Promote a project hook to user scope')
   .option('-a, --agent <agents>', 'Target agents (comma-separated)')
   .action((name: string, options) => {
     const cwd = process.cwd();
@@ -1734,11 +1750,11 @@ hooksCmd
 
 const skillsCmd = program
   .command('skills')
-  .description('Manage Agent Skills (SKILL.md + rules/)');
+  .description('Manage skills (SKILL.md + rules/)');
 
 skillsCmd
   .command('list')
-  .description('List installed Agent Skills')
+  .description('List installed skills')
   .option('-a, --agent <agent>', 'Filter by agent')
   .option('-s, --scope <scope>', 'Filter by scope: user, project, or all', 'all')
   .action(async (options) => {
@@ -1801,7 +1817,7 @@ skillsCmd
 
 skillsCmd
   .command('add <source>')
-  .description('Add Agent Skills from Git repo or local path')
+  .description('Install skills from a repo or local path')
   .option('-a, --agents <list>', 'Comma-separated agents to install to')
   .action(async (source: string, options) => {
     const spinner = ora('Fetching skills...').start();
@@ -1863,7 +1879,7 @@ skillsCmd
 
 skillsCmd
   .command('remove <name>')
-  .description('Remove an Agent Skill')
+  .description('Remove a skill')
   .action((name: string) => {
     const result = uninstallSkill(name);
     if (result.success) {
@@ -1875,7 +1891,7 @@ skillsCmd
 
 skillsCmd
   .command('push <name>')
-  .description('Save project-scoped skill to user scope')
+  .description('Promote a project skill to user scope')
   .option('-a, --agents <list>', 'Comma-separated agents to push for')
   .action((name: string, options) => {
     const cwd = process.cwd();
@@ -1906,7 +1922,7 @@ skillsCmd
 skillsCmd
   .command('view [name]')
   .alias('info')
-  .description('View detailed info about an installed skill')
+  .description('Show installed skill details')
   .action(async (name?: string) => {
     // If no name provided, show interactive select
     if (!name) {
@@ -2010,11 +2026,11 @@ skillsCmd
 const instructionsCmd = program
   .command('instructions')
   .alias('instr')
-  .description('Manage agent instructions (CLAUDE.md, GEMINI.md, etc.)');
+  .description('Manage agent instructions files');
 
 instructionsCmd
   .command('list')
-  .description('List installed instructions files')
+  .description('List installed instructions')
   .option('-a, --agent <agent>', 'Filter by agent')
   .action(async (options) => {
     const cwd = process.cwd();
@@ -2043,7 +2059,7 @@ instructionsCmd
 instructionsCmd
   .command('view [agent]')
   .alias('show')
-  .description('View instructions content for an agent')
+  .description('Show instructions content for an agent')
   .option('-s, --scope <scope>', 'Scope: user or project', 'user')
   .action(async (agentArg?: string, options?: { scope?: string }) => {
     const cwd = process.cwd();
@@ -2081,7 +2097,7 @@ instructionsCmd
 
 instructionsCmd
   .command('diff [agent]')
-  .description('Show differences between local and repo instructions')
+  .description('Diff installed instructions against repo')
   .action(async (agentArg?: string) => {
     const cwd = process.cwd();
     const meta = readState();
@@ -2134,7 +2150,7 @@ instructionsCmd
 
 instructionsCmd
   .command('push <agent>')
-  .description('Save project-scoped instructions to user scope')
+  .description('Promote project instructions to user scope')
   .action((agentArg: string) => {
     const cwd = process.cwd();
     const agentId = resolveAgentName(agentArg);
@@ -2154,7 +2170,7 @@ instructionsCmd
 
 instructionsCmd
   .command('remove <agent>')
-  .description('Remove user-scoped instructions for an agent')
+  .description('Remove user instructions for an agent')
   .action((agentArg: string) => {
     const agentId = resolveAgentName(agentArg);
 
@@ -2257,7 +2273,7 @@ mcpCmd
 
 mcpCmd
   .command('add <name> [command_or_url...]')
-  .description('Add MCP server (stdio: use -- before command, http: use URL)')
+  .description('Add an MCP server (stdio or HTTP)')
   .option('-a, --agents <list>', 'Comma-separated agents', MCP_CAPABLE_AGENTS.join(','))
   .option('-s, --scope <scope>', 'Scope: user or project', 'user')
   .option('-t, --transport <type>', 'Transport: stdio or http', 'stdio')
@@ -2318,7 +2334,7 @@ mcpCmd
 
 mcpCmd
   .command('remove <name>')
-  .description('Remove MCP server from agents')
+  .description('Remove an MCP server from agents')
   .option('-a, --agents <list>', 'Comma-separated agents')
   .action(async (name: string, options) => {
     const agents = options.agents
@@ -2387,7 +2403,7 @@ mcpCmd
 
 mcpCmd
   .command('push <name>')
-  .description('Save project-scoped MCP to user scope')
+  .description('Promote a project MCP server to user scope')
   .option('-a, --agents <list>', 'Comma-separated agents to push for')
   .action(async (name: string, options) => {
     const cwd = process.cwd();
@@ -2422,7 +2438,7 @@ mcpCmd
 
 program
   .command('add <specs...>')
-  .description('Install agent CLI(s). Examples: agents add claude@1.5.0, agents add claude codex')
+  .description('Install agent CLI versions')
   .option('-p, --project', 'Pin version in project manifest (.agents/agents.yaml)')
   .action(async (specs: string[], options) => {
     const isProject = options.project;
@@ -2517,7 +2533,7 @@ async function getInstalledVersionForAgent(agent: AgentId, requestedVersion: str
 
 program
   .command('remove <specs...>')
-  .description('Remove agent CLI version(s). Examples: agents remove claude@1.5.0, agents remove claude')
+  .description('Remove agent CLI versions')
   .option('-p, --project', 'Also remove from project manifest')
   .action(async (specs: string[], options) => {
     const isProject = options.project;
@@ -2576,7 +2592,7 @@ program
 
 program
   .command('use <spec>')
-  .description('Set default agent version. Examples: agents use claude@1.5.0')
+  .description('Set the default agent CLI version')
   .option('-p, --project', 'Set in project manifest instead of global default')
   .action(async (spec: string, options) => {
     const parsed = parseAgentSpec(spec);
@@ -2702,7 +2718,7 @@ function getProjectVersionFromCwd(agent: AgentId): string | null {
 
 program
   .command('upgrade [agent]')
-  .description('Upgrade agent CLI(s) to latest version')
+  .description('Upgrade agent CLI versions')
   .option('-p, --project', 'Upgrade to version in project manifest')
   .action(async (agent: string | undefined, options) => {
     const agentsToUpgrade: AgentId[] = agent
@@ -2754,11 +2770,11 @@ program
 
 const repoCmd = program
   .command('repo')
-  .description('Manage .agents repository scopes');
+  .description('Manage .agents repo scopes');
 
 repoCmd
   .command('list')
-  .description('List configured repository scopes')
+  .description('List configured scopes')
   .action(() => {
     const scopes = getScopesByPriority();
 
@@ -2786,8 +2802,8 @@ repoCmd
 
 repoCmd
   .command('add <source>')
-  .description('Add a repository scope')
-  .option('-s, --scope <scope>', 'Target scope (default: user)', 'user')
+  .description('Add or update a scope')
+  .option('-s, --scope <scope>', 'Target scope', 'user')
   .option('-y, --yes', 'Skip confirmation prompts')
   .action(async (source: string, options) => {
     const scopeName = options.scope as ScopeName;
@@ -2838,7 +2854,7 @@ repoCmd
 
 repoCmd
   .command('remove <scope>')
-  .description('Remove a repository scope')
+  .description('Remove a scope')
   .option('-y, --yes', 'Skip confirmation prompts')
   .action(async (scopeName: string, options) => {
     const existingScope = getScope(scopeName);
@@ -2878,7 +2894,7 @@ repoCmd
 
 const registryCmd = program
   .command('registry')
-  .description('Manage package registries (MCP servers, skills)');
+  .description('Manage package registries');
 
 registryCmd
   .command('list')
@@ -3024,7 +3040,7 @@ registryCmd
 
 program
   .command('search <query>')
-  .description('Search registries for packages (MCP servers, skills)')
+  .description('Search package registries')
   .option('-t, --type <type>', 'Filter by type: mcp or skill')
   .option('-r, --registry <name>', 'Search specific registry')
   .option('-l, --limit <n>', 'Max results', '20')
@@ -3089,7 +3105,7 @@ program
 
 program
   .command('install <identifier>')
-  .description('Install a package (mcp:name, skill:user/repo, or gh:user/repo)')
+  .description('Install a package from a registry or Git source')
   .option('-a, --agents <list>', 'Comma-separated agents to install to')
   .action(async (identifier: string, options) => {
     const spinner = ora('Resolving package...').start();
@@ -3443,7 +3459,7 @@ daemonCmd
   });
 
 daemonCmd
-  .command('_run')
+  .command('_run', { hidden: true })
   .description('Run daemon in foreground (internal)')
   .action(async () => {
     await runDaemon();
