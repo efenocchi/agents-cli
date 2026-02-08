@@ -236,3 +236,104 @@ export async function getRepoCommit(repoPath: string): Promise<string> {
     return 'unknown';
   }
 }
+
+/**
+ * Get the current GitHub username using gh CLI.
+ * Returns null if gh is not installed or user is not authenticated.
+ */
+export async function getGitHubUsername(): Promise<string | null> {
+  try {
+    const { exec } = await import('child_process');
+    const { promisify } = await import('util');
+    const execAsync = promisify(exec);
+    const { stdout } = await execAsync('gh api user --jq ".login"');
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Get the remote URL for origin in a git repo.
+ */
+export async function getRemoteUrl(repoPath: string): Promise<string | null> {
+  try {
+    const git = simpleGit(repoPath);
+    const remotes = await git.getRemotes(true);
+    const origin = remotes.find(r => r.name === 'origin');
+    return origin?.refs?.fetch || origin?.refs?.push || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Set the remote URL for origin in a git repo.
+ */
+export async function setRemoteUrl(repoPath: string, url: string): Promise<void> {
+  const git = simpleGit(repoPath);
+  const remotes = await git.getRemotes(true);
+  const hasOrigin = remotes.some(r => r.name === 'origin');
+
+  if (hasOrigin) {
+    await git.remote(['set-url', 'origin', url]);
+  } else {
+    await git.remote(['add', 'origin', url]);
+  }
+}
+
+/**
+ * Check if a GitHub repo exists.
+ */
+export async function checkGitHubRepoExists(owner: string, repo: string): Promise<boolean> {
+  try {
+    const { exec } = await import('child_process');
+    const { promisify } = await import('util');
+    const execAsync = promisify(exec);
+    await execAsync(`gh repo view ${owner}/${repo} --json name`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Commit and push changes in a repo.
+ */
+export async function commitAndPush(repoPath: string, message: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const git = simpleGit(repoPath);
+
+    // Check for changes
+    const status = await git.status();
+    if (status.files.length === 0) {
+      return { success: true }; // Nothing to commit
+    }
+
+    // Stage all changes
+    await git.add('-A');
+
+    // Commit
+    await git.commit(message);
+
+    // Push
+    await git.push('origin', 'main');
+
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: (err as Error).message };
+  }
+}
+
+/**
+ * Check if repo has uncommitted changes.
+ */
+export async function hasUncommittedChanges(repoPath: string): Promise<boolean> {
+  try {
+    const git = simpleGit(repoPath);
+    const status = await git.status();
+    return status.files.length > 0;
+  } catch {
+    return false;
+  }
+}
