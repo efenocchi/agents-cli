@@ -6,10 +6,10 @@
 src/
   index.ts              # CLI entry point, all commands
   lib/
-    types.ts            # Core types (AgentId, Manifest, State, Registry)
+    types.ts            # Core types (AgentId, Manifest, Meta, Registry)
     agents.ts           # Agent configs, CLI detection, MCP ops
     manifest.ts         # agents.yaml parsing/serialization
-    state.ts            # ~/.agents/meta.yaml management
+    state.ts            # ~/.agents/agents.yaml state management
     versions.ts         # Version management (install, remove, resolve)
     shims.ts            # Shim generation for version switching
     git.ts              # Git clone/pull operations
@@ -32,10 +32,16 @@ src/
 type AgentId = 'claude' | 'codex' | 'gemini' | 'cursor' | 'opencode';
 
 interface Manifest {
-  clis?: Partial<Record<AgentId, CliConfig>>;
+  agents?: Partial<Record<AgentId, string>>;
   dependencies?: Record<string, string>;
   mcp?: Record<string, McpServerConfig>;
   defaults?: { method?: 'symlink' | 'copy'; scope?: 'global' | 'project'; agents?: AgentId[] };
+}
+
+interface Meta {
+  agents?: Partial<Record<AgentId, string>>;
+  repos: Record<RepoName, RepoConfig>;
+  registries?: Record<RegistryType, Record<string, RegistryConfig>>;
 }
 
 interface JobConfig {
@@ -90,10 +96,10 @@ agents upgrade claude          # Upgrade specific agent
 ### How It Works
 
 1. **Version Storage**: Versions installed to `~/.agents/versions/{agent}/{version}/`
-2. **Config Isolation**: Each version has isolated HOME at `~/.agents/versions/{agent}/{version}/home/`
-3. **Shims**: Wrapper scripts in `~/.agents/shims/` set HOME and delegate to correct version
+2. **Config Isolation**: Each version has isolated HOME at `~/.agents/versions/{agent}/{version}/home/` for auth. Shared config (skills, commands, MCPs) is symlinked from `~/.agents/`.
+3. **Shims**: Wrapper scripts in `~/.agents/shims/` set HOME and delegate to correct version. They symlink all real HOME entries except agent config dirs (`.claude`, `.codex`, `.gemini`, `.cursor`, `.opencode`, `.agents`).
 4. **Resolution**: Project manifest (`.agents/agents.yaml`) overrides global default
-5. **Automatic Switching**: When shims are in PATH, running `claude` uses the resolved version with isolated config
+5. **Automatic Switching**: When shims are in PATH, running `claude` uses the resolved version
 
 ### Key Files
 
@@ -103,11 +109,11 @@ agents upgrade claude          # Upgrade specific agent
 ### Version Resolution Order
 
 1. Check `.agents/agents.yaml` in current directory (walk up to root)
-2. Fall back to global default in `~/.agents/meta.yaml`
+2. Fall back to global default in `~/.agents/agents.yaml`
 
 ## Critical Patterns
 
-### Scope System
+### Installation Scope
 
 Commands, skills, hooks, MCPs, and instructions can exist at two scopes:
 
@@ -115,6 +121,19 @@ Commands, skills, hooks, MCPs, and instructions can exist at two scopes:
 |-------|----------|----------|
 | User | `~/.{agent}/` | Available globally, all projects |
 | Project | `./.{agent}/` | Project-specific, committed to repo |
+
+### Manifest Format
+
+The manifest uses a flat agent-version mapping:
+
+```yaml
+agents:
+  claude: "1.5.0"
+  codex: "0.1.2"
+  gemini: latest
+```
+
+No `package` field - npm package names are derived from the `AGENTS` config in `lib/agents.ts`.
 
 ### Jobs & Daemon
 
@@ -182,7 +201,7 @@ Package identifier prefixes:
 
 ## State Management
 
-State is persisted to `~/.agents/meta.yaml`:
+State is persisted to `~/.agents/agents.yaml`:
 
 ```typescript
 // lib/state.ts
@@ -191,7 +210,14 @@ writeMeta(meta)
 updateMeta(partial) -> Meta
 ```
 
-Always use these functions - they handle directory creation and defaults.
+The Meta type is minimal:
+- `agents` - global default versions (flat mapping, e.g. `claude: "1.5.0"`)
+- `repos` - configured source repositories with sync state
+- `registries` - package registry URLs and API keys
+
+Installed versions are derived from filesystem (`~/.agents/versions/{agent}/`), not tracked in state.
+
+Always use these functions - they handle directory creation, defaults, and migration from old formats.
 
 ## Adding a New Agent
 
@@ -247,12 +273,13 @@ bun test         # Run vitest
 
 | Item | Path |
 |------|------|
-| State | `~/.agents/meta.yaml` |
+| Config/State | `~/.agents/agents.yaml` |
 | Cloned repos | `~/.agents/repos/` |
 | External packages | `~/.agents/packages/` |
-| Agent Skills | `~/.agents/skills/` |
+| Shared skills | `~/.agents/skills/` |
+| Shared commands | `~/.agents/commands/` |
 | CLI versions | `~/.agents/versions/{agent}/{version}/` |
-| Version config | `~/.agents/versions/{agent}/{version}/home/` |
+| Version HOME | `~/.agents/versions/{agent}/{version}/home/` |
 | Shims | `~/.agents/shims/` |
 | Jobs | `~/.agents/jobs/` |
 | Job runs | `~/.agents/runs/` |
