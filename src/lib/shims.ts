@@ -95,6 +95,53 @@ for entry in "$REAL_HOME"/.[!.]* "$REAL_HOME"/*; do
   [ -e "$target" ] || [ -L "$target" ] || ln -s "$entry" "$target" 2>/dev/null
 done
 
+# Check if this agent should sync central resources
+is_synced() {
+  local global_config="$AGENTS_DIR/agents.yaml"
+  if [ -f "$global_config" ]; then
+    awk -v agent="$AGENT" '
+      /^sync:/ { in_sync=1; next }
+      in_sync && /^[^ ]/ { exit }
+      in_sync && /^  - / { gsub(/^  - /, ""); if ($0 == agent) { print "yes"; exit } }
+    ' "$global_config"
+  fi
+}
+
+# Agent-specific config directory and subdirectory mappings
+AGENT_CONFIG_DIR=".${agent}"
+AGENT_COMMANDS_SUBDIR="${agentConfig.commandsSubdir}"
+
+# If agent is in sync list, symlink central resources
+if [ "$(is_synced)" = "yes" ]; then
+  AGENT_DIR="$VERSION_HOME/$AGENT_CONFIG_DIR"
+  mkdir -p "$AGENT_DIR"
+
+  # Symlink commands (agent uses different subdir names)
+  if [ -d "$AGENTS_DIR/commands" ] && [ ! -e "$AGENT_DIR/$AGENT_COMMANDS_SUBDIR" ]; then
+    ln -s "$AGENTS_DIR/commands" "$AGENT_DIR/$AGENT_COMMANDS_SUBDIR" 2>/dev/null
+  fi
+
+  # Symlink hooks (if agent supports them)
+  if [ -d "$AGENTS_DIR/hooks" ] && [ ! -e "$AGENT_DIR/hooks" ] && [ "${agentConfig.supportsHooks}" = "true" ]; then
+    ln -s "$AGENTS_DIR/hooks" "$AGENT_DIR/hooks" 2>/dev/null
+  fi
+
+  # Symlink skills
+  if [ -d "$AGENTS_DIR/skills" ] && [ ! -e "$AGENT_DIR/skills" ]; then
+    ln -s "$AGENTS_DIR/skills" "$AGENT_DIR/skills" 2>/dev/null
+  fi
+
+  # Symlink memory files (AGENTS.md, CLAUDE.md, etc.) - copy the right one
+  if [ -d "$AGENTS_DIR/memory" ]; then
+    for memfile in "$AGENTS_DIR/memory"/*; do
+      [ -f "$memfile" ] || continue
+      memname="$(basename "$memfile")"
+      # Only link if it doesn't exist in agent dir
+      [ -e "$AGENT_DIR/$memname" ] || ln -s "$memfile" "$AGENT_DIR/$memname" 2>/dev/null
+    done
+  fi
+fi
+
 export HOME="$VERSION_HOME"
 
 exec "$BINARY" "$@"
