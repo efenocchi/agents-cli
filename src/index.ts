@@ -434,7 +434,7 @@ function isAgentName(input: string): boolean {
 
 // Resource item for tracking new vs existing
 interface ResourceItem {
-  type: 'command' | 'skill' | 'hook' | 'mcp' | 'instructions' | 'job';
+  type: 'command' | 'skill' | 'hook' | 'mcp' | 'instructions' | 'job' | 'drive';
   name: string;
   agents: AgentId[];
   isNew: boolean;
@@ -523,6 +523,7 @@ program
       const discoveredHooks = discoverHooksFromRepo(localPath);
       const allInstructions = discoverInstructionsFromRepo(localPath);
       const allDiscoveredJobs = discoverJobsFromRepo(localPath);
+      const allDiscoveredDrives = discoverDrivesFromRepo(localPath);
 
       // Determine which agents to sync
       const cliStates = await getAllCliStates();
@@ -699,6 +700,17 @@ program
         }
       }
 
+      // Process drives
+      for (const discoveredDrive of allDiscoveredDrives) {
+        if (!driveExists(discoveredDrive.name)) {
+          newItems.push({ type: 'drive', name: discoveredDrive.name, agents: [], isNew: true });
+        } else if (driveContentMatches(discoveredDrive.name, discoveredDrive.path)) {
+          upToDateItems.push({ type: 'drive', name: discoveredDrive.name, agents: [], isNew: false });
+        } else {
+          existingItems.push({ type: 'drive', name: discoveredDrive.name, agents: [], isNew: false });
+        }
+      }
+
       // Display overview
       console.log(chalk.bold('\nOverview\n'));
 
@@ -707,7 +719,7 @@ program
 
       if (newItems.length > 0) {
         console.log(chalk.green('  NEW (will install):\n'));
-        const byType = { command: [] as ResourceItem[], skill: [] as ResourceItem[], hook: [] as ResourceItem[], mcp: [] as ResourceItem[], instructions: [] as ResourceItem[], job: [] as ResourceItem[] };
+        const byType = { command: [] as ResourceItem[], skill: [] as ResourceItem[], hook: [] as ResourceItem[], mcp: [] as ResourceItem[], instructions: [] as ResourceItem[], job: [] as ResourceItem[], drive: [] as ResourceItem[] };
         for (const item of newItems) byType[item.type].push(item);
 
         if (byType.command.length > 0) {
@@ -746,12 +758,18 @@ program
             console.log(`      ${chalk.cyan(item.name)}`);
           }
         }
+        if (byType.drive.length > 0) {
+          console.log(`    Drives:`);
+          for (const item of byType.drive) {
+            console.log(`      ${chalk.cyan(item.name)}`);
+          }
+        }
         console.log();
       }
 
       if (upToDateItems.length > 0) {
         console.log(chalk.gray('  UP TO DATE (no changes):\n'));
-        const byType = { command: [] as ResourceItem[], skill: [] as ResourceItem[], hook: [] as ResourceItem[], mcp: [] as ResourceItem[], instructions: [] as ResourceItem[], job: [] as ResourceItem[] };
+        const byType = { command: [] as ResourceItem[], skill: [] as ResourceItem[], hook: [] as ResourceItem[], mcp: [] as ResourceItem[], instructions: [] as ResourceItem[], job: [] as ResourceItem[], drive: [] as ResourceItem[] };
         for (const item of upToDateItems) byType[item.type].push(item);
 
         if (byType.command.length > 0) {
@@ -784,12 +802,18 @@ program
             console.log(`      ${chalk.dim(item.name)}`);
           }
         }
+        if (byType.drive.length > 0) {
+          console.log(`    Drives:`);
+          for (const item of byType.drive) {
+            console.log(`      ${chalk.dim(item.name)}`);
+          }
+        }
         console.log();
       }
 
       if (existingItems.length > 0) {
         console.log(chalk.yellow('  EXISTING (conflicts):\n'));
-        const byType = { command: [] as ResourceItem[], skill: [] as ResourceItem[], hook: [] as ResourceItem[], mcp: [] as ResourceItem[], instructions: [] as ResourceItem[], job: [] as ResourceItem[] };
+        const byType = { command: [] as ResourceItem[], skill: [] as ResourceItem[], hook: [] as ResourceItem[], mcp: [] as ResourceItem[], instructions: [] as ResourceItem[], job: [] as ResourceItem[], drive: [] as ResourceItem[] };
         for (const item of existingItems) byType[item.type].push(item);
 
         if (byType.command.length > 0) {
@@ -825,6 +849,12 @@ program
         if (byType.job.length > 0) {
           console.log(`    Jobs:`);
           for (const item of byType.job) {
+            console.log(`      ${chalk.yellow(item.name)}`);
+          }
+        }
+        if (byType.drive.length > 0) {
+          console.log(`    Drives:`);
+          for (const item of byType.drive) {
             console.log(`      ${chalk.yellow(item.name)}`);
           }
         }
@@ -908,8 +938,8 @@ program
 
       // Install new items (no conflicts)
       console.log();
-      let installed = { commands: 0, skills: 0, hooks: 0, mcps: 0, instructions: 0, jobs: 0 };
-      let skipped = { commands: 0, skills: 0, hooks: 0, mcps: 0, instructions: 0, jobs: 0 };
+      let installed = { commands: 0, skills: 0, hooks: 0, mcps: 0, instructions: 0, jobs: 0, drives: 0 };
+      let skipped = { commands: 0, skills: 0, hooks: 0, mcps: 0, instructions: 0, jobs: 0, drives: 0 };
 
       // Install commands
       const cmdSpinner = ora('Installing commands...').start();
@@ -1068,6 +1098,36 @@ program
 
         if (installed.jobs > 0 && isDaemonRunning()) {
           signalDaemonReload();
+        }
+      }
+
+      // Install drives
+      const driveItems = [...newItems, ...existingItems].filter((i) => i.type === 'drive');
+      if (driveItems.length > 0) {
+        const driveSpinner = ora('Installing drives...').start();
+        for (const item of driveItems) {
+          const decision = item.isNew ? 'overwrite' : decisions.get(`drive:${item.name}`);
+          if (decision === 'skip') {
+            skipped.drives++;
+            continue;
+          }
+
+          const discovered = allDiscoveredDrives.find((d) => d.name === item.name);
+          if (discovered) {
+            const result = installDriveFromSource(discovered.path, discovered.name);
+            if (result.success) {
+              installed.drives++;
+            } else {
+              console.log(chalk.yellow(`\n  Warning: drive ${item.name}: ${result.error}`));
+            }
+          }
+        }
+        if (skipped.drives > 0) {
+          driveSpinner.succeed(`Installed ${installed.drives} drives (skipped ${skipped.drives})`);
+        } else if (installed.drives > 0) {
+          driveSpinner.succeed(`Installed ${installed.drives} drives`);
+        } else {
+          driveSpinner.info('No drives to install');
         }
       }
 
@@ -3476,6 +3536,255 @@ jobsCmd
       console.log(chalk.red((err as Error).message));
       process.exit(1);
     }
+  });
+
+// =============================================================================
+// DRIVE COMMANDS
+// =============================================================================
+
+import {
+  createDrive,
+  readDrive,
+  listDrives as listAllDrives,
+  deleteDrive,
+  updateDriveFrontmatter,
+  getDriveContent,
+  getDriveForProject,
+  driveExists,
+  discoverDrivesFromRepo,
+  installDriveFromSource,
+  driveContentMatches,
+} from './lib/drives.js';
+import { runDriveServer } from './lib/drive-server.js';
+
+const driveCmd = program.command('drive').description('Manage context drives');
+
+driveCmd
+  .command('create <name>')
+  .description('Create a new empty drive')
+  .option('-d, --description <desc>', 'Drive description')
+  .option('-p, --project <path>', 'Link to a project directory')
+  .action((name: string, options) => {
+    try {
+      const filePath = createDrive(name, options.description);
+      if (options.project) {
+        updateDriveFrontmatter(name, { project: path.resolve(options.project) });
+      }
+      console.log(chalk.green(`Drive '${name}' created`));
+      console.log(chalk.gray(`  ${filePath}`));
+    } catch (err) {
+      console.log(chalk.red((err as Error).message));
+      process.exit(1);
+    }
+  });
+
+driveCmd
+  .command('list')
+  .description('List all drives')
+  .action(() => {
+    const drives = listAllDrives();
+    if (drives.length === 0) {
+      console.log(chalk.gray('No drives configured'));
+      console.log(chalk.gray('  Create a drive: agents drive create <name>'));
+      return;
+    }
+
+    console.log(chalk.bold('Context Drives\n'));
+    const header = `  ${'Name'.padEnd(24)} ${'Description'.padEnd(40)} ${'Project'}`;
+    console.log(chalk.gray(header));
+    console.log(chalk.gray('  ' + '-'.repeat(90)));
+
+    for (const drive of drives) {
+      const desc = (drive.description || '-').slice(0, 38);
+      const proj = drive.project || '-';
+      console.log(
+        `  ${chalk.cyan(drive.name.padEnd(24))} ${desc.padEnd(40)} ${chalk.gray(proj)}`
+      );
+    }
+    console.log();
+  });
+
+driveCmd
+  .command('info <name>')
+  .description('Show drive metadata and content preview')
+  .action((name: string) => {
+    const drive = readDrive(name);
+    if (!drive) {
+      console.log(chalk.red(`Drive '${name}' not found`));
+      process.exit(1);
+    }
+
+    console.log(chalk.bold(`Drive: ${drive.frontmatter.name}\n`));
+
+    if (drive.frontmatter.description) {
+      console.log(chalk.gray(`  Description: ${drive.frontmatter.description}`));
+    }
+    if (drive.frontmatter.project) {
+      console.log(chalk.gray(`  Project:     ${drive.frontmatter.project}`));
+    }
+    if (drive.frontmatter.repo) {
+      console.log(chalk.gray(`  Repo:        ${drive.frontmatter.repo}`));
+    }
+    if (drive.frontmatter.updated) {
+      console.log(chalk.gray(`  Updated:     ${drive.frontmatter.updated}`));
+    }
+    console.log(chalk.gray(`  Path:        ${drive.path}`));
+
+    const content = drive.content.trim();
+    if (content) {
+      console.log(chalk.bold('\nContent:\n'));
+      const lines = content.split('\n');
+      const preview = lines.slice(0, 30);
+      for (const line of preview) {
+        console.log(`  ${line}`);
+      }
+      if (lines.length > 30) {
+        console.log(chalk.gray(`\n  ... ${lines.length - 30} more lines`));
+      }
+    }
+    console.log();
+  });
+
+driveCmd
+  .command('edit <name>')
+  .description('Open drive in $EDITOR')
+  .action((name: string) => {
+    const drive = readDrive(name);
+    if (!drive) {
+      console.log(chalk.red(`Drive '${name}' not found`));
+      process.exit(1);
+    }
+
+    const editor = process.env.EDITOR || process.env.VISUAL || 'vi';
+    const { execSync } = require('child_process');
+    try {
+      execSync(`${editor} "${drive.path}"`, { stdio: 'inherit' });
+    } catch {
+      console.log(chalk.red(`Failed to open editor: ${editor}`));
+      process.exit(1);
+    }
+  });
+
+driveCmd
+  .command('delete <name>')
+  .description('Delete a drive')
+  .action(async (name: string) => {
+    if (!driveExists(name)) {
+      console.log(chalk.red(`Drive '${name}' not found`));
+      process.exit(1);
+    }
+
+    try {
+      const answer = await confirm({ message: `Delete drive '${name}'?` });
+      if (!answer) return;
+    } catch (err) {
+      if (isPromptCancelled(err)) return;
+      throw err;
+    }
+
+    deleteDrive(name);
+    console.log(chalk.green(`Drive '${name}' deleted`));
+  });
+
+driveCmd
+  .command('link <name> <path>')
+  .description('Link a drive to a project directory')
+  .action((name: string, projectPath: string) => {
+    if (!driveExists(name)) {
+      console.log(chalk.red(`Drive '${name}' not found`));
+      process.exit(1);
+    }
+
+    const resolved = path.resolve(projectPath);
+    if (!fs.existsSync(resolved)) {
+      console.log(chalk.red(`Directory not found: ${resolved}`));
+      process.exit(1);
+    }
+
+    updateDriveFrontmatter(name, { project: resolved });
+    console.log(chalk.green(`Drive '${name}' linked to ${resolved}`));
+  });
+
+driveCmd
+  .command('sync')
+  .description('Sync drives with .agents repo')
+  .action(async () => {
+    const source = await ensureSource();
+    const repoPath = getRepoLocalPath(source);
+
+    const discovered = discoverDrivesFromRepo(repoPath);
+    if (discovered.length === 0) {
+      console.log(chalk.gray('No drives found in repo'));
+      return;
+    }
+
+    let installed = 0;
+    let skipped = 0;
+
+    for (const d of discovered) {
+      if (driveExists(d.name) && driveContentMatches(d.name, d.path)) {
+        skipped++;
+        continue;
+      }
+
+      const result = installDriveFromSource(d.path, d.name);
+      if (result.success) {
+        installed++;
+        console.log(chalk.green(`  + ${d.name}`));
+      } else {
+        console.log(chalk.red(`  x ${d.name}: ${result.error}`));
+      }
+    }
+
+    if (installed === 0 && skipped > 0) {
+      console.log(chalk.gray(`All ${skipped} drives up to date`));
+    } else if (installed > 0) {
+      console.log(chalk.green(`\nSynced ${installed} drive(s)`));
+    }
+  });
+
+driveCmd
+  .command('generate <name>')
+  .description('Run a drive generation job now')
+  .action(async (name: string) => {
+    if (!driveExists(name)) {
+      console.log(chalk.red(`Drive '${name}' not found`));
+      process.exit(1);
+    }
+
+    const jobName = `update-drive-${name}`;
+    const job = readJob(jobName);
+    if (!job) {
+      console.log(chalk.red(`No generation job found for drive '${name}'`));
+      console.log(chalk.gray(`  Expected job name: ${jobName}`));
+      console.log(chalk.gray(`  Create one at: ~/.agents/jobs/${jobName}.yml`));
+      process.exit(1);
+    }
+
+    console.log(chalk.bold(`Generating drive '${name}' (job: ${jobName})\n`));
+    const spinner = ora('Executing...').start();
+
+    try {
+      const result = await executeJob(job);
+      if (result.meta.status === 'completed') {
+        spinner.succeed(`Drive '${name}' updated`);
+      } else if (result.meta.status === 'timeout') {
+        spinner.warn(`Generation timed out after ${job.timeout}`);
+      } else {
+        spinner.fail(`Generation failed (exit code: ${result.meta.exitCode})`);
+      }
+    } catch (err) {
+      spinner.fail('Generation failed');
+      console.error(chalk.red((err as Error).message));
+      process.exit(1);
+    }
+  });
+
+driveCmd
+  .command('serve')
+  .description('Start the drive MCP server (stdio)')
+  .action(async () => {
+    await runDriveServer();
   });
 
 async function showWhatsNew(fromVersion: string, toVersion: string): Promise<void> {
