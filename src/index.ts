@@ -791,8 +791,22 @@ program
       };
 
       if (agentFilter) {
+        const versions = listInstalledVersions(agentFilter);
+        const defaultVer = getGlobalDefault(agentFilter);
+        let targetVersion = defaultVer || versions[0];
+
+        if (versions.length > 1 && !options.yes && !options.force) {
+          targetVersion = await select({
+            message: `Select ${AGENTS[agentFilter].name} version:`,
+            choices: versions.map((v) => ({
+              name: v === defaultVer ? `${v} (active)` : v,
+              value: v,
+            })),
+          });
+        }
+
         selectedAgents = [agentFilter];
-        console.log(`\nTarget: ${formatAgentLabel(agentFilter)}\n`);
+        console.log(`\nTarget: ${AGENTS[agentFilter].name} ${chalk.gray(`(${targetVersion})`)}\n`);
       } else if (options.yes || options.force) {
         selectedAgents = (manifest?.defaults?.agents || ALL_AGENT_IDS) as AgentId[];
         const installed = selectedAgents.filter((id) => cliStates[id]?.installed || id === 'cursor');
@@ -1023,9 +1037,9 @@ program
 
         // Per-agent resources
         if (byType.mcp.length > 0) {
-          console.log(`    MCP Servers ${chalk.gray('(per-agent registration)')}:`);
+          console.log(`    MCP Servers:`);
           for (const item of byType.mcp) {
-            console.log(`      ${chalk.cyan(item.name.padEnd(20))} ${chalk.gray(formatAgentList(item.agents))}`);
+            console.log(`      ${chalk.cyan(item.name)}`);
           }
         }
         if (byType.job.length > 0) {
