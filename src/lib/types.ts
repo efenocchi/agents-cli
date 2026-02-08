@@ -228,6 +228,8 @@ export interface Meta {
   agents?: Partial<Record<AgentId, string>>;
   repos: Record<RepoName, RepoConfig>;
   registries?: Record<RegistryType, Record<string, RegistryConfig>>;
+  // Which agents should have central resources (commands, hooks, skills, memory) symlinked
+  sync?: AgentId[];
 }
 
 export interface SyncOptions {

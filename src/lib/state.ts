@@ -9,6 +9,9 @@ const HOME = os.homedir();
 const AGENTS_DIR = path.join(HOME, '.agents');
 const META_FILE = path.join(AGENTS_DIR, 'agents.yaml');
 const COMMANDS_DIR = path.join(AGENTS_DIR, 'commands');
+const HOOKS_DIR = path.join(AGENTS_DIR, 'hooks');
+const SKILLS_DIR = path.join(AGENTS_DIR, 'skills');
+const MEMORY_DIR = path.join(AGENTS_DIR, 'memory');
 const INSTRUCTIONS_FILE = path.join(AGENTS_DIR, 'instructions.md');
 const MCP_CONFIG_FILE = path.join(AGENTS_DIR, 'mcp.json');
 const PACKAGES_DIR = path.join(AGENTS_DIR, 'packages');
@@ -61,6 +64,18 @@ export function getCommandsDir(): string {
   return COMMANDS_DIR;
 }
 
+export function getHooksDir(): string {
+  return HOOKS_DIR;
+}
+
+export function getSkillsDir(): string {
+  return SKILLS_DIR;
+}
+
+export function getMemoryDir(): string {
+  return MEMORY_DIR;
+}
+
 export function getInstructionsPath(): string {
   return INSTRUCTIONS_FILE;
 }
@@ -96,6 +111,15 @@ export function ensureAgentsDir(): void {
   }
   if (!fs.existsSync(COMMANDS_DIR)) {
     fs.mkdirSync(COMMANDS_DIR, { recursive: true });
+  }
+  if (!fs.existsSync(HOOKS_DIR)) {
+    fs.mkdirSync(HOOKS_DIR, { recursive: true });
+  }
+  if (!fs.existsSync(SKILLS_DIR)) {
+    fs.mkdirSync(SKILLS_DIR, { recursive: true });
+  }
+  if (!fs.existsSync(MEMORY_DIR)) {
+    fs.mkdirSync(MEMORY_DIR, { recursive: true });
   }
 }
 
