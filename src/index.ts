@@ -226,7 +226,6 @@ Agents
   remove <agent>[@version]        Remove agent CLI
   use <agent>@<version>           Set default version
   list                            List installed versions
-  upgrade [agent]                 Upgrade to latest
 
 Resources
   instructions                    Manage CLAUDE.md, GEMINI.md, etc.
@@ -301,7 +300,7 @@ async function checkForUpdates(): Promise<void> {
 // Run update check before command runs
 program.hook('preAction', async () => {
   const args = process.argv.slice(2);
-  const skipCommands = ['upgrade', '--version', '-V', '--help', '-h'];
+  const skipCommands = ['--version', '-V', '--help', '-h'];
   if (args.length === 0 || skipCommands.includes(args[0])) {
     return;
   }
@@ -1236,7 +1235,7 @@ program
 
         if (cliUpdates.length > 0) {
           cliSpinner.info('CLI version differences detected');
-          console.log(chalk.gray('  Run `agents cli upgrade` to update CLIs'));
+          console.log(chalk.gray('  Run `agents add <agent>@latest` to update'));
           for (const update of cliUpdates) {
             console.log(chalk.gray(`    ${update}`));
           }
@@ -2798,53 +2797,6 @@ function getProjectVersionFromCwd(agent: AgentId): string | null {
   }
 }
 
-program
-  .command('upgrade [agent]')
-  .description('Upgrade agent CLI versions')
-  .option('-p, --project', 'Upgrade to version in project manifest')
-  .action(async (agent: string | undefined, options) => {
-    const agentsToUpgrade: AgentId[] = agent
-      ? [agent.toLowerCase() as AgentId]
-      : ALL_AGENT_IDS.filter((id) => listInstalledVersions(id).length > 0);
-
-    if (agentsToUpgrade.length === 0) {
-      console.log(chalk.yellow('No agent CLIs installed. Run: agents add <agent>@<version>'));
-      return;
-    }
-
-    for (const agentId of agentsToUpgrade) {
-      const agentConfig = AGENTS[agentId];
-      if (!agentConfig) {
-        console.log(chalk.red(`Unknown agent: ${agentId}`));
-        continue;
-      }
-
-      // Determine target version
-      let targetVersion = 'latest';
-      if (options.project) {
-        const projectVersion = getProjectVersionFromCwd(agentId);
-        if (projectVersion) {
-          targetVersion = projectVersion;
-        }
-      }
-
-      const spinner = ora(`Upgrading ${agentConfig.name} to ${targetVersion}...`).start();
-
-      const result = await installVersion(agentId, targetVersion, (msg) => {
-        spinner.text = msg;
-      });
-
-      if (result.success) {
-        spinner.succeed(`Upgraded ${agentConfig.name} to ${result.installedVersion}`);
-
-        // Update global default to new version
-        setGlobalDefault(agentId, result.installedVersion);
-      } else {
-        spinner.fail(`Failed to upgrade ${agentConfig.name}`);
-        console.error(chalk.gray(result.error || 'Unknown error'));
-      }
-    }
-  });
 
 // =============================================================================
 // REPO COMMANDS
