@@ -781,32 +781,35 @@ program
       // Determine which agents should share central resources
       const cliStates = await getAllCliStates();
       let selectedAgents: AgentId[];
+
+      const formatAgentLabel = (agentId: AgentId): string => {
+        const versions = listInstalledVersions(agentId);
+        const defaultVer = getGlobalDefault(agentId);
+        if (versions.length === 0) return `${AGENTS[agentId].name}  ${chalk.gray('(not installed)')}`;
+        if (defaultVer) return `${AGENTS[agentId].name}  ${chalk.gray(`(active: ${defaultVer})`)}`;
+        return `${AGENTS[agentId].name}  ${chalk.gray(`(${versions[0]})`)}`;
+      };
+
       if (agentFilter) {
-        // Single agent filter
         selectedAgents = [agentFilter];
-        console.log(chalk.gray(`\nFiltering for ${AGENTS[agentFilter].name} only\n`));
+        console.log(`\nTarget: ${formatAgentLabel(agentFilter)}\n`);
       } else if (options.yes || options.force) {
         selectedAgents = (manifest?.defaults?.agents || ALL_AGENT_IDS) as AgentId[];
+        const installed = selectedAgents.filter((id) => cliStates[id]?.installed || id === 'cursor');
+        if (installed.length > 0) {
+          console.log(chalk.bold('\nTarget agents:\n'));
+          for (const agentId of installed) {
+            console.log(`  ${formatAgentLabel(agentId)}`);
+          }
+          console.log();
+        }
       } else {
         const installedAgents = ALL_AGENT_IDS.filter((id) => cliStates[id]?.installed || id === 'cursor');
 
-        // Show installed versions for context
-        console.log(chalk.bold('\nInstalled Versions:\n'));
-        for (const agentId of installedAgents) {
-          const versions = listInstalledVersions(agentId);
-          const defaultVer = getGlobalDefault(agentId);
-          if (versions.length > 0) {
-            const versionList = versions.map(v => v === defaultVer ? chalk.green(`${v} (default)`) : chalk.gray(v)).join(', ');
-            console.log(`  ${AGENTS[agentId].name}: ${versionList}`);
-          }
-        }
-
-        console.log(chalk.gray('\nResources are stored in ~/.agents/ and symlinked to ALL versions of selected agents.\n'));
-
         selectedAgents = await checkbox({
-          message: 'Which agents should share these resources?',
+          message: 'Which agents should receive these resources?',
           choices: installedAgents.map((id) => ({
-            name: AGENTS[id].name,
+            name: formatAgentLabel(id),
             value: id,
             checked: (manifest?.defaults?.agents || ALL_AGENT_IDS).includes(id),
           })),
@@ -984,8 +987,8 @@ program
       const formatAgentList = (agents: AgentId[]) =>
         agents.map((id) => AGENTS[id].name).join(', ');
 
-      // Show where central resources will be installed
       const syncedAgentNames = selectedAgents.map((id) => AGENTS[id].name).join(', ');
+      console.log(`  Target: ${chalk.cyan(syncedAgentNames)}\n`);
 
       if (newItems.length > 0) {
         console.log(chalk.green('  NEW (will install):\n'));
