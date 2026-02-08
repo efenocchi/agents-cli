@@ -237,7 +237,7 @@ agents cli remove codex    # Uninstall agent CLI
 agents cli upgrade         # Upgrade all to latest
 ```
 
-### Jobs (Daemon)
+### Jobs & Daemon
 
 ```bash
 agents jobs list           # List all scheduled jobs
@@ -252,6 +252,95 @@ agents daemon start        # Start the job daemon
 agents daemon stop         # Stop the daemon
 agents daemon status       # Show daemon status
 agents daemon logs         # Show daemon logs
+```
+
+## Jobs
+
+Jobs let you schedule AI agents to run autonomously on a cron schedule. Define a job as a YAML file and the daemon handles the rest.
+
+```yaml
+name: reddit-engagement
+schedule: "0 9 * * 1-4"
+agent: claude
+mode: plan
+timeout: 30m
+prompt: |
+  Today is {day}. Follow the engagement plan.
+
+allow:
+  tools: [web_search, web_fetch]
+  sites: [reddit.com, old.reddit.com]
+  dirs: [~/.agents/reports/reddit-engagement]
+
+config:
+  model: claude-sonnet-4-5
+```
+
+The `allow` block controls what the agent can do. `config` passes agent-specific settings like model selection. The `prompt` supports template variables (`{day}`, `{date}`, `{time}`, `{job_name}`, `{last_report}`).
+
+### Sandboxed Execution
+
+When a job runs, the agent doesn't see your real home directory. Instead, it gets an isolated overlay:
+
+```
+~/.agents/jobs/reddit-engagement/home/     <-- agent sees this as $HOME
+  .claude/
+    settings.json                          <-- generated permissions
+  .agents/
+    reports/
+      reddit-engagement/ -> ~/real/path    <-- symlink to allowed dir
+```
+
+This works by setting `HOME` to the overlay directory before spawning the agent process. The agent CLI reads its config from `$HOME/.claude/settings.json` (or `.codex/config.toml`, `.gemini/settings.json`) as usual - but those config files are generated from your job's `allow` block.
+
+The result is a two-layer permission system:
+
+| Layer | What it does | Enforcement |
+|-------|-------------|-------------|
+| **Agent config** | Tool allowlists (`Read(*)`, `WebSearch(*)`, etc.) | Hard - the agent CLI itself blocks disallowed tools |
+| **HOME overlay** | Filesystem isolation - only `allow.dirs` are visible | Hard - dirs outside the overlay simply don't exist |
+
+Neither layer relies on prompt injection. The agent CLI enforces tool permissions because it reads the generated config file. The filesystem is isolated because the overlay HOME contains only what you explicitly symlink in. The agent can't access `~/.ssh`, `~/.gitconfig`, `~/.aws`, or anything else unless you add it to `allow.dirs`.
+
+### How the layers compose
+
+Say you define a job with:
+
+```yaml
+allow:
+  tools: [web_search, read]
+  dirs: [~/projects/my-repo]
+```
+
+Here's what happens:
+
+1. **Overlay created** at `~/.agents/jobs/{name}/home/`
+2. **Agent config generated** - for Claude, `settings.json` gets `permissions.allow: ["WebSearch(*)", "Read(*)"]`
+3. **Dirs symlinked** - `~/projects/my-repo` becomes accessible inside the overlay
+4. **Agent spawned** with `HOME=/overlay/path` - it can only use `web_search` and `read` (enforced by the CLI), and can only see files in `~/projects/my-repo` (enforced by the overlay)
+
+The overlay is cleaned and recreated fresh before each run, so no stale state carries over between executions.
+
+### Model and version pinning
+
+Jobs can pin the model and (eventually) the CLI version:
+
+```yaml
+# Use a specific model for this job
+config:
+  model: claude-sonnet-4-5
+
+# Pin CLI version (planned)
+# version: 1.0.23
+```
+
+For Codex jobs, `config` maps directly to `~/.codex/config.toml`:
+
+```yaml
+agent: codex
+config:
+  model: gpt-5.2-codex
+  approval_mode: full-auto
 ```
 
 ## Scopes
