@@ -10,6 +10,8 @@ src/
     agents.ts           # Agent configs, CLI detection, MCP ops
     manifest.ts         # agents.yaml parsing/serialization
     state.ts            # ~/.agents/meta.yaml management
+    versions.ts         # Version management (install, remove, resolve)
+    shims.ts            # Shim generation for version switching
     git.ts              # Git clone/pull operations
     hooks.ts            # Hook discovery and installation
     commands.ts         # Slash command discovery and installation
@@ -62,6 +64,45 @@ Each agent has different paths and formats. See `AGENTS` object in `lib/agents.t
 | Gemini | `~/.gemini/commands/` | toml | `GEMINI.md` | Yes |
 | Cursor | `~/.cursor/commands/` | markdown | `.cursorrules` | Yes |
 | OpenCode | `~/.opencode/commands/` | markdown | `OPENCODE.md` | Yes |
+
+## Version Management
+
+The CLI manages multiple versions of agent CLIs (Claude, Codex, Gemini, etc.) similar to `nvm` for Node.js.
+
+### Commands
+
+```bash
+agents add claude@1.5.0        # Install specific version
+agents add claude@latest       # Install latest version
+agents add claude@1.5.0 -p     # Install + pin to project manifest
+
+agents remove claude@1.5.0     # Remove specific version
+agents remove claude           # Remove all versions
+
+agents use claude@1.5.0        # Set global default version
+agents use claude@1.5.0 -p     # Pin version in project manifest
+
+agents list                    # Show all installed versions
+agents upgrade                 # Upgrade all to latest
+agents upgrade claude          # Upgrade specific agent
+```
+
+### How It Works
+
+1. **Version Storage**: Versions installed to `~/.agents/versions/{agent}/{version}/`
+2. **Shims**: Wrapper scripts in `~/.agents/shims/` that delegate to correct version
+3. **Resolution**: Project manifest (`.agents/agents.yaml`) overrides global default
+4. **Automatic Switching**: When shims are in PATH, running `claude` uses the resolved version
+
+### Key Files
+
+- `lib/versions.ts` - `installVersion()`, `removeVersion()`, `resolveVersion()`
+- `lib/shims.ts` - `createShim()`, `generateShimScript()`
+
+### Version Resolution Order
+
+1. Check `.agents/agents.yaml` in current directory (walk up to root)
+2. Fall back to global default in `~/.agents/meta.yaml`
 
 ## Critical Patterns
 
@@ -209,6 +250,8 @@ bun test         # Run vitest
 | Cloned repos | `~/.agents/repos/` |
 | External packages | `~/.agents/packages/` |
 | Agent Skills | `~/.agents/skills/` |
+| CLI versions | `~/.agents/versions/{agent}/{version}/` |
+| Shims | `~/.agents/shims/` |
 | Jobs | `~/.agents/jobs/` |
 | Job runs | `~/.agents/runs/` |
 | Daemon log | `~/.agents/daemon.log` |
