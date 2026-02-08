@@ -29,14 +29,12 @@ resolve_version() {
   while [ "$dir" != "/" ]; do
     local manifest="$dir/.agents/agents.yaml"
     if [ -f "$manifest" ]; then
-      # Extract version for this agent from YAML
+      # Extract version for this agent from YAML (flat format: agents:\n  claude: "1.5.0")
       local version
       version=$(awk -v agent="$AGENT" '
-        /^clis:/ { in_clis=1; next }
-        in_clis && /^[^ ]/ { in_clis=0 }
-        in_clis && $0 ~ "^  " agent ":" { in_agent=1; next }
-        in_agent && /^    version:/ { gsub(/.*version:[[:space:]]*["'"'"']?|["'"'"']?[[:space:]]*$/, ""); print; exit }
-        in_agent && /^  [^ ]/ { in_agent=0 }
+        /^agents:/ { in_agents=1; next }
+        in_agents && /^[^ ]/ { in_agents=0 }
+        in_agents && $0 ~ "^  " agent ":" { gsub(/.*:[[:space:]]*["'"'"']?|["'"'"']?[[:space:]]*$/, ""); print; exit }
       ' "$manifest")
 
       if [ -n "$version" ]; then
@@ -47,16 +45,14 @@ resolve_version() {
     dir=$(dirname "$dir")
   done
 
-  # Fall back to global default from meta.yaml
-  local meta="$AGENTS_DIR/meta.yaml"
-  if [ -f "$meta" ]; then
+  # Fall back to global default from ~/.agents/agents.yaml
+  local global_config="$AGENTS_DIR/agents.yaml"
+  if [ -f "$global_config" ]; then
     awk -v agent="$AGENT" '
-      /^versions:/ { in_versions=1; next }
-      in_versions && /^[^ ]/ { in_versions=0 }
-      in_versions && $0 ~ "^  " agent ":" { in_agent=1; next }
-      in_agent && /^    default:/ { gsub(/.*default:[[:space:]]*["'"'"']?|["'"'"']?[[:space:]]*$/, ""); print; exit }
-      in_agent && /^  [^ ]/ { in_agent=0 }
-    ' "$meta"
+      /^agents:/ { in_agents=1; next }
+      in_agents && /^[^ ]/ { in_agents=0 }
+      in_agents && $0 ~ "^  " agent ":" { gsub(/.*:[[:space:]]*["'"'"']?|["'"'"']?[[:space:]]*$/, ""); print; exit }
+    ' "$global_config"
   fi
 }
 
