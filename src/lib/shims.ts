@@ -68,13 +68,19 @@ if [ -z "$VERSION" ]; then
   exit 1
 fi
 
-BINARY="$AGENTS_DIR/versions/$AGENT/$VERSION/node_modules/.bin/$CLI_COMMAND"
+VERSION_DIR="$AGENTS_DIR/versions/$AGENT/$VERSION"
+BINARY="$VERSION_DIR/node_modules/.bin/$CLI_COMMAND"
 
 if [ ! -x "$BINARY" ]; then
   echo "agents: $AGENT@$VERSION not installed" >&2
   echo "Run: agents add $AGENT@$VERSION" >&2
   exit 1
 fi
+
+# Isolate config per version (like jobs sandbox)
+VERSION_HOME="$VERSION_DIR/home"
+mkdir -p "$VERSION_HOME"
+export HOME="$VERSION_HOME"
 
 exec "$BINARY" "$@"
 `;

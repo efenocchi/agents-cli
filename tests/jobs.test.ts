@@ -114,17 +114,15 @@ describe('validateJob', () => {
   });
 
   it('accepts all valid job agents', () => {
-    for (const agent of ['claude', 'codex', 'gemini']) {
+    for (const agent of ['claude', 'codex', 'gemini', 'cursor', 'opencode']) {
       const errors = validateJob({ ...makeConfig(), agent: agent as any });
       expect(errors).toEqual([]);
     }
   });
 
-  it('rejects agents without job support', () => {
-    for (const agent of ['cursor', 'opencode']) {
-      const errors = validateJob({ ...makeConfig(), agent: agent as any });
-      expect(errors.some((e) => e.includes('agent must be one of'))).toBe(true);
-    }
+  it('rejects invalid agents', () => {
+    const errors = validateJob({ ...makeConfig(), agent: 'invalid-agent' as any });
+    expect(errors.some((e) => e.includes('agent must be one of'))).toBe(true);
   });
 });
 

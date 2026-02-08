@@ -52,6 +52,14 @@ export function getBinaryPath(agent: AgentId, version: string): string {
 }
 
 /**
+ * Get the isolated HOME directory for a specific agent version.
+ * Each version has its own config isolation (like jobs sandbox).
+ */
+export function getVersionHomePath(agent: AgentId, version: string): string {
+  return path.join(getVersionDir(agent, version), 'home');
+}
+
+/**
  * Check if a specific version is installed.
  */
 export function isVersionInstalled(agent: AgentId, version: string): boolean {
@@ -143,8 +151,9 @@ export async function installVersion(
   ensureAgentsDir();
   const versionDir = getVersionDir(agent, version);
 
-  // Create version directory
+  // Create version directory and isolated home
   fs.mkdirSync(versionDir, { recursive: true });
+  fs.mkdirSync(path.join(versionDir, 'home'), { recursive: true });
 
   // Initialize package.json
   const packageJson = {

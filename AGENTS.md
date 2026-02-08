@@ -90,9 +90,10 @@ agents upgrade claude          # Upgrade specific agent
 ### How It Works
 
 1. **Version Storage**: Versions installed to `~/.agents/versions/{agent}/{version}/`
-2. **Shims**: Wrapper scripts in `~/.agents/shims/` that delegate to correct version
-3. **Resolution**: Project manifest (`.agents/agents.yaml`) overrides global default
-4. **Automatic Switching**: When shims are in PATH, running `claude` uses the resolved version
+2. **Config Isolation**: Each version has isolated HOME at `~/.agents/versions/{agent}/{version}/home/`
+3. **Shims**: Wrapper scripts in `~/.agents/shims/` set HOME and delegate to correct version
+4. **Resolution**: Project manifest (`.agents/agents.yaml`) overrides global default
+5. **Automatic Switching**: When shims are in PATH, running `claude` uses the resolved version with isolated config
 
 ### Key Files
 
@@ -251,6 +252,7 @@ bun test         # Run vitest
 | External packages | `~/.agents/packages/` |
 | Agent Skills | `~/.agents/skills/` |
 | CLI versions | `~/.agents/versions/{agent}/{version}/` |
+| Version config | `~/.agents/versions/{agent}/{version}/home/` |
 | Shims | `~/.agents/shims/` |
 | Jobs | `~/.agents/jobs/` |
 | Job runs | `~/.agents/runs/` |
