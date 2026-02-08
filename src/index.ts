@@ -1387,23 +1387,6 @@ program
   });
 
 // =============================================================================
-// SYNC COMMAND
-// =============================================================================
-
-program
-  .command('sync [source]')
-  .description('Bidirectional sync with remote .agents repo')
-  .option('-y, --yes', 'Skip interactive prompts')
-  .option('-f, --force', 'Overwrite local changes')
-  .action(async (source: string | undefined, options) => {
-    const args = ['pull'];
-    if (source) args.push(source);
-    if (options.yes) args.push('-y');
-    if (options.force) args.push('-f');
-    await program.commands.find((c) => c.name() === 'pull')?.parseAsync(args, { from: 'user' });
-  });
-
-// =============================================================================
 // COMMANDS COMMANDS
 // =============================================================================
 
@@ -2463,6 +2446,9 @@ program
       // Check if already installed
       if (isVersionInstalled(agent, version)) {
         console.log(chalk.gray(`${agentConfig.name}@${version} already installed`));
+
+        // Ensure shim exists (in case it was deleted or needs updating)
+        createShim(agent);
       } else {
         const spinner = ora(`Installing ${agentConfig.name}@${version}...`).start();
 
@@ -2884,42 +2870,6 @@ repoCmd
     } else {
       console.log(chalk.yellow(`Failed to remove scope '${scopeName}'`));
     }
-  });
-
-repoCmd
-  .command('sync [scope]')
-  .description('Sync a specific scope or all scopes')
-  .option('-y, --yes', 'Skip confirmation prompts')
-  .action(async (scopeName: string | undefined, options) => {
-    const scopes = scopeName ? [{ name: scopeName, config: getScope(scopeName) }].filter(s => s.config) : getScopesByPriority();
-
-    if (scopes.length === 0) {
-      console.log(chalk.yellow('No scopes to sync.'));
-      return;
-    }
-
-    for (const { name, config } of scopes) {
-      if (!config) continue;
-
-      console.log(chalk.bold(`\nSyncing scope: ${name}`));
-      const spinner = ora('Updating repository...').start();
-
-      try {
-        const { commit } = await cloneRepo(config.source);
-        spinner.succeed('Repository updated');
-
-        setScope(name as ScopeName, {
-          ...config,
-          commit,
-          lastSync: new Date().toISOString(),
-        });
-      } catch (err) {
-        spinner.fail(`Failed to sync ${name}`);
-        console.error(chalk.gray((err as Error).message));
-      }
-    }
-
-    console.log(chalk.green('\nSync complete.'));
   });
 
 // =============================================================================
