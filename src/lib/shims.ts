@@ -29,7 +29,7 @@ resolve_version() {
   while [ "$dir" != "/" ]; do
     local manifest="$dir/.agents/agents.yaml"
     if [ -f "$manifest" ]; then
-      # Extract version for this agent from YAML (flat format: agents:\n  claude: "1.5.0")
+      # Extract version for this agent from YAML (flat format: agents: claude: "1.5.0")
       local version
       version=$(awk -v agent="$AGENT" '
         /^agents:/ { in_agents=1; next }
