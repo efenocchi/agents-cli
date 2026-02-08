@@ -196,24 +196,62 @@ function getScopeLocalPath(scopeName: ScopeName): string | null {
 
 program
   .name('agents')
-  .description('Manage AI agent configs, CLIs, jobs, and sandboxes')
-  .version(VERSION);
+  .description('Manage AI coding agents - configs, CLIs, and automation')
+  .version(VERSION)
+  .helpOption('-h, --help', 'Show help')
+  .addHelpCommand(false) // Disable default help subcommand
+  .configureHelp({
+    subcommandTerm: () => '', // Hide subcommand terms
+    subcommandDescription: () => '', // Hide subcommand descriptions
+  });
 
-program.addHelpText('after', `
-Quick start:
-  agents pull                     Sync from the configured .agents repo
-  agents status                   Show installed agents and resources
-  agents jobs run <name>          Run a job now
-  agents daemon start             Start the scheduler daemon
+// Override help to show our custom format
+program.on('--help', () => {});
 
-Command groups:
-  Sync: status, pull, push, repo
-  Resources: commands, hooks, skills, instructions, mcp
-  CLI versions: add, remove, use, list, upgrade
-  Packages: registry, search, install
-  Automation: jobs, daemon
-  Context: drive
-`);
+// Completely override the help output
+program.helpInformation = function () {
+  return `Usage: agents [options] [command]
+
+Manage AI coding agents - configs, CLIs, and automation
+
+Options:
+  -V, --version                   Show version number
+  -h, --help                      Show help
+
+Env
+  status                          Show installed agents and sync status
+  pull [source]                   Sync from .agents repo
+  push                            Push config to your .agents repo
+  self-upgrade                    Upgrade agents-cli
+
+Agents
+  add <agent>[@version]           Install agent CLI
+  remove <agent>[@version]        Remove agent CLI
+  use <agent>@<version>           Set default version
+  list                            List installed versions
+  upgrade [agent]                 Upgrade to latest
+
+Resources
+  instructions                    Manage CLAUDE.md, GEMINI.md, etc.
+  commands                        Manage slash commands
+  mcp                             Manage MCP servers
+  skills                          Manage skills (SKILL.md + rules/)
+  hooks                           Manage agent hooks
+
+Packages
+  search <query>                  Search registries
+  install <pkg>                   Install mcp:name or skill:user/repo
+
+Automation
+  jobs                            Manage scheduled jobs
+  daemon                          Manage the scheduler daemon
+
+Context
+  drive                           Manage context drives
+
+Run 'agents <command> --help' for details.
+`;
+};
 
 // Check for updates before command runs, prompt to upgrade
 async function checkForUpdates(): Promise<void> {
