@@ -3106,12 +3106,12 @@ program
   });
 
 // =============================================================================
-// ADD COMMAND (unified package installation)
+// INSTALL COMMAND (unified package installation)
 // =============================================================================
 
 program
-  .command('add <identifier>')
-  .description('Add a package (mcp:name, skill:user/repo, or gh:user/repo)')
+  .command('install <identifier>')
+  .description('Install a package (mcp:name, skill:user/repo, or gh:user/repo)')
   .option('-a, --agents <list>', 'Comma-separated agents to install to')
   .action(async (identifier: string, options) => {
     const spinner = ora('Resolving package...').start();
@@ -3286,7 +3286,7 @@ program
 
 // Self-upgrade command
 program
-  .command('upgrade')
+  .command('self-upgrade')
   .description('Upgrade agents-cli to the latest version')
   .action(async () => {
     const spinner = ora('Checking for updates...').start();
