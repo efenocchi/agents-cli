@@ -2685,27 +2685,6 @@ program
     }
   });
 
-// Legacy alias for backwards compatibility
-program
-  .command('cli')
-  .description('(deprecated) Use: agents add, agents remove, agents list')
-  .action(() => {
-    console.log(chalk.yellow('The "cli" subcommand is deprecated.'));
-    console.log();
-    console.log('New commands:');
-    console.log('  agents add <agent>@<version>     Install agent CLI');
-    console.log('  agents remove <agent>[@version]  Remove agent CLI');
-    console.log('  agents use <agent>@<version>     Set default version');
-    console.log('  agents list                      List installed versions');
-    console.log('  agents upgrade [agent]           Upgrade to latest');
-    console.log();
-    console.log('Examples:');
-    console.log('  agents add claude@1.5.0');
-    console.log('  agents add claude@1.5.0 -p       Pin to project');
-    console.log('  agents use claude@1.4.0');
-    console.log('  agents remove claude@1.4.0');
-  });
-
 // =============================================================================
 // REPO COMMANDS
 // =============================================================================
@@ -2864,34 +2843,6 @@ repoCmd
     }
 
     console.log(chalk.green('\nSync complete.'));
-  });
-
-// =============================================================================
-// INIT COMMAND
-// =============================================================================
-
-program
-  .command('init')
-  .description('Initialize a new .agents repo')
-  .action(() => {
-    ensureAgentsDir();
-
-    const manifest = createDefaultManifest();
-    console.log(chalk.bold('\nDefault agents.yaml:\n'));
-    console.log(chalk.gray('clis:'));
-    console.log(chalk.gray('  claude:'));
-    console.log(chalk.gray('    package: "@anthropic-ai/claude-code"'));
-    console.log(chalk.gray('    version: "latest"'));
-    console.log(chalk.gray('  codex:'));
-    console.log(chalk.gray('    package: "@openai/codex"'));
-    console.log(chalk.gray('    version: "latest"'));
-    console.log();
-    console.log(chalk.green('Create a new repo with this structure:'));
-    console.log(chalk.gray('  .agents/'));
-    console.log(chalk.gray('    agents.yaml'));
-    console.log(chalk.gray('    shared/commands/'));
-    console.log(chalk.gray('    claude/hooks/'));
-    console.log();
   });
 
 // =============================================================================
