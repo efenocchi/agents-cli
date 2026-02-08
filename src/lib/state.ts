@@ -13,6 +13,8 @@ const REPOS_DIR = path.join(AGENTS_DIR, 'repos');
 const JOBS_DIR = path.join(AGENTS_DIR, 'jobs');
 const RUNS_DIR = path.join(AGENTS_DIR, 'runs');
 const DRIVES_DIR = path.join(AGENTS_DIR, 'drives');
+const VERSIONS_DIR = path.join(AGENTS_DIR, 'versions');
+const SHIMS_DIR = path.join(AGENTS_DIR, 'shims');
 
 const META_HEADER = `# agents-cli metadata
 # Auto-generated - do not edit manually
@@ -44,6 +46,14 @@ export function getDrivesDir(): string {
   return DRIVES_DIR;
 }
 
+export function getVersionsDir(): string {
+  return VERSIONS_DIR;
+}
+
+export function getShimsDir(): string {
+  return SHIMS_DIR;
+}
+
 export function ensureAgentsDir(): void {
   if (!fs.existsSync(AGENTS_DIR)) {
     fs.mkdirSync(AGENTS_DIR, { recursive: true });
@@ -62,6 +72,12 @@ export function ensureAgentsDir(): void {
   }
   if (!fs.existsSync(DRIVES_DIR)) {
     fs.mkdirSync(DRIVES_DIR, { recursive: true });
+  }
+  if (!fs.existsSync(VERSIONS_DIR)) {
+    fs.mkdirSync(VERSIONS_DIR, { recursive: true });
+  }
+  if (!fs.existsSync(SHIMS_DIR)) {
+    fs.mkdirSync(SHIMS_DIR, { recursive: true });
   }
 }
 

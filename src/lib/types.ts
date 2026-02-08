@@ -251,11 +251,17 @@ export interface ScopeConfig {
   readonly?: boolean;
 }
 
+export interface AgentVersionsState {
+  installed: string[];
+  default: string | null;
+}
+
 export interface Meta {
   version: string;
   scopes: Record<ScopeName, ScopeConfig>;
   registries?: Record<RegistryType, Record<string, RegistryConfig>>;
   clis: Partial<Record<AgentId, CliState>>;
+  versions?: Partial<Record<AgentId, AgentVersionsState>>;
   packages: Record<string, PackageState>;
   commands: Record<string, CommandState>;
   skills: Record<string, SkillState>;

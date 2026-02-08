@@ -111,6 +111,26 @@ import {
   resolvePackage,
   getMcpServerInfo,
 } from './lib/registry.js';
+import {
+  parseAgentSpec,
+  installVersion,
+  removeVersion,
+  removeAllVersions,
+  listInstalledVersions,
+  getGlobalDefault,
+  setGlobalDefault,
+  isVersionInstalled,
+  getBinaryPath,
+  getAgentVersionsState,
+} from './lib/versions.js';
+import {
+  createShim,
+  removeShim,
+  shimExists,
+  isShimsInPath,
+  getPathSetupInstructions,
+  getShimsDir,
+} from './lib/shims.js';
 
 const program = new Command();
 
@@ -2337,203 +2357,299 @@ mcpCmd
   });
 
 // =============================================================================
-// CLI COMMANDS
+// VERSION MANAGEMENT COMMANDS (add, remove, use, list, upgrade)
 // =============================================================================
 
-const cliCmd = program
-  .command('cli')
-  .description('Manage agent CLIs');
+program
+  .command('add <specs...>')
+  .description('Install agent CLI(s). Examples: agents add claude@1.5.0, agents add claude codex')
+  .option('-p, --project', 'Pin version in project manifest (.agents/agents.yaml)')
+  .action(async (specs: string[], options) => {
+    const isProject = options.project;
 
-cliCmd
-  .command('list')
-  .description('List installed agent CLIs')
-  .action(async () => {
-    const spinner = ora('Checking installed CLIs...').start();
+    for (const spec of specs) {
+      const parsed = parseAgentSpec(spec);
+      if (!parsed) {
+        console.log(chalk.red(`Invalid agent: ${spec}`));
+        console.log(chalk.gray(`Format: <agent>[@version]. Available: ${ALL_AGENT_IDS.join(', ')}`));
+        continue;
+      }
 
-    const states = await getAllCliStates();
-    spinner.stop();
+      const { agent, version } = parsed;
+      const agentConfig = AGENTS[agent];
 
-    console.log(chalk.bold('Agent CLIs\n'));
-    for (const agentId of ALL_AGENT_IDS) {
-      const agent = AGENTS[agentId];
-      const state = states[agentId];
+      if (!agentConfig.npmPackage) {
+        console.log(chalk.yellow(`${agentConfig.name} has no npm package. Install manually.`));
+        continue;
+      }
 
-      if (state?.installed) {
-        console.log(`  ${agent.name.padEnd(14)} ${chalk.green(state.version || 'installed')}`);
-        if (state.path) {
-          console.log(`  ${''.padEnd(14)} ${chalk.gray(state.path)}`);
-        }
+      // Check if already installed
+      if (isVersionInstalled(agent, version)) {
+        console.log(chalk.gray(`${agentConfig.name}@${version} already installed`));
       } else {
-        console.log(`  ${agent.name.padEnd(14)} ${chalk.gray('not installed')}`);
-      }
-    }
-  });
+        const spinner = ora(`Installing ${agentConfig.name}@${version}...`).start();
 
-cliCmd
-  .command('add <agents...>')
-  .description('Install agent CLI(s)')
-  .option('-v, --version <version>', 'Version to install', 'latest')
-  .option('--manifest-only', 'Only add to manifest, do not install')
-  .action(async (agents: string[], options) => {
-    const validAgents: AgentId[] = [];
-    for (const agent of agents) {
-      const agentId = agent.toLowerCase() as AgentId;
-      if (!AGENTS[agentId]) {
-        console.log(chalk.red(`Unknown agent: ${agent}`));
-        console.log(chalk.gray(`Available: ${ALL_AGENT_IDS.join(', ')}`));
-        return;
-      }
-      validAgents.push(agentId);
-    }
+        const result = await installVersion(agent, version, (msg) => {
+          spinner.text = msg;
+        });
 
-    const { exec } = await import('child_process');
-    const { promisify } = await import('util');
-    const execAsync = promisify(exec);
-    const version = options.version;
+        if (result.success) {
+          spinner.succeed(`Installed ${agentConfig.name}@${result.installedVersion}`);
 
-    for (const agentId of validAgents) {
-      const agentConfig = AGENTS[agentId];
-      const pkg = agentConfig.npmPackage;
-      const installScript = agentConfig.installScript;
-
-      if (!options.manifestOnly) {
-        if (pkg) {
-          const spinner = ora(`Installing ${agentConfig.name}@${version}...`).start();
-
-          try {
-            await execAsync(`npm install -g ${pkg}@${version}`);
-            spinner.succeed(`Installed ${agentConfig.name}@${version}`);
-          } catch (err) {
-            spinner.fail(`Failed to install ${agentConfig.name}`);
-            console.error(chalk.gray((err as Error).message));
-            continue;
+          // Create shim if first install
+          if (!shimExists(agent)) {
+            createShim(agent);
+            console.log(chalk.gray(`  Created shim: ${getShimsDir()}/${agentConfig.cliCommand}`));
           }
-        } else if (installScript) {
-          const spinner = ora(`Installing ${agentConfig.name}...`).start();
 
-          try {
-            await execAsync(installScript, { shell: '/bin/bash' });
-            spinner.succeed(`Installed ${agentConfig.name}`);
-          } catch (err) {
-            spinner.fail(`Failed to install ${agentConfig.name}`);
-            console.error(chalk.gray((err as Error).message));
-            continue;
+          // Check if shims in PATH
+          if (!isShimsInPath()) {
+            console.log();
+            console.log(chalk.yellow('Shims directory not in PATH. Add it to use version switching:'));
+            console.log(chalk.gray(getPathSetupInstructions()));
+            console.log();
           }
         } else {
-          console.log(chalk.yellow(`${agentConfig.name} has no installer. Install manually.`));
+          spinner.fail(`Failed to install ${agentConfig.name}@${version}`);
+          console.error(chalk.gray(result.error || 'Unknown error'));
+          continue;
         }
       }
-    }
 
-    const source = await ensureSource();
-    const localPath = getRepoLocalPath(source);
-    const manifest = readManifest(localPath) || createDefaultManifest();
+      // Update project manifest if -p flag
+      if (isProject) {
+        const projectManifestDir = path.join(process.cwd(), '.agents');
+        const projectManifestPath = path.join(projectManifestDir, 'agents.yaml');
 
-    manifest.clis = manifest.clis || {};
-    for (const agentId of validAgents) {
-      const agentConfig = AGENTS[agentId];
-      manifest.clis[agentId] = {
-        package: agentConfig.npmPackage,
-        version: version,
-      };
-    }
+        if (!fs.existsSync(projectManifestDir)) {
+          fs.mkdirSync(projectManifestDir, { recursive: true });
+        }
 
-    writeManifest(localPath, manifest);
-    if (validAgents.length === 1) {
-      console.log(chalk.green(`Added ${AGENTS[validAgents[0]].name} to manifest`));
-    } else {
-      console.log(chalk.green(`Added ${validAgents.length} agents to manifest`));
+        const manifest = fs.existsSync(projectManifestPath)
+          ? readManifest(process.cwd()) || createDefaultManifest()
+          : createDefaultManifest();
+
+        manifest.clis = manifest.clis || {};
+        manifest.clis[agent] = {
+          package: agentConfig.npmPackage,
+          version: version === 'latest' ? (await getInstalledVersionForAgent(agent, version)) : version,
+        };
+
+        writeManifest(process.cwd(), manifest);
+        console.log(chalk.green(`  Pinned ${agentConfig.name}@${version} in .agents/agents.yaml`));
+      }
     }
   });
 
-cliCmd
-  .command('remove <agents...>')
-  .description('Uninstall agent CLI(s)')
-  .option('--manifest-only', 'Only remove from manifest, do not uninstall')
-  .action(async (agents: string[], options) => {
-    const validAgents: AgentId[] = [];
-    for (const agent of agents) {
-      const agentId = agent.toLowerCase() as AgentId;
-      if (!AGENTS[agentId]) {
-        console.log(chalk.red(`Unknown agent: ${agent}`));
-        console.log(chalk.gray(`Available: ${ALL_AGENT_IDS.join(', ')}`));
-        return;
+/**
+ * Helper to get actual installed version for an agent.
+ */
+async function getInstalledVersionForAgent(agent: AgentId, requestedVersion: string): Promise<string> {
+  const versions = listInstalledVersions(agent);
+  if (versions.length > 0) {
+    return versions[versions.length - 1];
+  }
+  return requestedVersion;
+}
+
+program
+  .command('remove <specs...>')
+  .description('Remove agent CLI version(s). Examples: agents remove claude@1.5.0, agents remove claude')
+  .option('-p, --project', 'Also remove from project manifest')
+  .action(async (specs: string[], options) => {
+    const isProject = options.project;
+
+    for (const spec of specs) {
+      const parsed = parseAgentSpec(spec);
+      if (!parsed) {
+        console.log(chalk.red(`Invalid agent: ${spec}`));
+        console.log(chalk.gray(`Format: <agent>[@version]. Available: ${ALL_AGENT_IDS.join(', ')}`));
+        continue;
       }
-      validAgents.push(agentId);
-    }
 
-    const { exec } = await import('child_process');
-    const { promisify } = await import('util');
-    const execAsync = promisify(exec);
+      const { agent, version } = parsed;
+      const agentConfig = AGENTS[agent];
 
-    for (const agentId of validAgents) {
-      const agentConfig = AGENTS[agentId];
-      const pkg = agentConfig.npmPackage;
-
-      if (!options.manifestOnly) {
-        if (!pkg) {
-          console.log(chalk.yellow(`${agentConfig.name} has no npm package.`));
-        } else if (!(await isCliInstalled(agentId))) {
-          console.log(chalk.gray(`${agentConfig.name} is not installed`));
+      if (version === 'latest' || !spec.includes('@')) {
+        // Remove all versions
+        const versions = listInstalledVersions(agent);
+        if (versions.length === 0) {
+          console.log(chalk.gray(`No versions of ${agentConfig.name} installed`));
         } else {
-          const spinner = ora(`Uninstalling ${agentConfig.name}...`).start();
+          const count = removeAllVersions(agent);
+          removeShim(agent);
+          console.log(chalk.green(`Removed ${count} version(s) of ${agentConfig.name}`));
+        }
+      } else {
+        // Remove specific version
+        if (!isVersionInstalled(agent, version)) {
+          console.log(chalk.gray(`${agentConfig.name}@${version} not installed`));
+        } else {
+          removeVersion(agent, version);
+          console.log(chalk.green(`Removed ${agentConfig.name}@${version}`));
 
-          try {
-            await execAsync(`npm uninstall -g ${pkg}`);
-            spinner.succeed(`Uninstalled ${agentConfig.name}`);
-          } catch (err) {
-            spinner.fail(`Failed to uninstall ${agentConfig.name}`);
-            console.error(chalk.gray((err as Error).message));
+          // Remove shim if no versions left
+          const remaining = listInstalledVersions(agent);
+          if (remaining.length === 0) {
+            removeShim(agent);
+          }
+        }
+      }
+
+      // Update project manifest if -p flag
+      if (isProject) {
+        const projectManifestPath = path.join(process.cwd(), '.agents', 'agents.yaml');
+        if (fs.existsSync(projectManifestPath)) {
+          const manifest = readManifest(process.cwd());
+          if (manifest?.clis?.[agent]) {
+            delete manifest.clis[agent];
+            writeManifest(process.cwd(), manifest);
+            console.log(chalk.gray(`  Removed from .agents/agents.yaml`));
           }
         }
       }
     }
-
-    const source = await ensureSource();
-    const localPath = getRepoLocalPath(source);
-    const manifest = readManifest(localPath);
-
-    let removed = 0;
-    for (const agentId of validAgents) {
-      if (manifest?.clis?.[agentId]) {
-        delete manifest.clis[agentId];
-        removed++;
-      }
-    }
-
-    if (removed > 0 && manifest) {
-      writeManifest(localPath, manifest);
-      if (removed === 1) {
-        console.log(chalk.green(`Removed ${AGENTS[validAgents[0]].name} from manifest`));
-      } else {
-        console.log(chalk.green(`Removed ${removed} agents from manifest`));
-      }
-    }
   });
 
-cliCmd
-  .command('upgrade [agent]')
-  .description('Upgrade agent CLI(s) to version in manifest')
-  .option('-s, --scope <scope>', 'Target scope (default: user)', 'user')
-  .option('--latest', 'Upgrade to latest version (ignore manifest)')
-  .action(async (agent: string | undefined, options) => {
-    const scopeName = options.scope as ScopeName;
-    const scope = getScope(scopeName);
-    const localPath = scope ? getRepoLocalPath(scope.source) : null;
-    const manifest = localPath ? readManifest(localPath) : null;
-
-    const agentsToUpgrade: AgentId[] = agent
-      ? [agent.toLowerCase() as AgentId]
-      : ALL_AGENT_IDS.filter((id) => manifest?.clis?.[id] || options.latest);
-
-    if (agentsToUpgrade.length === 0) {
-      console.log(chalk.yellow('No CLIs to upgrade. Add CLIs to manifest or use --latest'));
+program
+  .command('use <spec>')
+  .description('Set default agent version. Examples: agents use claude@1.5.0')
+  .option('-p, --project', 'Set in project manifest instead of global default')
+  .action(async (spec: string, options) => {
+    const parsed = parseAgentSpec(spec);
+    if (!parsed) {
+      console.log(chalk.red(`Invalid agent: ${spec}`));
+      console.log(chalk.gray(`Format: <agent>@<version>. Available: ${ALL_AGENT_IDS.join(', ')}`));
       return;
     }
 
-    const { exec } = await import('child_process');
-    const { promisify } = await import('util');
-    const execAsync = promisify(exec);
+    const { agent, version } = parsed;
+    const agentConfig = AGENTS[agent];
+
+    if (!spec.includes('@') || version === 'latest') {
+      console.log(chalk.red('Please specify a version: agents use <agent>@<version>'));
+      const versions = listInstalledVersions(agent);
+      if (versions.length > 0) {
+        console.log(chalk.gray(`Installed versions: ${versions.join(', ')}`));
+      }
+      return;
+    }
+
+    if (!isVersionInstalled(agent, version)) {
+      console.log(chalk.red(`${agentConfig.name}@${version} not installed`));
+      console.log(chalk.gray(`Run: agents add ${agent}@${version}`));
+      return;
+    }
+
+    if (options.project) {
+      // Set in project manifest
+      const projectManifestDir = path.join(process.cwd(), '.agents');
+      const projectManifestPath = path.join(projectManifestDir, 'agents.yaml');
+
+      if (!fs.existsSync(projectManifestDir)) {
+        fs.mkdirSync(projectManifestDir, { recursive: true });
+      }
+
+      const manifest = fs.existsSync(projectManifestPath)
+        ? readManifest(process.cwd()) || createDefaultManifest()
+        : createDefaultManifest();
+
+      manifest.clis = manifest.clis || {};
+      manifest.clis[agent] = {
+        package: agentConfig.npmPackage,
+        version,
+      };
+
+      writeManifest(process.cwd(), manifest);
+      console.log(chalk.green(`Set ${agentConfig.name}@${version} for this project`));
+    } else {
+      // Set global default
+      setGlobalDefault(agent, version);
+      console.log(chalk.green(`Set ${agentConfig.name}@${version} as global default`));
+    }
+  });
+
+program
+  .command('list')
+  .description('List installed agent CLI versions')
+  .action(async () => {
+    console.log(chalk.bold('Installed Agent CLIs\n'));
+
+    let hasAny = false;
+
+    for (const agentId of ALL_AGENT_IDS) {
+      const agent = AGENTS[agentId];
+      const versions = listInstalledVersions(agentId);
+      const globalDefault = getGlobalDefault(agentId);
+
+      if (versions.length > 0) {
+        hasAny = true;
+        console.log(`  ${chalk.bold(agent.name)}`);
+
+        for (const version of versions) {
+          const isDefault = version === globalDefault;
+          const marker = isDefault ? chalk.green(' (default)') : '';
+          console.log(`    ${version}${marker}`);
+        }
+
+        // Check for project override
+        const projectVersion = getProjectVersionFromCwd(agentId);
+        if (projectVersion && projectVersion !== globalDefault) {
+          console.log(chalk.cyan(`    -> ${projectVersion} (project)`));
+        }
+
+        console.log();
+      }
+    }
+
+    if (!hasAny) {
+      console.log(chalk.gray('  No agent CLIs installed.'));
+      console.log(chalk.gray('  Run: agents add claude@latest'));
+      console.log();
+    }
+
+    // Show shims path status
+    if (hasAny) {
+      const shimsDir = getShimsDir();
+      if (isShimsInPath()) {
+        console.log(chalk.gray(`Shims: ${shimsDir} (in PATH)`));
+      } else {
+        console.log(chalk.yellow(`Shims: ${shimsDir} (not in PATH)`));
+        console.log(chalk.gray('Add to PATH for automatic version switching'));
+      }
+    }
+  });
+
+/**
+ * Helper to get project version from current working directory.
+ */
+function getProjectVersionFromCwd(agent: AgentId): string | null {
+  const manifestPath = path.join(process.cwd(), '.agents', 'agents.yaml');
+  if (!fs.existsSync(manifestPath)) {
+    return null;
+  }
+
+  try {
+    const manifest = readManifest(process.cwd());
+    return manifest?.clis?.[agent]?.version || null;
+  } catch {
+    return null;
+  }
+}
+
+program
+  .command('upgrade [agent]')
+  .description('Upgrade agent CLI(s) to latest version')
+  .option('-p, --project', 'Upgrade to version in project manifest')
+  .action(async (agent: string | undefined, options) => {
+    const agentsToUpgrade: AgentId[] = agent
+      ? [agent.toLowerCase() as AgentId]
+      : ALL_AGENT_IDS.filter((id) => listInstalledVersions(id).length > 0);
+
+    if (agentsToUpgrade.length === 0) {
+      console.log(chalk.yellow('No agent CLIs installed. Run: agents add <agent>@<version>'));
+      return;
+    }
 
     for (const agentId of agentsToUpgrade) {
       const agentConfig = AGENTS[agentId];
@@ -2542,20 +2658,52 @@ cliCmd
         continue;
       }
 
-      const cliConfig = manifest?.clis?.[agentId];
-      const version = options.latest ? 'latest' : (cliConfig?.version || 'latest');
-      const pkg = cliConfig?.package || agentConfig.npmPackage;
+      // Determine target version
+      let targetVersion = 'latest';
+      if (options.project) {
+        const projectVersion = getProjectVersionFromCwd(agentId);
+        if (projectVersion) {
+          targetVersion = projectVersion;
+        }
+      }
 
-      const spinner = ora(`Upgrading ${agentConfig.name} to ${version}...`).start();
+      const spinner = ora(`Upgrading ${agentConfig.name} to ${targetVersion}...`).start();
 
-      try {
-        await execAsync(`npm install -g ${pkg}@${version}`);
-        spinner.succeed(`${agentConfig.name} upgraded to ${version}`);
-      } catch (err) {
+      const result = await installVersion(agentId, targetVersion, (msg) => {
+        spinner.text = msg;
+      });
+
+      if (result.success) {
+        spinner.succeed(`Upgraded ${agentConfig.name} to ${result.installedVersion}`);
+
+        // Update global default to new version
+        setGlobalDefault(agentId, result.installedVersion);
+      } else {
         spinner.fail(`Failed to upgrade ${agentConfig.name}`);
-        console.error(chalk.gray((err as Error).message));
+        console.error(chalk.gray(result.error || 'Unknown error'));
       }
     }
+  });
+
+// Legacy alias for backwards compatibility
+program
+  .command('cli')
+  .description('(deprecated) Use: agents add, agents remove, agents list')
+  .action(() => {
+    console.log(chalk.yellow('The "cli" subcommand is deprecated.'));
+    console.log();
+    console.log('New commands:');
+    console.log('  agents add <agent>@<version>     Install agent CLI');
+    console.log('  agents remove <agent>[@version]  Remove agent CLI');
+    console.log('  agents use <agent>@<version>     Set default version');
+    console.log('  agents list                      List installed versions');
+    console.log('  agents upgrade [agent]           Upgrade to latest');
+    console.log();
+    console.log('Examples:');
+    console.log('  agents add claude@1.5.0');
+    console.log('  agents add claude@1.5.0 -p       Pin to project');
+    console.log('  agents use claude@1.4.0');
+    console.log('  agents remove claude@1.4.0');
   });
 
 // =============================================================================
