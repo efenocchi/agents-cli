@@ -83,6 +83,10 @@ VERSION_HOME="$VERSION_DIR/home"
 mkdir -p "$VERSION_HOME"
 
 # Symlink Library for Keychain, preferences, etc.
+# If Library exists but isn't a symlink, remove it (old installs created a directory)
+if [ -e "$VERSION_HOME/Library" ] && [ ! -L "$VERSION_HOME/Library" ]; then
+  rm -rf "$VERSION_HOME/Library"
+fi
 if [ ! -e "$VERSION_HOME/Library" ] && [ -d "$REAL_HOME/Library" ]; then
   ln -s "$REAL_HOME/Library" "$VERSION_HOME/Library"
 fi
