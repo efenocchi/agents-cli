@@ -4,7 +4,13 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as TOML from 'smol-toml';
-import type { AgentConfig, AgentId, CliState } from './types.js';
+import type { AgentConfig, AgentId } from './types.js';
+
+export interface CliState {
+  installed: boolean;
+  version: string | null;
+  path: string | null;
+}
 
 const execAsync = promisify(exec);
 

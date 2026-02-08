@@ -30,19 +30,10 @@ export function writeManifest(repoPath: string, manifest: Manifest): void {
 
 export function createDefaultManifest(): Manifest {
   return {
-    clis: {
-      claude: {
-        package: '@anthropic-ai/claude-code',
-        version: 'latest',
-      },
-      codex: {
-        package: '@openai/codex',
-        version: 'latest',
-      },
-      gemini: {
-        package: '@google/gemini-cli',
-        version: 'latest',
-      },
+    agents: {
+      claude: 'latest',
+      codex: 'latest',
+      gemini: 'latest',
     },
     dependencies: {},
     mcp: {},

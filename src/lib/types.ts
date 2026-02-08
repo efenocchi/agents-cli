@@ -23,11 +23,6 @@ export interface AgentConfig {
   };
 }
 
-export interface CliConfig {
-  package: string;
-  version: string;
-}
-
 export interface McpServerConfig {
   command?: string;
   url?: string;
@@ -58,7 +53,7 @@ export interface DriveManifestEntry {
 }
 
 export interface Manifest {
-  clis?: Partial<Record<AgentId, CliConfig>>;
+  agents?: Partial<Record<AgentId, string>>;
   dependencies?: Record<string, string>;
   mcp?: Record<string, McpServerConfig>;
   drives?: Record<string, DriveManifestEntry>;
@@ -69,25 +64,9 @@ export interface Manifest {
   };
 }
 
-export interface CliState {
-  installed: boolean;
-  version: string | null;
-  path: string | null;
-}
-
 export interface CommandInstallation {
   path: string;
   method: 'symlink' | 'copy';
-}
-
-export interface CommandState {
-  source: string;
-  installations: Partial<Record<AgentId, CommandInstallation>>;
-}
-
-export interface McpState {
-  registeredWith: AgentId[];
-  version?: string;
 }
 
 export interface SkillMetadata {
@@ -119,12 +98,6 @@ export interface InstalledSkill {
   agent: AgentId;
 }
 
-export interface PackageState {
-  localPath: string;
-  commit: string;
-  installedAt: string;
-}
-
 export interface RepoInfo {
   source: string;
   branch: string;
@@ -132,12 +105,12 @@ export interface RepoInfo {
   lastSync: string;
 }
 
-// Built-in scopes have fixed priorities
+// Built-in repos have fixed priorities
 // system: 0, user: 10, custom: 20+, project: 100 (always highest)
-export type BuiltinScope = 'system' | 'user' | 'project';
-export type ScopeName = BuiltinScope | string;
+export type BuiltinRepo = 'system' | 'user' | 'project';
+export type RepoName = BuiltinRepo | string;
 
-export const SCOPE_PRIORITIES: Record<BuiltinScope, number> = {
+export const REPO_PRIORITIES: Record<BuiltinRepo, number> = {
   system: 0,
   user: 10,
   project: 100,
@@ -242,7 +215,7 @@ export interface ResolvedPackage {
   skillEntry?: SkillEntry;
 }
 
-export interface ScopeConfig {
+export interface RepoConfig {
   source: string;
   branch: string;
   commit: string;
@@ -251,25 +224,11 @@ export interface ScopeConfig {
   readonly?: boolean;
 }
 
-export interface AgentVersionsState {
-  installed: string[];
-  default: string | null;
-}
-
 export interface Meta {
-  version: string;
-  scopes: Record<ScopeName, ScopeConfig>;
+  agents?: Partial<Record<AgentId, string>>;
+  repos: Record<RepoName, RepoConfig>;
   registries?: Record<RegistryType, Record<string, RegistryConfig>>;
-  clis: Partial<Record<AgentId, CliState>>;
-  versions?: Partial<Record<AgentId, AgentVersionsState>>;
-  packages: Record<string, PackageState>;
-  commands: Record<string, CommandState>;
-  skills: Record<string, SkillState>;
-  mcp: Record<string, McpState>;
 }
-
-// Legacy alias
-export type State = Meta;
 
 export interface SyncOptions {
   agents?: AgentId[];

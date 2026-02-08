@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import type { AgentId, AgentVersionsState } from './types.js';
+import type { AgentId } from './types.js';
 import { getVersionsDir, getShimsDir, ensureAgentsDir, readMeta, writeMeta } from './state.js';
 import { AGENTS } from './agents.js';
 
@@ -96,7 +96,7 @@ export function listInstalledVersions(agent: AgentId): string[] {
  */
 export function getGlobalDefault(agent: AgentId): string | null {
   const meta = readMeta();
-  return meta.versions?.[agent]?.default || null;
+  return meta.agents?.[agent] || null;
 }
 
 /**
@@ -104,33 +104,10 @@ export function getGlobalDefault(agent: AgentId): string | null {
  */
 export function setGlobalDefault(agent: AgentId, version: string): void {
   const meta = readMeta();
-  if (!meta.versions) {
-    meta.versions = {};
+  if (!meta.agents) {
+    meta.agents = {};
   }
-  if (!meta.versions[agent]) {
-    meta.versions[agent] = { installed: [], default: null };
-  }
-  meta.versions[agent]!.default = version;
-  writeMeta(meta);
-}
-
-/**
- * Get versions state for an agent from meta.
- */
-export function getAgentVersionsState(agent: AgentId): AgentVersionsState {
-  const meta = readMeta();
-  return meta.versions?.[agent] || { installed: [], default: null };
-}
-
-/**
- * Update versions state in meta after install/remove.
- */
-export function updateVersionsState(agent: AgentId, state: AgentVersionsState): void {
-  const meta = readMeta();
-  if (!meta.versions) {
-    meta.versions = {};
-  }
-  meta.versions[agent] = state;
+  meta.agents[agent] = version;
   writeMeta(meta);
 }
 
@@ -199,19 +176,10 @@ export async function installVersion(
       }
     }
 
-    // Update state
-    const state = getAgentVersionsState(agent);
-    if (!state.installed.includes(installedVersion)) {
-      state.installed.push(installedVersion);
-      state.installed.sort(compareVersions);
-    }
-
     // Set as default if first install
-    if (!state.default) {
-      state.default = installedVersion;
+    if (!getGlobalDefault(agent)) {
+      setGlobalDefault(agent, installedVersion);
     }
-
-    updateVersionsState(agent, state);
 
     return { success: true, installedVersion };
   } catch (err) {
@@ -235,16 +203,21 @@ export function removeVersion(agent: AgentId, version: string): boolean {
 
   fs.rmSync(versionDir, { recursive: true, force: true });
 
-  // Update state
-  const state = getAgentVersionsState(agent);
-  state.installed = state.installed.filter((v) => v !== version);
-
-  // Clear default if it was removed
-  if (state.default === version) {
-    state.default = state.installed.length > 0 ? state.installed[state.installed.length - 1] : null;
+  // Update default if it was removed
+  if (getGlobalDefault(agent) === version) {
+    const remaining = listInstalledVersions(agent);
+    const newDefault = remaining.length > 0 ? remaining[remaining.length - 1] : null;
+    if (newDefault) {
+      setGlobalDefault(agent, newDefault);
+    } else {
+      // Clear the default
+      const meta = readMeta();
+      if (meta.agents?.[agent]) {
+        delete meta.agents[agent];
+        writeMeta(meta);
+      }
+    }
   }
-
-  updateVersionsState(agent, state);
 
   return true;
 }
@@ -299,10 +272,10 @@ export function getProjectVersion(agent: AgentId, startPath: string): string | n
     if (fs.existsSync(manifestPath)) {
       try {
         const content = fs.readFileSync(manifestPath, 'utf-8');
-        // Simple YAML parsing for clis section
-        const clisMatch = content.match(new RegExp(`${agent}:[\\s\\S]*?version:\\s*['"]?([^'"\n]+)['"]?`, 'm'));
-        if (clisMatch) {
-          return clisMatch[1].trim();
+        // Simple YAML parsing for agents section (flat format: claude: "1.5.0")
+        const agentMatch = content.match(new RegExp(`^\\s+${agent}:\\s*['"]?([^'"\n]+)['"]?`, 'm'));
+        if (agentMatch) {
+          return agentMatch[1].trim();
         }
       } catch {
         // Ignore parsing errors
