@@ -129,7 +129,7 @@ export function validateJob(config: Partial<JobConfig>): string[] {
   if (!config.agent || typeof config.agent !== 'string') {
     errors.push('agent is required');
   }
-  const validJobAgents = ['claude', 'codex', 'gemini'];
+  const validJobAgents = ['claude', 'codex', 'gemini', 'cursor', 'opencode'];
   if (config.agent && !validJobAgents.includes(config.agent)) {
     errors.push(`agent must be one of: ${validJobAgents.join(', ')}`);
   }

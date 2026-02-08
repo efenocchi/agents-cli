@@ -1,0 +1,33 @@
+# agents-cli version locks and configuration
+# This ensures consistent CLI versions when working on this repo
+
+clis:
+  claude:
+    package: "@anthropic-ai/claude-code"
+    version: latest
+  codex:
+    package: "@openai/codex"
+    version: latest
+  gemini:
+    package: "@google/gemini-cli"
+    version: latest
+  cursor:
+    package: ""
+    version: latest
+  opencode:
+    package: "opencode-ai"
+    version: latest
+
+dependencies: {}
+
+mcp: {}
+
+defaults:
+  method: symlink
+  scope: global
+  agents:
+    - claude
+    - codex
+    - gemini
+    - cursor
+    - opencode
