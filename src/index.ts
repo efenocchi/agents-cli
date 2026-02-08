@@ -199,18 +199,14 @@ program
   .description('Manage AI coding agents - configs, CLIs, and automation')
   .version(VERSION)
   .helpOption('-h, --help', 'Show help')
-  .addHelpCommand(false) // Disable default help subcommand
-  .configureHelp({
-    subcommandTerm: () => '', // Hide subcommand terms
-    subcommandDescription: () => '', // Hide subcommand descriptions
-  });
+  .addHelpCommand(false); // Disable default help subcommand
 
-// Override help to show our custom format
-program.on('--help', () => {});
-
-// Completely override the help output
+// Custom help for the main program only
+const originalHelpInformation = program.helpInformation.bind(program);
 program.helpInformation = function () {
-  return `Usage: agents [options] [command]
+  // Only use custom help for the root program
+  if (this.name() === 'agents' && !this.parent) {
+    return `Usage: agents [options] [command]
 
 Manage AI coding agents - configs, CLIs, and automation
 
@@ -251,6 +247,8 @@ Context
 
 Run 'agents <command> --help' for details.
 `;
+  }
+  return originalHelpInformation();
 };
 
 // Check for updates before command runs, prompt to upgrade
