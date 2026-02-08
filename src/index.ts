@@ -778,7 +778,7 @@ program
       const allDiscoveredJobs = discoverJobsFromRepo(localPath);
       const allDiscoveredDrives = discoverDrivesFromRepo(localPath);
 
-      // Determine which agents to sync
+      // Determine which agents should share central resources
       const cliStates = await getAllCliStates();
       let selectedAgents: AgentId[];
       if (agentFilter) {
@@ -789,8 +789,9 @@ program
         selectedAgents = (manifest?.defaults?.agents || ALL_AGENT_IDS) as AgentId[];
       } else {
         const installedAgents = ALL_AGENT_IDS.filter((id) => cliStates[id]?.installed || id === 'cursor');
+        console.log(chalk.gray('\nResources are stored centrally in ~/.agents/ and shared across selected agents.\n'));
         selectedAgents = await checkbox({
-          message: 'Select agents to sync:',
+          message: 'Which agents should share these resources?',
           choices: installedAgents.map((id) => ({
             name: AGENTS[id].name,
             value: id,
@@ -970,49 +971,55 @@ program
       const formatAgentList = (agents: AgentId[]) =>
         agents.map((id) => AGENTS[id].name).join(', ');
 
+      // Show where central resources will be installed
+      const syncedAgentNames = selectedAgents.map((id) => AGENTS[id].name).join(', ');
+
       if (newItems.length > 0) {
         console.log(chalk.green('  NEW (will install):\n'));
         const byType = { command: [] as ResourceItem[], skill: [] as ResourceItem[], hook: [] as ResourceItem[], mcp: [] as ResourceItem[], instructions: [] as ResourceItem[], job: [] as ResourceItem[], drive: [] as ResourceItem[] };
         for (const item of newItems) byType[item.type].push(item);
 
+        // Central resources - shared across all synced agents
         if (byType.command.length > 0) {
-          console.log(`    Commands:`);
+          console.log(`    Commands ${chalk.gray('(~/.agents/commands/)')}:`);
           for (const item of byType.command) {
-            console.log(`      ${chalk.cyan(item.name.padEnd(20))} ${chalk.gray(formatAgentList(item.agents))}`);
+            console.log(`      ${chalk.cyan(item.name)}`);
           }
         }
         if (byType.skill.length > 0) {
-          console.log(`    Skills:`);
+          console.log(`    Skills ${chalk.gray('(~/.agents/skills/)')}:`);
           for (const item of byType.skill) {
-            console.log(`      ${chalk.cyan(item.name.padEnd(20))} ${chalk.gray(formatAgentList(item.agents))}`);
+            console.log(`      ${chalk.cyan(item.name)}`);
           }
         }
         if (byType.hook.length > 0) {
-          console.log(`    Hooks:`);
+          console.log(`    Hooks ${chalk.gray('(~/.agents/hooks/)')}:`);
           for (const item of byType.hook) {
-            console.log(`      ${chalk.cyan(item.name.padEnd(20))} ${chalk.gray(formatAgentList(item.agents))}`);
+            console.log(`      ${chalk.cyan(item.name)}`);
           }
         }
+        if (byType.instructions.length > 0) {
+          console.log(`    Memory ${chalk.gray('(~/.agents/memory/)')}:`);
+          for (const item of byType.instructions) {
+            console.log(`      ${chalk.cyan(item.name)}`);
+          }
+        }
+
+        // Per-agent resources
         if (byType.mcp.length > 0) {
-          console.log(`    MCP Servers:`);
+          console.log(`    MCP Servers ${chalk.gray('(per-agent registration)')}:`);
           for (const item of byType.mcp) {
             console.log(`      ${chalk.cyan(item.name.padEnd(20))} ${chalk.gray(formatAgentList(item.agents))}`);
           }
         }
-        if (byType.instructions.length > 0) {
-          console.log(`    Instructions:`);
-          for (const item of byType.instructions) {
-            console.log(`      ${chalk.cyan(item.name.padEnd(20))} ${chalk.gray(formatAgentList(item.agents))}`);
-          }
-        }
         if (byType.job.length > 0) {
-          console.log(`    Jobs:`);
+          console.log(`    Jobs ${chalk.gray('(~/.agents/jobs/)')}:`);
           for (const item of byType.job) {
             console.log(`      ${chalk.cyan(item.name)}`);
           }
         }
         if (byType.drive.length > 0) {
-          console.log(`    Drives:`);
+          console.log(`    Drives ${chalk.gray('(~/.agents/drives/)')}:`);
           for (const item of byType.drive) {
             console.log(`      ${chalk.cyan(item.name)}`);
           }
@@ -1025,91 +1032,59 @@ program
         const byType = { command: [] as ResourceItem[], skill: [] as ResourceItem[], hook: [] as ResourceItem[], mcp: [] as ResourceItem[], instructions: [] as ResourceItem[], job: [] as ResourceItem[], drive: [] as ResourceItem[] };
         for (const item of upToDateItems) byType[item.type].push(item);
 
+        // Central resources - just show names
         if (byType.command.length > 0) {
-          console.log(`    Commands:`);
-          for (const item of byType.command) {
-            console.log(`      ${chalk.dim(item.name.padEnd(20))} ${chalk.dim(formatAgentList(item.agents))}`);
-          }
+          console.log(`    Commands: ${chalk.dim(byType.command.map(i => i.name).join(', '))}`);
         }
         if (byType.skill.length > 0) {
-          console.log(`    Skills:`);
-          for (const item of byType.skill) {
-            console.log(`      ${chalk.dim(item.name.padEnd(20))} ${chalk.dim(formatAgentList(item.agents))}`);
-          }
+          console.log(`    Skills: ${chalk.dim(byType.skill.map(i => i.name).join(', '))}`);
         }
         if (byType.hook.length > 0) {
-          console.log(`    Hooks:`);
-          for (const item of byType.hook) {
-            console.log(`      ${chalk.dim(item.name.padEnd(20))} ${chalk.dim(formatAgentList(item.agents))}`);
-          }
+          console.log(`    Hooks: ${chalk.dim(byType.hook.map(i => i.name).join(', '))}`);
         }
         if (byType.instructions.length > 0) {
-          console.log(`    Instructions:`);
-          for (const item of byType.instructions) {
-            console.log(`      ${chalk.dim(item.name.padEnd(20))} ${chalk.dim(formatAgentList(item.agents))}`);
-          }
+          console.log(`    Memory: ${chalk.dim(byType.instructions.map(i => i.name).join(', '))}`);
         }
         if (byType.job.length > 0) {
-          console.log(`    Jobs:`);
-          for (const item of byType.job) {
-            console.log(`      ${chalk.dim(item.name)}`);
-          }
+          console.log(`    Jobs: ${chalk.dim(byType.job.map(i => i.name).join(', '))}`);
         }
         if (byType.drive.length > 0) {
-          console.log(`    Drives:`);
-          for (const item of byType.drive) {
-            console.log(`      ${chalk.dim(item.name)}`);
-          }
+          console.log(`    Drives: ${chalk.dim(byType.drive.map(i => i.name).join(', '))}`);
         }
         console.log();
       }
 
       if (existingItems.length > 0) {
-        console.log(chalk.yellow('  EXISTING (conflicts):\n'));
+        console.log(chalk.yellow('  CONFLICTS (will prompt):\n'));
         const byType = { command: [] as ResourceItem[], skill: [] as ResourceItem[], hook: [] as ResourceItem[], mcp: [] as ResourceItem[], instructions: [] as ResourceItem[], job: [] as ResourceItem[], drive: [] as ResourceItem[] };
         for (const item of existingItems) byType[item.type].push(item);
 
+        // Central resources
         if (byType.command.length > 0) {
-          console.log(`    Commands:`);
-          for (const item of byType.command) {
-            console.log(`      ${chalk.yellow(item.name.padEnd(20))} ${chalk.gray(formatAgentList(item.agents))}`);
-          }
+          console.log(`    Commands: ${chalk.yellow(byType.command.map(i => i.name).join(', '))}`);
         }
         if (byType.skill.length > 0) {
-          console.log(`    Skills:`);
-          for (const item of byType.skill) {
-            console.log(`      ${chalk.yellow(item.name.padEnd(20))} ${chalk.gray(formatAgentList(item.agents))}`);
-          }
+          console.log(`    Skills: ${chalk.yellow(byType.skill.map(i => i.name).join(', '))}`);
         }
         if (byType.hook.length > 0) {
-          console.log(`    Hooks:`);
-          for (const item of byType.hook) {
-            console.log(`      ${chalk.yellow(item.name.padEnd(20))} ${chalk.gray(formatAgentList(item.agents))}`);
-          }
+          console.log(`    Hooks: ${chalk.yellow(byType.hook.map(i => i.name).join(', '))}`);
         }
+        if (byType.instructions.length > 0) {
+          console.log(`    Memory: ${chalk.yellow(byType.instructions.map(i => i.name).join(', '))}`);
+        }
+
+        // Per-agent resources
         if (byType.mcp.length > 0) {
           console.log(`    MCP Servers:`);
           for (const item of byType.mcp) {
             console.log(`      ${chalk.yellow(item.name.padEnd(20))} ${chalk.gray(formatAgentList(item.agents))}`);
           }
         }
-        if (byType.instructions.length > 0) {
-          console.log(`    Instructions:`);
-          for (const item of byType.instructions) {
-            console.log(`      ${chalk.yellow(item.name.padEnd(20))} ${chalk.gray(formatAgentList(item.agents))}`);
-          }
-        }
         if (byType.job.length > 0) {
-          console.log(`    Jobs:`);
-          for (const item of byType.job) {
-            console.log(`      ${chalk.yellow(item.name)}`);
-          }
+          console.log(`    Jobs: ${chalk.yellow(byType.job.map(i => i.name).join(', '))}`);
         }
         if (byType.drive.length > 0) {
-          console.log(`    Drives:`);
-          for (const item of byType.drive) {
-            console.log(`      ${chalk.yellow(item.name)}`);
-          }
+          console.log(`    Drives: ${chalk.yellow(byType.drive.map(i => i.name).join(', '))}`);
         }
         console.log();
       }
