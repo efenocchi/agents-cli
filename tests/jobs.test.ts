@@ -113,10 +113,17 @@ describe('validateJob', () => {
     expect(errors).toContain('timeout must be like 30m, 2h, 1h30m');
   });
 
-  it('accepts all valid agents', () => {
-    for (const agent of ['claude', 'codex', 'gemini', 'cursor', 'opencode']) {
+  it('accepts all valid job agents', () => {
+    for (const agent of ['claude', 'codex', 'gemini']) {
       const errors = validateJob({ ...makeConfig(), agent: agent as any });
       expect(errors).toEqual([]);
+    }
+  });
+
+  it('rejects agents without job support', () => {
+    for (const agent of ['cursor', 'opencode']) {
+      const errors = validateJob({ ...makeConfig(), agent: agent as any });
+      expect(errors.some((e) => e.includes('agent must be one of'))).toBe(true);
     }
   });
 });
