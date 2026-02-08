@@ -311,7 +311,7 @@ program.hook('preAction', async () => {
 
 program
   .command('status [agent]')
-  .description('Show installed agents, resources, and scopes')
+  .description('Show installed agents, resources, and repos')
   .action(async (agentFilter?: string) => {
     const spinner = ora({ text: 'Loading...', isSilent: !process.stdout.isTTY }).start();
 
@@ -344,38 +344,259 @@ program
     const mcpAgentsToShow = filterAgentId
       ? MCP_CAPABLE_AGENTS.filter((id) => id === filterAgentId)
       : MCP_CAPABLE_AGENTS;
+    const hooksAgentsToShow = filterAgentId
+      ? HOOKS_CAPABLE_AGENTS.filter((id) => id === filterAgentId)
+      : HOOKS_CAPABLE_AGENTS;
 
-    // Collect all data while spinner is active
-    const commandsData = agentsToShow.map((agentId) => ({
-      agent: AGENTS[agentId],
-      commands: listInstalledCommandsWithScope(agentId, cwd),
-    }));
+    // Build repo resource map for sync status checking
+    type SyncStatus = 'in_sync' | 'outdated' | 'local';
 
-    const skillsData = skillAgentsToShow.map((agentId) => ({
-      agent: AGENTS[agentId],
-      skills: listInstalledSkillsWithScope(agentId, cwd),
-    }));
+    interface RepoResourceEntry {
+      repoName: string;
+      localRepoPath: string;
+    }
+
+    const repoCommandMap = new Map<string, RepoResourceEntry>();
+    const repoSkillMap = new Map<string, RepoResourceEntry & { sourcePath: string }>();
+    const repoInstructionMap = new Map<string, RepoResourceEntry>(); // keyed by agentId
+    const repoHookMap = new Map<string, RepoResourceEntry>();
+
+    const repos = getReposByPriority();
+    for (const { name, config } of repos) {
+      const localPath = getRepoLocalPath(config.source);
+      if (!fs.existsSync(localPath)) continue;
+
+      const entry: RepoResourceEntry = { repoName: name, localRepoPath: localPath };
+
+      try {
+        for (const cmd of discoverCommands(localPath)) {
+          repoCommandMap.set(cmd.name, entry);
+        }
+        for (const skill of discoverSkillsFromRepo(localPath)) {
+          repoSkillMap.set(skill.name, { ...entry, sourcePath: skill.path });
+        }
+        for (const instr of discoverInstructionsFromRepo(localPath)) {
+          repoInstructionMap.set(instr.agentId, entry);
+        }
+        const hookResult = discoverHooksFromRepo(localPath);
+        for (const hookName of hookResult.shared) {
+          repoHookMap.set(hookName, entry);
+        }
+        for (const hookNames of Object.values(hookResult.agentSpecific)) {
+          for (const hookName of hookNames) {
+            repoHookMap.set(hookName, entry);
+          }
+        }
+      } catch {
+        // Skip repos that fail to discover
+      }
+    }
+
+    // Sync status helpers
+    function getCommandSync(name: string, agentId: AgentId): { status: SyncStatus; repo?: string } {
+      const entry = repoCommandMap.get(name);
+      if (!entry) return { status: 'local' };
+      const sourcePath = resolveCommandSource(entry.localRepoPath, name, agentId);
+      if (!sourcePath) return { status: 'local' };
+      return commandContentMatches(agentId, name, sourcePath)
+        ? { status: 'in_sync', repo: entry.repoName }
+        : { status: 'outdated', repo: entry.repoName };
+    }
+
+    function getSkillSync(name: string, agentId: AgentId): { status: SyncStatus; repo?: string } {
+      const entry = repoSkillMap.get(name);
+      if (!entry) return { status: 'local' };
+      return skillContentMatches(agentId, name, entry.sourcePath)
+        ? { status: 'in_sync', repo: entry.repoName }
+        : { status: 'outdated', repo: entry.repoName };
+    }
+
+    function getInstructionsSync(agentId: AgentId): { status: SyncStatus; repo?: string } {
+      const entry = repoInstructionMap.get(agentId);
+      if (!entry) return { status: 'local' };
+      const sourcePath = resolveInstructionsSource(entry.localRepoPath, agentId);
+      if (!sourcePath) return { status: 'local' };
+      return instructionsContentMatches(agentId, sourcePath)
+        ? { status: 'in_sync', repo: entry.repoName }
+        : { status: 'outdated', repo: entry.repoName };
+    }
+
+    function getHookSync(name: string, agentId: AgentId): { status: SyncStatus; repo?: string } {
+      const entry = repoHookMap.get(name);
+      if (!entry) return { status: 'local' };
+      const sourceEntry = getSourceHookEntry(entry.localRepoPath, agentId, name);
+      if (!sourceEntry) return { status: 'local' };
+      return hookContentMatches(agentId, name, sourceEntry)
+        ? { status: 'in_sync', repo: entry.repoName }
+        : { status: 'outdated', repo: entry.repoName };
+    }
+
+    // Color helpers
+    function colorName(name: string, status: SyncStatus): string {
+      if (status === 'in_sync') return chalk.green(name);
+      if (status === 'outdated') return chalk.yellow(name);
+      return chalk.blue(name);
+    }
+
+    // Collect deduplicated resources
+    interface StatusResource {
+      name: string;
+      syncStatus: SyncStatus;
+      repoName?: string;
+      agents?: AgentId[];
+      ruleCount?: number;
+      version?: string;
+    }
+
+    // Commands
+    const userCommands: StatusResource[] = [];
+    const projectCommands: StatusResource[] = [];
+    const seenUserCmds = new Set<string>();
+    const seenProjectCmds = new Set<string>();
+
+    for (const agentId of agentsToShow) {
+      for (const cmd of listInstalledCommandsWithScope(agentId, cwd)) {
+        const seen = cmd.scope === 'user' ? seenUserCmds : seenProjectCmds;
+        const list = cmd.scope === 'user' ? userCommands : projectCommands;
+        if (!seen.has(cmd.name)) {
+          seen.add(cmd.name);
+          const sync = getCommandSync(cmd.name, agentId);
+          list.push({ name: cmd.name, syncStatus: sync.status, repoName: sync.repo });
+        }
+      }
+    }
+
+    // Skills
+    const userSkills: StatusResource[] = [];
+    const projectSkills: StatusResource[] = [];
+    const seenUserSkills = new Set<string>();
+    const seenProjectSkills = new Set<string>();
+
+    for (const agentId of skillAgentsToShow) {
+      for (const skill of listInstalledSkillsWithScope(agentId, cwd)) {
+        const seen = skill.scope === 'user' ? seenUserSkills : seenProjectSkills;
+        const list = skill.scope === 'user' ? userSkills : projectSkills;
+        if (!seen.has(skill.name)) {
+          seen.add(skill.name);
+          const sync = getSkillSync(skill.name, agentId);
+          list.push({ name: skill.name, syncStatus: sync.status, repoName: sync.repo, ruleCount: skill.ruleCount });
+        }
+      }
+    }
+
+    // MCPs - track which agents have each
+    const userMcps: StatusResource[] = [];
+    const projectMcps: StatusResource[] = [];
+    const seenUserMcps = new Map<string, StatusResource>();
+    const seenProjectMcps = new Map<string, StatusResource>();
 
     const installedMcpAgents = mcpAgentsToShow.filter((agentId) => cliStates[agentId]?.installed);
-    const mcpsData = installedMcpAgents.map((agentId) => ({
-      agent: AGENTS[agentId],
-      mcps: listInstalledMcpsWithScope(agentId, cwd),
-    }));
+    for (const agentId of installedMcpAgents) {
+      for (const mcp of listInstalledMcpsWithScope(agentId, cwd)) {
+        const seen = mcp.scope === 'user' ? seenUserMcps : seenProjectMcps;
+        const list = mcp.scope === 'user' ? userMcps : projectMcps;
+        const existing = seen.get(mcp.name);
+        if (existing) {
+          existing.agents!.push(agentId);
+        } else {
+          const resource: StatusResource = {
+            name: mcp.name,
+            syncStatus: 'local',
+            agents: [agentId],
+            version: mcp.version,
+          };
+          seen.set(mcp.name, resource);
+          list.push(resource);
+        }
+      }
+    }
 
-    const instructionsData = agentsToShow.map((agentId) => ({
-      agent: AGENTS[agentId],
-      instructions: listInstalledInstructionsWithScope(agentId, cwd),
-    }));
+    // Instructions
+    const userInstructions: StatusResource[] = [];
+    const projectInstructions: StatusResource[] = [];
+    const seenUserInstr = new Set<string>();
+    const seenProjectInstr = new Set<string>();
 
-    const scopes = filterAgentId ? [] : getReposByPriority();
+    for (const agentId of agentsToShow) {
+      for (const instr of listInstalledInstructionsWithScope(agentId, cwd)) {
+        if (!instr.exists) continue;
+        const key = AGENTS[agentId].instructionsFile;
+        const seen = instr.scope === 'user' ? seenUserInstr : seenProjectInstr;
+        const list = instr.scope === 'user' ? userInstructions : projectInstructions;
+        if (!seen.has(key)) {
+          seen.add(key);
+          const sync = getInstructionsSync(agentId);
+          list.push({ name: key, syncStatus: sync.status, repoName: sync.repo });
+        }
+      }
+    }
+
+    // Hooks - track which agents have each
+    const userHooks: StatusResource[] = [];
+    const projectHooks: StatusResource[] = [];
+    const seenUserHooks = new Map<string, StatusResource>();
+    const seenProjectHooks = new Map<string, StatusResource>();
+
+    for (const agentId of hooksAgentsToShow) {
+      for (const hook of listInstalledHooksWithScope(agentId, cwd)) {
+        const seen = hook.scope === 'user' ? seenUserHooks : seenProjectHooks;
+        const list = hook.scope === 'user' ? userHooks : projectHooks;
+        const existing = seen.get(hook.name);
+        if (existing) {
+          existing.agents!.push(agentId);
+        } else {
+          const sync = getHookSync(hook.name, agentId);
+          const resource: StatusResource = {
+            name: hook.name,
+            syncStatus: sync.status,
+            repoName: sync.repo,
+            agents: [agentId],
+          };
+          seen.set(hook.name, resource);
+          list.push(resource);
+        }
+      }
+    }
 
     spinner.stop();
 
-    // Helper to format MCP with version
-    const formatMcp = (m: { name: string; version?: string }, color: (s: string) => string) => {
-      return m.version ? color(`${m.name}@${m.version}`) : color(m.name);
-    };
+    // Render helpers
+    function renderList(resources: StatusResource[], showAgents = false): string {
+      if (resources.length === 0) return chalk.gray('none');
+      return resources
+        .map((r) => {
+          let display = r.version
+            ? colorName(`${r.name}@${r.version}`, r.syncStatus)
+            : colorName(r.name, r.syncStatus);
+          if (r.ruleCount !== undefined) display += chalk.gray(` (${r.ruleCount} rules)`);
+          if (showAgents && r.agents && r.agents.length > 0) {
+            display += chalk.gray(` [${r.agents.join(', ')}]`);
+          }
+          return display;
+        })
+        .join(', ');
+    }
 
+    function renderSection(
+      title: string,
+      user: StatusResource[],
+      project: StatusResource[],
+      showAgents = false
+    ): void {
+      console.log(chalk.bold(`\n${title}\n`));
+      if (user.length === 0 && project.length === 0) {
+        console.log(`  ${chalk.gray('none')}`);
+      } else {
+        if (user.length > 0) {
+          console.log(`  ${chalk.gray('User:')}    ${renderList(user, showAgents)}`);
+        }
+        if (project.length > 0) {
+          console.log(`  ${chalk.gray('Project:')} ${renderList(project, showAgents)}`);
+        }
+      }
+    }
+
+    // 1. Agent CLIs
     console.log(chalk.bold('Agent CLIs\n'));
     for (const agentId of agentsToShow) {
       const agent = AGENTS[agentId];
@@ -386,87 +607,32 @@ program
       console.log(`  ${agent.name.padEnd(14)} ${status}`);
     }
 
-    console.log(chalk.bold('\nInstalled Commands\n'));
-    for (const { agent, commands } of commandsData) {
-      const userCommands = commands.filter((c) => c.scope === 'user');
-      const projectCommands = commands.filter((c) => c.scope === 'project');
+    // 2. Commands
+    renderSection('Commands', userCommands, projectCommands);
 
-      if (commands.length === 0) {
-        console.log(`  ${chalk.bold(agent.name)}: ${chalk.gray('none')}`);
-      } else {
-        console.log(`  ${chalk.bold(agent.name)}:`);
-        if (userCommands.length > 0) {
-          console.log(`    ${chalk.gray('User:')} ${userCommands.map((c) => chalk.cyan(c.name)).join(', ')}`);
-        }
-        if (projectCommands.length > 0) {
-          console.log(`    ${chalk.gray('Project:')} ${projectCommands.map((c) => chalk.yellow(c.name)).join(', ')}`);
-        }
-      }
+    // 3. Skills
+    if (skillAgentsToShow.length > 0) {
+      renderSection('Skills', userSkills, projectSkills);
     }
 
-    if (skillsData.length > 0) {
-      console.log(chalk.bold('\nInstalled Skills\n'));
-      for (const { agent, skills } of skillsData) {
-        const userSkills = skills.filter((s) => s.scope === 'user');
-        const projectSkills = skills.filter((s) => s.scope === 'project');
-
-        if (skills.length === 0) {
-          console.log(`  ${chalk.bold(agent.name)}: ${chalk.gray('none')}`);
-        } else {
-          console.log(`  ${chalk.bold(agent.name)}:`);
-          if (userSkills.length > 0) {
-            console.log(`    ${chalk.gray('User:')} ${userSkills.map((s) => chalk.cyan(s.name)).join(', ')}`);
-          }
-          if (projectSkills.length > 0) {
-            console.log(`    ${chalk.gray('Project:')} ${projectSkills.map((s) => chalk.yellow(s.name)).join(', ')}`);
-          }
-        }
-      }
+    // 4. MCP Servers
+    if (installedMcpAgents.length > 0) {
+      renderSection('MCP Servers', userMcps, projectMcps, !filterAgentId);
     }
 
-    if (mcpsData.length > 0) {
-      console.log(chalk.bold('\nInstalled MCP Servers\n'));
-      for (const { agent, mcps } of mcpsData) {
-        const userMcps = mcps.filter((m) => m.scope === 'user');
-        const projectMcps = mcps.filter((m) => m.scope === 'project');
+    // 5. Instructions
+    renderSection('Instructions', userInstructions, projectInstructions);
 
-        if (mcps.length === 0) {
-          console.log(`  ${chalk.bold(agent.name)}: ${chalk.gray('none')}`);
-        } else {
-          console.log(`  ${chalk.bold(agent.name)}:`);
-          if (userMcps.length > 0) {
-            console.log(`    ${chalk.gray('User:')} ${userMcps.map((m) => formatMcp(m, chalk.cyan)).join(', ')}`);
-          }
-          if (projectMcps.length > 0) {
-            console.log(`    ${chalk.gray('Project:')} ${projectMcps.map((m) => formatMcp(m, chalk.yellow)).join(', ')}`);
-          }
-        }
-      }
+    // 6. Hooks (only if any exist)
+    if (hooksAgentsToShow.length > 0 && (userHooks.length > 0 || projectHooks.length > 0)) {
+      renderSection('Hooks', userHooks, projectHooks, !filterAgentId);
     }
 
-    console.log(chalk.bold('\nInstalled Instructions\n'));
-    for (const { agent, instructions } of instructionsData) {
-      const userInstr = instructions.find((i) => i.scope === 'user' && i.exists);
-      const projectInstr = instructions.find((i) => i.scope === 'project' && i.exists);
-
-      if (!userInstr && !projectInstr) {
-        console.log(`  ${chalk.bold(agent.name)}: ${chalk.gray('none')}`);
-      } else {
-        console.log(`  ${chalk.bold(agent.name)}:`);
-        if (userInstr) {
-          console.log(`    ${chalk.gray('User:')} ${chalk.cyan(agent.instructionsFile)}`);
-        }
-        if (projectInstr) {
-          console.log(`    ${chalk.gray('Project:')} ${chalk.yellow(agent.instructionsFile)}`);
-        }
-      }
-    }
-
-    // Only show scopes when not filtering by agent
+    // 7. Configured Repos
     if (!filterAgentId) {
-      if (scopes.length > 0) {
-        console.log(chalk.bold('\nConfigured Scopes\n'));
-        for (const { name, config } of scopes) {
+      if (repos.length > 0) {
+        console.log(chalk.bold('\nConfigured Repos\n'));
+        for (const { name, config } of repos) {
           const readonlyTag = config.readonly ? chalk.gray(' (readonly)') : '';
           const priorityTag = chalk.gray(` [priority: ${config.priority}]`);
           console.log(`  ${chalk.bold(name)}${readonlyTag}${priorityTag}`);
@@ -475,10 +641,14 @@ program
           console.log(`    Last sync: ${new Date(config.lastSync).toLocaleString()}`);
         }
       } else {
-        console.log(chalk.bold('\nNo scopes configured\n'));
+        console.log(chalk.bold('\nNo repos configured\n'));
         console.log(chalk.gray('  Run: agents repo add <source>'));
       }
     }
+
+    // Legend
+    console.log('');
+    console.log(chalk.gray(`  ${chalk.green('green')} = in sync   ${chalk.yellow('yellow')} = outdated   ${chalk.blue('blue')} = local`));
   });
 
 // =============================================================================
@@ -553,16 +723,16 @@ program
     const meta = readMeta();
     const existingRepo = meta.repos[repoName];
 
-    // Try: 1) provided source, 2) existing scope source, 3) fall back to system scope
+    // Try: 1) provided source, 2) existing repo source, 3) fall back to system repo
     targetSource = targetSource || existingRepo?.source;
     let effectiveRepo = repoName;
 
     if (!targetSource && repoName === 'user') {
-      const systemScope = meta.repos['system'];
-      if (systemScope?.source) {
-        targetSource = systemScope.source;
+      const systemRepo = meta.repos['system'];
+      if (systemRepo?.source) {
+        targetSource = systemRepo.source;
         effectiveRepo = 'system';
-        console.log(chalk.gray(`No user scope configured, using system scope: ${targetSource}\n`));
+        console.log(chalk.gray(`No user repo configured, using system repo: ${targetSource}\n`));
       }
     }
 
@@ -572,9 +742,9 @@ program
         targetSource = DEFAULT_SYSTEM_REPO;
         effectiveRepo = 'system';
       } else {
-        console.log(chalk.red(`No source specified for scope '${repoName}'.`));
-        const scopeHint = repoName === 'user' ? '' : ` --scope ${repoName}`;
-        console.log(chalk.gray(`  Usage: agents pull <source>${scopeHint}`));
+        console.log(chalk.red(`No source specified for repo '${repoName}'.`));
+        const repoHint = repoName === 'user' ? '' : ` --scope ${repoName}`;
+        console.log(chalk.gray(`  Usage: agents pull <source>${repoHint}`));
         console.log(chalk.gray('  Example: agents pull gh:username/.agents'));
         process.exit(1);
       }
@@ -585,7 +755,7 @@ program
     const isUserScope = effectiveRepo === 'user';
 
     const parsed = parseSource(targetSource);
-    const spinner = ora(`Syncing from ${effectiveRepo} scope...`).start();
+    const spinner = ora(`Syncing from ${effectiveRepo} repo...`).start();
 
     try {
       const { localPath, commit, isNew } = await cloneRepo(targetSource);
@@ -1254,7 +1424,7 @@ program
         });
       }
 
-      console.log(chalk.green(`\nSync complete from ${effectiveRepo} scope`));
+      console.log(chalk.green(`\nSync complete from ${effectiveRepo} repo`));
     } catch (err) {
       if (isPromptCancelled(err)) {
         console.log(chalk.yellow('\nCancelled'));
@@ -1273,26 +1443,26 @@ program
 program
   .command('push')
   .description('Export local config and push to your .agents repo')
-  .option('-s, --scope <scope>', 'Source scope', 'user')
+  .option('-s, --scope <scope>', 'Target repo name', 'user')
   .option('--export-only', 'Export to local repo only (skip git push)')
   .option('-m, --message <msg>', 'Commit message', 'Update agent configuration')
   .action(async (options) => {
     try {
       const repoName = options.scope as RepoName;
-      const scope = getRepo(repoName);
+      const repoConfig = getRepo(repoName);
 
-      if (!scope) {
-        console.log(chalk.red(`Scope '${repoName}' not configured.`));
+      if (!repoConfig) {
+        console.log(chalk.red(`Repo '${repoName}' not configured.`));
         console.log(chalk.gray('  Run: agents pull'));
         process.exit(1);
       }
 
-      if (scope.readonly) {
-        console.log(chalk.red(`Scope '${repoName}' is readonly. Cannot push.`));
+      if (repoConfig.readonly) {
+        console.log(chalk.red(`Repo '${repoName}' is readonly. Cannot push.`));
         process.exit(1);
       }
 
-      const localPath = getRepoLocalPath(scope.source);
+      const localPath = getRepoLocalPath(repoConfig.source);
       const manifest = readManifest(localPath) || createDefaultManifest();
 
       console.log(chalk.bold('\nExporting local configuration...\n'));
@@ -2806,23 +2976,23 @@ function getProjectVersionFromCwd(agent: AgentId): string | null {
 
 const repoCmd = program
   .command('repo')
-  .description('Manage .agents repo scopes');
+  .description('Manage .agents repos');
 
 repoCmd
   .command('list')
-  .description('List configured scopes')
+  .description('List configured repos')
   .action(() => {
     const scopes = getReposByPriority();
 
     if (scopes.length === 0) {
-      console.log(chalk.yellow('No scopes configured.'));
+      console.log(chalk.yellow('No repos configured.'));
       console.log(chalk.gray('  Run: agents repo add <source>'));
       console.log();
       return;
     }
 
-    console.log(chalk.bold('Configured Scopes\n'));
-    console.log(chalk.gray('  Scopes are applied in priority order (higher overrides lower)\n'));
+    console.log(chalk.bold('Configured Repos\n'));
+    console.log(chalk.gray('  Repos are applied in priority order (higher overrides lower)\n'));
 
     for (const { name, config } of scopes) {
       const readonlyTag = config.readonly ? chalk.gray(' (readonly)') : '';
@@ -2838,8 +3008,8 @@ repoCmd
 
 repoCmd
   .command('add <source>')
-  .description('Add or update a scope')
-  .option('-s, --scope <scope>', 'Target scope', 'user')
+  .description('Add or update a repo')
+  .option('-s, --scope <scope>', 'Target repo name', 'user')
   .option('-y, --yes', 'Skip confirmation prompts')
   .action(async (source: string, options) => {
     const repoName = options.scope as RepoName;
@@ -2847,7 +3017,7 @@ repoCmd
 
     if (existingRepo && !options.yes) {
       const shouldOverwrite = await confirm({
-        message: `Scope '${repoName}' already exists (${existingRepo.source}). Overwrite?`,
+        message: `Repo '${repoName}' already exists (${existingRepo.source}). Overwrite?`,
         default: false,
       });
       if (!shouldOverwrite) {
@@ -2857,12 +3027,12 @@ repoCmd
     }
 
     if (existingRepo?.readonly && !options.yes) {
-      console.log(chalk.red(`Scope '${repoName}' is readonly. Cannot overwrite.`));
+      console.log(chalk.red(`Repo '${repoName}' is readonly. Cannot overwrite.`));
       return;
     }
 
     const parsed = parseSource(source);
-    const spinner = ora(`Cloning repository for ${repoName} scope...`).start();
+    const spinner = ora(`Cloning repository for ${repoName} repo...`).start();
 
     try {
       const { commit, isNew } = await cloneRepo(source);
@@ -2878,11 +3048,11 @@ repoCmd
         readonly: repoName === 'system',
       });
 
-      console.log(chalk.green(`\nAdded scope '${repoName}' with priority ${priority}`));
-      const scopeHint = repoName === 'user' ? '' : ` --scope ${repoName}`;
-      console.log(chalk.gray(`  Run: agents pull${scopeHint} to sync commands`));
+      console.log(chalk.green(`\nAdded repo '${repoName}' with priority ${priority}`));
+      const repoHint = repoName === 'user' ? '' : ` --scope ${repoName}`;
+      console.log(chalk.gray(`  Run: agents pull${repoHint} to sync commands`));
     } catch (err) {
-      spinner.fail('Failed to add scope');
+      spinner.fail('Failed to add repo');
       console.error(chalk.red((err as Error).message));
       process.exit(1);
     }
@@ -2890,24 +3060,24 @@ repoCmd
 
 repoCmd
   .command('remove <scope>')
-  .description('Remove a scope')
+  .description('Remove a repo')
   .option('-y, --yes', 'Skip confirmation prompts')
   .action(async (repoName: string, options) => {
     const existingRepo = getRepo(repoName);
 
     if (!existingRepo) {
-      console.log(chalk.yellow(`Scope '${repoName}' not found.`));
+      console.log(chalk.yellow(`Repo '${repoName}' not found.`));
       return;
     }
 
     if (existingRepo.readonly) {
-      console.log(chalk.red(`Scope '${repoName}' is readonly. Cannot remove.`));
+      console.log(chalk.red(`Repo '${repoName}' is readonly. Cannot remove.`));
       return;
     }
 
     if (!options.yes) {
       const shouldRemove = await confirm({
-        message: `Remove scope '${repoName}' (${existingRepo.source})?`,
+        message: `Remove repo '${repoName}' (${existingRepo.source})?`,
         default: false,
       });
       if (!shouldRemove) {
@@ -2918,9 +3088,9 @@ repoCmd
 
     const removed = removeRepo(repoName);
     if (removed) {
-      console.log(chalk.green(`Removed scope '${repoName}'`));
+      console.log(chalk.green(`Removed repo '${repoName}'`));
     } else {
-      console.log(chalk.yellow(`Failed to remove scope '${repoName}'`));
+      console.log(chalk.yellow(`Failed to remove repo '${repoName}'`));
     }
   });
 
