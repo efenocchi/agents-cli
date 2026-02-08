@@ -522,3 +522,43 @@ export function getSkillRules(skillName: string): string[] {
     return [];
   }
 }
+
+/**
+ * Install a skill to central ~/.agents/skills/ directory only.
+ * Does not create per-agent symlinks (shims handle that for synced agents).
+ */
+export function installSkillCentrally(
+  sourcePath: string,
+  skillName: string
+): { success: boolean; error?: string; warnings?: string[] } {
+  // Validate skill metadata before installation
+  const metadata = parseSkillMetadata(sourcePath);
+  const validation = validateSkillMetadata(metadata, skillName);
+
+  if (!validation.valid) {
+    return {
+      success: false,
+      error: `Invalid skill: ${validation.errors.join(', ')}`,
+      warnings: validation.warnings,
+    };
+  }
+
+  ensureCentralSkillsDir();
+  const centralPath = path.join(getSkillsDir(), skillName);
+
+  // Remove existing if present
+  if (fs.existsSync(centralPath)) {
+    try {
+      fs.rmSync(centralPath, { recursive: true, force: true });
+    } catch {
+      // Ignore removal errors
+    }
+  }
+
+  try {
+    fs.cpSync(sourcePath, centralPath, { recursive: true });
+    return { success: true, warnings: validation.warnings };
+  } catch (err) {
+    return { success: false, error: `Failed to copy skill: ${(err as Error).message}` };
+  }
+}

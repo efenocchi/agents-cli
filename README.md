@@ -1,154 +1,253 @@
-# agents-cli
+# agents
 
-**`systemctl` + `venv` for AI coding agents.** Manage, configure, schedule, and sandbox Claude, Codex, Gemini, Cursor, and OpenCode from a single CLI.
+**`nvm` + `systemctl` for AI coding agents.** Install, configure, schedule, and sandbox Claude Code, Codex, Gemini CLI, Cursor, and OpenCode from one place.
+
+[![npm](https://img.shields.io/npm/v/@swarmify/agents-cli)](https://www.npmjs.com/package/@swarmify/agents-cli) [![license](https://img.shields.io/npm/l/@swarmify/agents-cli)](LICENSE) [![node](https://img.shields.io/node/v/@swarmify/agents-cli)](package.json)
 
 ```bash
 npm install -g @swarmify/agents-cli
 ```
 
-- **Configure** - Sync commands, MCP servers, hooks, and skills across all agents from one repo
-- **Schedule** - Run agents on cron schedules with a built-in daemon
-- **Sandbox** - Each job gets an isolated HOME overlay with whitelisted tools, dirs, and env vars
-- **Manage** - Install, upgrade, and monitor agent CLIs
+[Quick Start](#quick-start) | [Why](#why) | [Version Control](#version-control) | [Config Sync](#config-sync) | [MCP Servers](#mcp-servers) | [Skills & Commands](#skills--commands) | [Jobs & Sandboxing](#jobs--sandboxing) | [Compatibility](#compatibility) | [All Commands](#all-commands)
 
-```bash
-agents pull            # Sync config to all agents
-agents jobs run my-job # Run an agent job now
-agents daemon start    # Start the job scheduler
-agents status          # See what's installed
-```
-
-## What Gets Synced
-
-| Resource | Agents |
-|----------|--------|
-| Slash commands | Claude, Codex, Gemini, Cursor, OpenCode |
-| MCP servers | Claude, Codex, Gemini |
-| Hooks | Claude, Gemini |
-| Skills | Claude, Codex, Gemini |
-| CLI versions | All |
+---
 
 ## Quick Start
 
 ```bash
 npm install -g @swarmify/agents-cli
-agents pull       # Auto-configures from default repo on first run
-agents status     # See what got installed
+agents pull       # Syncs config from default repo on first run
+agents status     # Shows what got installed
 ```
 
-Use your own config repo:
+Point it at your own config repo:
 
 ```bash
-agents repo add gh:username/.agents
+agents repo add gh:yourname/.agents
 agents pull
 ```
 
-## Commands
+> Also available as `ag` -- every command above works with `ag pull`, `ag status`, etc.
+
+## Why
+
+Five agents, five config directories, five MCP registrations for a single server. A new machine means re-doing all of it. Sharing a setup with your team means writing a wiki nobody reads.
+
+`agents` collapses that into one repo and one CLI. Define your commands, skills, MCP servers, and instructions in a `.agents` directory. Run `agents pull` and every agent on the machine picks up the changes. Pin CLI versions per project, schedule autonomous jobs, and sandbox them so they only touch what you allow.
+
+## Version Control
+
+Install, pin, and switch between agent CLI versions -- like `nvm` for Node.js.
 
 ```bash
-# Sync
-agents pull [agent]              # Pull config (optionally for one agent)
-agents push                      # Push local changes back
-
-# Resources
-agents commands list|add|remove|push
-agents mcp list|add|remove|push
-agents skills list|add|info
-agents hooks list|add|remove
-
-# CLI management
-agents cli list|add|remove|upgrade
-
-# Registries
-agents search <query>            # Search MCP registries
-agents add mcp:<name>            # Install from registry
-
-# Jobs
-agents jobs list|add|run|enable|disable|logs|report
-agents daemon start|stop|status|logs
+agents add claude@1.5.0       # Install a specific version
+agents add claude@latest       # Install the latest
+agents add claude@1.5.0 -p    # Install and pin to this project
+agents use claude@1.5.0       # Set global default
+agents use claude@1.5.0 -p    # Pin version in project manifest
+agents list                    # Show all installed versions
+agents list claude             # Show versions for one agent
+agents remove claude@1.5.0    # Remove a specific version
+agents remove claude           # Remove all versions
 ```
 
-Resources support two scopes: **user** (`~/.{agent}/`) for global availability, and **project** (`./.{agent}/`) for repo-specific config. Use `push` subcommands to promote project scope to user scope.
-
-## Jobs
-
-Schedule AI agents to run autonomously on a cron schedule. Define a job in YAML, the daemon handles the rest.
+Per-project pinning lives in `.agents/agents.yaml`:
 
 ```yaml
-name: reddit-engagement
-schedule: "0 9 * * 1-4"
+agents:
+  claude: "1.5.0"
+  codex: "0.1.2"
+  gemini: latest
+```
+
+When a shim is in your PATH, running `claude` resolves to the version pinned in the nearest `.agents/agents.yaml`, falling back to the global default.
+
+<details>
+<summary>How version isolation works</summary>
+
+Each version is installed to `~/.agents/versions/{agent}/{version}/` with its own isolated HOME at `~/.agents/versions/{agent}/{version}/home/`. Shims in `~/.agents/shims/` set HOME and delegate to the correct binary. The isolated HOME symlinks everything from your real HOME except agent config directories (`.claude`, `.codex`, `.gemini`, `.cursor`, `.opencode`, `.agents`), so auth tokens stay per-version while your filesystem remains intact.
+
+</details>
+
+## Config Sync
+
+A `.agents` repo holds your entire multi-agent configuration. `pull` distributes it; `push` exports local changes back.
+
+```bash
+agents pull              # Sync everything
+agents pull claude       # Sync one agent
+agents push              # Export local config to your repo
+```
+
+Repo structure:
+
+```
+.agents/
+  agents.yaml              # Pinned versions + defaults
+  shared/
+    commands/              # Slash commands shared across all agents
+  claude/
+    commands/              # Claude-specific commands
+    skills/                # Claude skills (SKILL.md + rules/)
+  codex/
+    prompts/               # Codex prompts
+    skills/
+  gemini/
+    commands/              # Auto-converted to TOML during sync
+    skills/
+```
+
+Resources exist at two scopes:
+
+| Scope | Location | When to use |
+|-------|----------|-------------|
+| **User** | `~/.{agent}/` | Available everywhere |
+| **Project** | `./.{agent}/` | Committed to a specific repo |
+
+Promote project-scope resources to user-scope with `push` subcommands (`agents commands push`, `agents skills push`, etc.).
+
+## MCP Servers
+
+Search registries, install servers, and register them with every agent in one step.
+
+```bash
+agents search filesystem           # Search MCP registries
+agents install mcp:filesystem      # Install and register with all agents
+agents mcp add myserver npx ...    # Add a custom MCP server
+agents mcp list                    # Show servers and registration status
+agents mcp register                # Register all servers with agent CLIs
+agents mcp remove myserver         # Remove from all agents
+```
+
+During `agents pull`, MCP servers defined in the repo are automatically registered with each agent that supports them.
+
+## Skills & Commands
+
+### Slash Commands
+
+Slash commands are markdown (or TOML for Gemini) files that appear in the agent's command palette.
+
+```bash
+agents commands list               # List installed commands
+agents commands add <source>       # Install from a repo or local path
+agents commands remove <name>      # Remove a command
+agents commands push <name>        # Promote project -> user scope
+```
+
+Commands in `shared/commands/` are distributed to every agent. Agent-specific commands (in `claude/commands/`, `gemini/commands/`, etc.) override shared ones. Markdown commands are auto-converted to TOML when installed for Gemini.
+
+### Skills
+
+Skills bundle a `SKILL.md` file with optional `rules/` for deeper agent guidance.
+
+```bash
+agents skills list                 # List installed skills
+agents skills add <source>        # Install from a repo or local path
+agents skills view <name>         # Show skill contents
+agents skills remove <name>       # Remove a skill
+agents skills push <name>         # Promote project -> user scope
+```
+
+## Jobs & Sandboxing
+
+Schedule agents to run autonomously on cron. Define a job in YAML, and the daemon handles execution.
+
+```yaml
+name: daily-pr-digest
+schedule: "0 9 * * 1-5"
 agent: claude
 mode: plan
-timeout: 30m
+timeout: 15m
 prompt: |
-  Today is {day}. Follow the engagement plan.
+  Today is {date}. Review all PRs I merged since 5 PM yesterday
+  across every repo in ~/src/. Summarize what shipped, flag
+  anything that looks risky, and write the digest to the report.
 
 allow:
-  tools: [web_search, web_fetch]
-  sites: [reddit.com, old.reddit.com]
-  dirs: [~/.agents/reports/reddit-engagement]
+  tools: [bash, read, glob, grep]
+  dirs: [~/src]
 
 config:
   model: claude-sonnet-4-5
 ```
 
-Jobs support `claude`, `codex`, and `gemini` agents. The `prompt` supports template variables: `{day}`, `{date}`, `{time}`, `{job_name}`, `{last_report}`.
+```bash
+agents jobs add job.yaml           # Register a job
+agents jobs run my-job             # Run immediately in foreground
+agents daemon start                # Start the cron scheduler
+agents jobs list                   # Show all jobs and status
+agents jobs logs my-job            # Show output from latest run
+agents jobs report my-job          # Show report from latest run
+agents jobs enable my-job          # Enable a disabled job
+agents jobs disable my-job         # Disable without removing
+```
 
-### Sandboxed Execution
+Template variables available in `prompt`: `{day}`, `{date}`, `{time}`, `{job_name}`, `{last_report}`.
 
-Each job runs in an isolated environment. The agent doesn't see your real home directory - it gets an overlay:
+### Sandbox Isolation
+
+Each job runs in an isolated environment. The agent never sees your real HOME -- it gets an overlay recreated fresh before every run.
 
 ```
-~/.agents/jobs/reddit-engagement/home/     <-- agent sees this as $HOME
+~/.agents/jobs/daily-pr-digest/home/     <-- agent sees this as $HOME
   .claude/
-    settings.json                          <-- generated from allow.tools
-  .agents/
-    reports/
-      reddit-engagement/ -> ~/real/path    <-- symlink from allow.dirs
+    settings.json                        <-- generated from allow.tools
+  src/ -> ~/src                          <-- symlink from allow.dirs
 ```
 
-Two layers of enforcement, neither relies on prompt injection:
+Three layers of enforcement, none relying on prompt injection:
 
 | Layer | What it does | How |
 |-------|-------------|-----|
-| **Agent config** | Tool allowlists (`WebSearch(*)`, `Read(*)`, etc.) | Agent CLI reads generated config and blocks disallowed tools |
+| **Tool allowlist** | Restricts available tools | Agent CLI reads generated config; disallowed tools are blocked |
 | **HOME overlay** | Filesystem isolation | Only `allow.dirs` entries are symlinked in; everything else is invisible |
-| **Env sanitization** | No credential leakage | Only safe env vars (PATH, SHELL, LANG, etc.) are passed through |
+| **Env sanitization** | Prevents credential leakage | Only safe env vars (`PATH`, `SHELL`, `LANG`, etc.) pass through |
 
-The agent can't access `~/.ssh`, `~/.aws`, `~/.gitconfig`, API keys in env vars, or anything else you didn't explicitly allow. The overlay is recreated fresh before each run.
+The agent cannot access `~/.ssh`, `~/.aws`, `~/.gitconfig`, API keys in env vars, or anything else not explicitly allowed.
 
-### Model Pinning
+## Compatibility
 
-```yaml
-# Claude
-config:
-  model: claude-sonnet-4-5
+| Agent | Commands | MCP | Hooks | Skills | Instructions | Jobs |
+|-------|----------|-----|-------|--------|-------------|------|
+| Claude Code | yes | yes | yes | yes | yes | yes |
+| Codex | yes | yes | -- | yes | yes | yes |
+| Gemini CLI | yes | yes | yes | yes | yes | yes |
+| Cursor | yes | yes | -- | yes | yes | -- |
+| OpenCode | yes | yes | -- | yes | yes | -- |
 
-# Codex
-agent: codex
-config:
-  model: gpt-5.2-codex
+## All Commands
+
 ```
+Env
+  status [agent]                  Show installed agents and sync status
+  pull [source] [agent]           Sync from .agents repo
+  push                            Push config to your .agents repo
+  self-upgrade                    Upgrade agents-cli
 
-## Supported Agents
+Agents
+  add <agent>[@version]           Install agent CLI version
+  remove <agent>[@version]        Remove agent CLI version
+  use <agent>@<version>           Set default version (-p for project)
+  list [agent]                    List installed versions
 
-| Agent | Commands | MCP | Hooks | Skills | Jobs |
-|-------|----------|-----|-------|--------|------|
-| Claude Code | Yes | Yes | Yes | Yes | Yes |
-| Codex | Yes | Yes | - | Yes | Yes |
-| Gemini CLI | Yes | Yes | Yes | Yes | Yes |
-| Cursor | Yes | Yes | - | - | - |
-| OpenCode | Yes | Yes | - | - | - |
+Resources
+  instructions list|view|diff|push|remove
+  commands list|add|remove|push
+  mcp list|add|remove|register|push
+  skills list|add|view|remove|push
+  hooks list|add|remove|push
 
-## Roadmap: Context Drives
+Packages
+  search <query>                  Search MCP and skill registries
+  install <identifier>            Install mcp:<name>, skill:<name>, or gh:<user/repo>
 
-Sync docs, research, and agent chat history across machines and teams. Per-directory conflict strategies (CRDT, git, lock, last-write-wins). Checkpointing and rollback.
+Automation
+  jobs list|add|run|logs|report|enable|disable
+  daemon start|stop|status|logs
 
-```bash
-agents drive create <name>
-agents drive sync
-agents drive checkpoint "before refactor"
-agents drive rollback <checkpoint>
+Sources
+  repo list|add|remove
+  registry list|add|remove|enable|disable|config
 ```
 
 ## License
