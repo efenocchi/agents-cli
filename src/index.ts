@@ -789,7 +789,20 @@ program
         selectedAgents = (manifest?.defaults?.agents || ALL_AGENT_IDS) as AgentId[];
       } else {
         const installedAgents = ALL_AGENT_IDS.filter((id) => cliStates[id]?.installed || id === 'cursor');
-        console.log(chalk.gray('\nResources are stored centrally in ~/.agents/ and shared across selected agents.\n'));
+
+        // Show installed versions for context
+        console.log(chalk.bold('\nInstalled Versions:\n'));
+        for (const agentId of installedAgents) {
+          const versions = listInstalledVersions(agentId);
+          const defaultVer = getGlobalDefault(agentId);
+          if (versions.length > 0) {
+            const versionList = versions.map(v => v === defaultVer ? chalk.green(`${v} (default)`) : chalk.gray(v)).join(', ');
+            console.log(`  ${AGENTS[agentId].name}: ${versionList}`);
+          }
+        }
+
+        console.log(chalk.gray('\nResources are stored in ~/.agents/ and symlinked to ALL versions of selected agents.\n'));
+
         selectedAgents = await checkbox({
           message: 'Which agents should share these resources?',
           choices: installedAgents.map((id) => ({
