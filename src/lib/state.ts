@@ -135,7 +135,7 @@ export function readMeta(): Meta {
         for (const [agent, state] of Object.entries(parsed.versions)) {
           const s = state as any;
           if (s?.default) {
-            meta.agents[agent as any] = s.default;
+            (meta.agents as Record<string, string>)[agent] = s.default;
           }
         }
       }
