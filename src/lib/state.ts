@@ -186,6 +186,11 @@ export function updateMeta(updates: Partial<Meta>): Meta {
 }
 
 export function getRepoLocalPath(source: string): string {
+  // Use 'default' for the system repo to keep paths clean
+  if (source === DEFAULT_SYSTEM_REPO) {
+    return path.join(REPOS_DIR, 'default');
+  }
+
   const sanitized = source
     .replace(/^gh:/, '')
     .replace(/^https?:\/\/github\.com\//, '')

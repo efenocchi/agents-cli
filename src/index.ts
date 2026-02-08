@@ -56,7 +56,16 @@ import {
 } from './lib/state.js';
 import { SCOPE_PRIORITIES, DEFAULT_SYSTEM_REPO } from './lib/types.js';
 import type { ScopeName, ScopeConfig } from './lib/types.js';
-import { cloneRepo, parseSource } from './lib/git.js';
+import {
+  cloneRepo,
+  parseSource,
+  getGitHubUsername,
+  getRemoteUrl,
+  setRemoteUrl,
+  checkGitHubRepoExists,
+  commitAndPush,
+  hasUncommittedChanges,
+} from './lib/git.js';
 import {
   discoverCommands,
   resolveCommandSource,
@@ -1214,99 +1223,167 @@ program
 
 program
   .command('push')
-  .description('Export local configuration to .agents repo for manual commit')
+  .description('Push local configuration to your .agents repo on GitHub')
   .option('-s, --scope <scope>', 'Target scope (default: user)', 'user')
-  .option('--export-only', 'Only export, do not update manifest')
+  .option('--export-only', 'Only export to local repo, do not push to GitHub')
+  .option('-m, --message <msg>', 'Commit message', 'Update agent configuration')
   .action(async (options) => {
-    const scopeName = options.scope as ScopeName;
-    const scope = getScope(scopeName);
+    try {
+      const scopeName = options.scope as ScopeName;
+      const scope = getScope(scopeName);
 
-    if (!scope) {
-      console.log(chalk.red(`Scope '${scopeName}' not configured.`));
-      const scopeHint = scopeName === 'user' ? '' : ` --scope ${scopeName}`;
-      console.log(chalk.gray(`  Run: agents repo add <source>${scopeHint}`));
-      process.exit(1);
-    }
-
-    if (scope.readonly) {
-      console.log(chalk.red(`Scope '${scopeName}' is readonly. Cannot push.`));
-      process.exit(1);
-    }
-
-    const localPath = getRepoLocalPath(scope.source);
-    const manifest = readManifest(localPath) || createDefaultManifest();
-
-    console.log(chalk.bold('\nExporting local configuration...\n'));
-
-    const cliStates = await getAllCliStates();
-    let exported = 0;
-
-    for (const agentId of ALL_AGENT_IDS) {
-      const agent = AGENTS[agentId];
-      const cli = cliStates[agentId];
-
-      if (cli?.installed && cli.version) {
-        manifest.clis = manifest.clis || {};
-        manifest.clis[agentId] = {
-          package: agent.npmPackage,
-          version: cli.version,
-        };
-        console.log(`  ${chalk.green('+')} ${agent.name} @ ${cli.version}`);
-        exported++;
+      if (!scope) {
+        console.log(chalk.red(`Scope '${scopeName}' not configured.`));
+        console.log(chalk.gray('  Run: agents pull'));
+        process.exit(1);
       }
-    }
 
-    // Export MCP servers from installed agents
-    console.log();
-    let mcpExported = 0;
-    const mcpByName = new Map<string, { command: string; agents: AgentId[] }>();
+      if (scope.readonly) {
+        console.log(chalk.red(`Scope '${scopeName}' is readonly. Cannot push.`));
+        process.exit(1);
+      }
 
-    for (const agentId of MCP_CAPABLE_AGENTS) {
-      if (!cliStates[agentId]?.installed) continue;
+      const localPath = getRepoLocalPath(scope.source);
+      const manifest = readManifest(localPath) || createDefaultManifest();
 
-      const mcps = listInstalledMcpsWithScope(agentId);
-      for (const mcp of mcps) {
-        if (mcp.scope !== 'user') continue; // Only export user-scoped MCPs
+      console.log(chalk.bold('\nExporting local configuration...\n'));
 
-        const existing = mcpByName.get(mcp.name);
-        if (existing) {
-          if (!existing.agents.includes(agentId)) {
-            existing.agents.push(agentId);
-          }
-        } else {
-          mcpByName.set(mcp.name, {
-            command: mcp.command || '',
-            agents: [agentId],
-          });
+      const cliStates = await getAllCliStates();
+      let exported = 0;
+
+      for (const agentId of ALL_AGENT_IDS) {
+        const agent = AGENTS[agentId];
+        const cli = cliStates[agentId];
+
+        if (cli?.installed && cli.version) {
+          manifest.clis = manifest.clis || {};
+          manifest.clis[agentId] = {
+            package: agent.npmPackage,
+            version: cli.version,
+          };
+          console.log(`  ${chalk.green('+')} ${agent.name} @ ${cli.version}`);
+          exported++;
         }
       }
-    }
 
-    if (mcpByName.size > 0) {
-      manifest.mcp = manifest.mcp || {};
-      for (const [name, config] of mcpByName) {
-        manifest.mcp[name] = {
-          command: config.command,
-          transport: 'stdio',
-          agents: config.agents,
-          scope: 'user',
-        };
-        console.log(`  ${chalk.green('+')} MCP: ${name} (${config.agents.map(id => AGENTS[id].name).join(', ')})`);
-        mcpExported++;
+      // Export MCP servers from installed agents
+      console.log();
+      let mcpExported = 0;
+      const mcpByName = new Map<string, { command: string; agents: AgentId[] }>();
+
+      for (const agentId of MCP_CAPABLE_AGENTS) {
+        if (!cliStates[agentId]?.installed) continue;
+
+        const mcps = listInstalledMcpsWithScope(agentId);
+        for (const mcp of mcps) {
+          if (mcp.scope !== 'user') continue; // Only export user-scoped MCPs
+
+          const existing = mcpByName.get(mcp.name);
+          if (existing) {
+            if (!existing.agents.includes(agentId)) {
+              existing.agents.push(agentId);
+            }
+          } else {
+            mcpByName.set(mcp.name, {
+              command: mcp.command || '',
+              agents: [agentId],
+            });
+          }
+        }
       }
-    }
 
-    if (!options.exportOnly) {
+      if (mcpByName.size > 0) {
+        manifest.mcp = manifest.mcp || {};
+        for (const [name, config] of mcpByName) {
+          manifest.mcp[name] = {
+            command: config.command,
+            transport: 'stdio',
+            agents: config.agents,
+            scope: 'user',
+          };
+          console.log(`  ${chalk.green('+')} MCP: ${name} (${config.agents.map((id) => AGENTS[id].name).join(', ')})`);
+          mcpExported++;
+        }
+      }
+
       writeManifest(localPath, manifest);
       console.log(chalk.bold(`\nUpdated ${MANIFEST_FILENAME}`));
-    }
 
-    console.log(chalk.bold('\nNext steps:'));
-    console.log(chalk.gray(`  cd ${localPath}`));
-    console.log(chalk.gray('  git add -A'));
-    console.log(chalk.gray('  git commit -m "Update agent configuration"'));
-    console.log(chalk.gray('  git push'));
-    console.log();
+      if (options.exportOnly) {
+        console.log(chalk.bold('\nExport complete. Changes saved locally.'));
+        console.log(chalk.gray(`  Path: ${localPath}`));
+        return;
+      }
+
+      // Check if there are changes to push
+      const hasChanges = await hasUncommittedChanges(localPath);
+      if (!hasChanges) {
+        console.log(chalk.green('\nNo changes to push.'));
+        return;
+      }
+
+      // Get GitHub username
+      const spinner = ora('Checking GitHub authentication...').start();
+      const username = await getGitHubUsername();
+
+      if (!username) {
+        spinner.fail('GitHub CLI not authenticated');
+        console.log(chalk.yellow('\nTo push changes, authenticate with GitHub:'));
+        console.log(chalk.gray('  gh auth login'));
+        console.log(chalk.gray('\nOr push manually:'));
+        console.log(chalk.gray(`  cd ${localPath}`));
+        console.log(chalk.gray('  git add -A && git commit -m "Update" && git push'));
+        return;
+      }
+
+      spinner.text = 'Checking remote configuration...';
+
+      // Check if remote is set to user's repo
+      const currentRemote = await getRemoteUrl(localPath);
+      const userRepoUrl = `https://github.com/${username}/.agents.git`;
+      const isUserRepo = currentRemote?.includes(`${username}/.agents`);
+
+      if (!isUserRepo) {
+        // Check if user's repo exists on GitHub
+        spinner.text = `Checking if ${username}/.agents exists...`;
+        const repoExists = await checkGitHubRepoExists(username, '.agents');
+
+        if (!repoExists) {
+          spinner.fail(`Repository ${username}/.agents does not exist`);
+          console.log(chalk.yellow('\nCreate your .agents repo on GitHub:'));
+          console.log(chalk.cyan(`  gh repo create .agents --public --description "My agent configurations"`));
+          console.log(chalk.gray('\nThen run: agents push'));
+          return;
+        }
+
+        // Update remote to user's repo
+        spinner.text = `Switching remote to ${username}/.agents...`;
+        await setRemoteUrl(localPath, userRepoUrl);
+      }
+
+      // Commit and push
+      spinner.text = 'Pushing changes...';
+      const result = await commitAndPush(localPath, options.message);
+
+      if (result.success) {
+        spinner.succeed(`Pushed to ${username}/.agents`);
+        console.log(chalk.green(`\nView: https://github.com/${username}/.agents`));
+      } else {
+        spinner.fail('Failed to push');
+        console.log(chalk.red(result.error || 'Unknown error'));
+
+        if (result.error?.includes('rejected')) {
+          console.log(chalk.yellow('\nTry pulling first: agents pull'));
+        }
+      }
+    } catch (err) {
+      if (isPromptCancelled(err)) {
+        console.log(chalk.yellow('\nCancelled'));
+        process.exit(0);
+      }
+      console.error(chalk.red((err as Error).message));
+      process.exit(1);
+    }
   });
 
 // =============================================================================
