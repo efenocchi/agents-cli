@@ -2,9 +2,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as yaml from 'yaml';
-import type { AgentId, SkillMetadata, InstalledSkill, SkillState } from './types.js';
+import type { AgentId, SkillMetadata, InstalledSkill } from './types.js';
 import { AGENTS, SKILLS_CAPABLE_AGENTS, ensureSkillsDir } from './agents.js';
-import { readMeta, writeMeta, getAgentsDir } from './state.js';
+import { getAgentsDir } from './state.js';
 
 const HOME = os.homedir();
 
@@ -225,24 +225,6 @@ export function installSkill(
     }
   }
 
-  // Update state
-  const meta = readMeta();
-  meta.skills[skillName] = {
-    source: sourcePath,
-    ruleCount: countSkillRules(centralPath),
-    installations: agents.reduce(
-      (acc, agentId) => {
-        acc[agentId] = {
-          path: path.join(getAgentSkillsDir(agentId), skillName),
-          method,
-        };
-        return acc;
-      },
-      {} as SkillState['installations']
-    ),
-  };
-  writeMeta(meta);
-
   return { success: true };
 }
 
@@ -330,37 +312,29 @@ export function skillContentMatches(
 }
 
 export function uninstallSkill(skillName: string): { success: boolean; error?: string } {
-  const meta = readMeta();
-  const skillState = meta.skills[skillName];
-
-  if (!skillState) {
+  // Remove from central location
+  const centralPath = path.join(getSkillsDir(), skillName);
+  if (!fs.existsSync(centralPath)) {
     return { success: false, error: `Skill '${skillName}' not found` };
   }
 
   // Remove from all agents
-  for (const [agentId, installation] of Object.entries(skillState.installations)) {
-    if (installation?.path && fs.existsSync(installation.path)) {
+  for (const agentId of SKILLS_CAPABLE_AGENTS) {
+    const agentSkillPath = path.join(getAgentSkillsDir(agentId), skillName);
+    if (fs.existsSync(agentSkillPath)) {
       try {
-        fs.rmSync(installation.path, { recursive: true, force: true });
+        fs.rmSync(agentSkillPath, { recursive: true, force: true });
       } catch {
         // Ignore removal errors
       }
     }
   }
 
-  // Remove from central location
-  const centralPath = path.join(getSkillsDir(), skillName);
-  if (fs.existsSync(centralPath)) {
-    try {
-      fs.rmSync(centralPath, { recursive: true, force: true });
-    } catch {
-      // Ignore removal errors
-    }
+  try {
+    fs.rmSync(centralPath, { recursive: true, force: true });
+  } catch {
+    // Ignore removal errors
   }
-
-  // Update state
-  delete meta.skills[skillName];
-  writeMeta(meta);
 
   return { success: true };
 }
