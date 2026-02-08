@@ -52,10 +52,16 @@ export interface InstalledHook {
   agent: AgentId;
 }
 
+export interface DriveManifestEntry {
+  description?: string;
+  project?: string;
+}
+
 export interface Manifest {
   clis?: Partial<Record<AgentId, CliConfig>>;
   dependencies?: Record<string, string>;
   mcp?: Record<string, McpServerConfig>;
+  drives?: Record<string, DriveManifestEntry>;
   defaults?: {
     method?: 'symlink' | 'copy';
     scope?: 'global' | 'project';
