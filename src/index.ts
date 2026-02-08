@@ -2632,18 +2632,30 @@ program
     const { agent, version } = parsed;
     const agentConfig = AGENTS[agent];
 
+    let selectedVersion = version;
+
     if (!spec.includes('@') || version === 'latest') {
-      console.log(chalk.red('Please specify a version: agents use <agent>@<version>'));
+      // Interactive version picker
       const versions = listInstalledVersions(agent);
-      if (versions.length > 0) {
-        console.log(chalk.gray(`Installed versions: ${versions.join(', ')}`));
+      if (versions.length === 0) {
+        console.log(chalk.red(`No versions of ${agentConfig.name} installed`));
+        console.log(chalk.gray(`Run: agents add ${agent}@latest`));
+        return;
       }
-      return;
+
+      const globalDefault = getGlobalDefault(agent);
+      selectedVersion = await select({
+        message: `Select ${agentConfig.name} version:`,
+        choices: versions.map((v) => ({
+          name: v === globalDefault ? `${v} (current default)` : v,
+          value: v,
+        })),
+      });
     }
 
-    if (!isVersionInstalled(agent, version)) {
-      console.log(chalk.red(`${agentConfig.name}@${version} not installed`));
-      console.log(chalk.gray(`Run: agents add ${agent}@${version}`));
+    if (!isVersionInstalled(agent, selectedVersion)) {
+      console.log(chalk.red(`${agentConfig.name}@${selectedVersion} not installed`));
+      console.log(chalk.gray(`Run: agents add ${agent}@${selectedVersion}`));
       return;
     }
 
@@ -2661,14 +2673,14 @@ program
         : createDefaultManifest();
 
       manifest.agents = manifest.agents || {};
-      manifest.agents[agent] = version;
+      manifest.agents[agent] = selectedVersion;
 
       writeManifest(process.cwd(), manifest);
-      console.log(chalk.green(`Set ${agentConfig.name}@${version} for this project`));
+      console.log(chalk.green(`Set ${agentConfig.name}@${selectedVersion} for this project`));
     } else {
       // Set global default
-      setGlobalDefault(agent, version);
-      console.log(chalk.green(`Set ${agentConfig.name}@${version} as global default`));
+      setGlobalDefault(agent, selectedVersion);
+      console.log(chalk.green(`Set ${agentConfig.name}@${selectedVersion} as global default`));
     }
   });
 
@@ -2676,7 +2688,9 @@ program
   .command('list [agent]')
   .description('List installed agent CLI versions')
   .action(async (agentArg?: string) => {
+    const spinner = ora('Checking installed agents...').start();
     const cliStates = await getAllCliStates();
+    spinner.stop();
 
     // Resolve agent filter
     let filterAgentId: AgentId | undefined;

@@ -182,8 +182,10 @@ export function getPathSetupInstructions(): string {
       break;
   }
 
-  return `Add to ${rcFile}:
+  return `Add to ${rcFile} (BEFORE any nvm/node setup):
   export PATH="${shimsDir}:$PATH"
+
+IMPORTANT: Shims must come FIRST in PATH to override global installs.
 
 Then restart your shell or run:
   source ${rcFile}`;
