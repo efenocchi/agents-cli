@@ -1,26 +1,22 @@
 # agents-cli
 
-**One config for all your AI coding agents.** Sync commands, MCP servers, hooks, and skills across Claude, Codex, Gemini, and Cursor - plus schedule agents to run autonomously as sandboxed jobs.
+**`systemctl` + `venv` for AI coding agents.** Manage, configure, schedule, and sandbox Claude, Codex, and Gemini from a single CLI.
 
 ```bash
 npm install -g @swarmify/agents-cli
 ```
 
-## The Problem
-
-Each agent stores config differently. Different paths, different formats. You configure Claude Code, then start from scratch with Codex. New machine? Do it all again.
-
-## The Solution
-
-Put your config in a GitHub repo. One command syncs everything.
+- **Configure** - Sync commands, MCP servers, hooks, and skills across all agents from one repo
+- **Schedule** - Run agents on cron schedules with a built-in daemon
+- **Sandbox** - Each job gets an isolated HOME overlay with whitelisted tools, dirs, and env vars
+- **Manage** - Install, upgrade, and monitor agent CLIs
 
 ```bash
-agents pull            # Sync all agents
-agents pull claude     # Sync just Claude
+agents pull            # Sync config to all agents
+agents jobs run my-job # Run an agent job now
+agents daemon start    # Start the job scheduler
 agents status          # See what's installed
 ```
-
-Write commands once in markdown - auto-converts to TOML for Gemini. Define MCP servers once - installs to all agents.
 
 ## What Gets Synced
 
