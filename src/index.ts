@@ -553,7 +553,7 @@ program
         selectedAgents = [agentFilter];
         console.log(chalk.gray(`\nFiltering for ${AGENTS[agentFilter].name} only\n`));
       } else if (options.yes || options.force) {
-        selectedAgents = (manifest?.defaults?.agents || ['claude', 'codex', 'gemini']) as AgentId[];
+        selectedAgents = (manifest?.defaults?.agents || ALL_AGENT_IDS) as AgentId[];
       } else {
         const installedAgents = ALL_AGENT_IDS.filter((id) => cliStates[id]?.installed || id === 'cursor');
         selectedAgents = await checkbox({
@@ -561,7 +561,7 @@ program
           choices: installedAgents.map((id) => ({
             name: AGENTS[id].name,
             value: id,
-            checked: (manifest?.defaults?.agents || ['claude', 'codex', 'gemini']).includes(id),
+            checked: (manifest?.defaults?.agents || ALL_AGENT_IDS).includes(id),
           })),
         });
       }
@@ -1401,7 +1401,7 @@ commandsCmd
 
       const agents = options.agents
         ? (options.agents.split(',') as AgentId[])
-        : (['claude', 'codex', 'gemini'] as AgentId[]);
+        : ALL_AGENT_IDS;
 
       const cliStates = await getAllCliStates();
       for (const command of commands) {
@@ -1771,7 +1771,7 @@ skillsCmd
             choices: SKILLS_CAPABLE_AGENTS.filter((id) => cliStates[id]?.installed || id === 'cursor').map((id) => ({
               name: AGENTS[id].name,
               value: id,
-              checked: ['claude', 'codex', 'gemini'].includes(id),
+              checked: true,
             })),
           });
 
@@ -3224,7 +3224,7 @@ program
 
         const agents = options.agents
           ? (options.agents.split(',') as AgentId[])
-          : (['claude', 'codex', 'gemini'] as AgentId[]);
+          : ALL_AGENT_IDS;
 
         const gitCliStates = await getAllCliStates();
         // Install commands
