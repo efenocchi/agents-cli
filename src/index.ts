@@ -1057,32 +1057,6 @@ program
         console.log();
       }
 
-      if (upToDateItems.length > 0) {
-        console.log(chalk.gray('  UP TO DATE (no changes):\n'));
-        const byType = { command: [] as ResourceItem[], skill: [] as ResourceItem[], hook: [] as ResourceItem[], mcp: [] as ResourceItem[], instructions: [] as ResourceItem[], job: [] as ResourceItem[], drive: [] as ResourceItem[] };
-        for (const item of upToDateItems) byType[item.type].push(item);
-
-        // Central resources - just show names
-        if (byType.command.length > 0) {
-          console.log(`    Commands: ${chalk.dim(byType.command.map(i => i.name).join(', '))}`);
-        }
-        if (byType.skill.length > 0) {
-          console.log(`    Skills: ${chalk.dim(byType.skill.map(i => i.name).join(', '))}`);
-        }
-        if (byType.hook.length > 0) {
-          console.log(`    Hooks: ${chalk.dim(byType.hook.map(i => i.name).join(', '))}`);
-        }
-        if (byType.instructions.length > 0) {
-          console.log(`    Memory: ${chalk.dim(byType.instructions.map(i => i.name).join(', '))}`);
-        }
-        if (byType.job.length > 0) {
-          console.log(`    Jobs: ${chalk.dim(byType.job.map(i => i.name).join(', '))}`);
-        }
-        if (byType.drive.length > 0) {
-          console.log(`    Drives: ${chalk.dim(byType.drive.map(i => i.name).join(', '))}`);
-        }
-        console.log();
-      }
 
       if (existingItems.length > 0) {
         console.log(chalk.yellow('  CONFLICTS (will prompt):\n'));
@@ -1136,7 +1110,7 @@ program
           default: true,
         });
         if (!proceed) {
-          console.log(chalk.yellow('\nSync cancelled'));
+          console.log(chalk.yellow('\nCancelled'));
           return;
         }
       }
@@ -1161,7 +1135,7 @@ program
           });
 
           if (decision === 'cancel') {
-            console.log(chalk.yellow('\nSync cancelled'));
+            console.log(chalk.yellow('\nCancelled'));
             return;
           }
 
@@ -1417,7 +1391,7 @@ program
         });
       }
 
-      console.log(chalk.green(`\nSync complete from ${effectiveRepo} repo`));
+      console.log(chalk.green(`\nPull complete`));
     } catch (err) {
       if (isPromptCancelled(err)) {
         console.log(chalk.yellow('\nCancelled'));
