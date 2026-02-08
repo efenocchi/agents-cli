@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { AGENTS, ALL_AGENT_IDS } from './agents.js';
+import { getHooksDir as getCentralHooksDir } from './state.js';
 import type { AgentId, InstalledHook } from './types.js';
 
 export type HookEntry = { name: string; scriptPath: string; dataFile?: string };
@@ -395,4 +396,42 @@ export function getSourceHookEntry(
   const sharedDir = path.join(repoPath, 'shared', 'hooks');
   const sharedEntries = listHookEntriesFromDir(sharedDir);
   return sharedEntries.find((e) => e.name === hookName) || null;
+}
+
+/**
+ * Install hooks to central ~/.agents/hooks/ directory.
+ * Shims will symlink this to per-agent directories for synced agents.
+ */
+export async function installHooksCentrally(
+  source: string
+): Promise<{ installed: string[]; errors: string[] }> {
+  const installed: string[] = [];
+  const errors: string[] = [];
+
+  const centralDir = getCentralHooksDir();
+  if (!fs.existsSync(centralDir)) {
+    fs.mkdirSync(centralDir, { recursive: true });
+  }
+
+  // Collect all hooks from shared directory
+  const sharedDir = path.join(source, 'shared', 'hooks');
+  const sharedHooks = listHookEntriesFromDir(sharedDir);
+
+  for (const entry of sharedHooks) {
+    try {
+      copyHook(entry, centralDir);
+      installed.push(entry.name);
+    } catch (err) {
+      errors.push(`${entry.name}: ${(err as Error).message}`);
+    }
+  }
+
+  return { installed, errors };
+}
+
+/**
+ * List hooks from central ~/.agents/hooks/ directory.
+ */
+export function listCentralHooks(): HookEntry[] {
+  return listHookEntriesFromDir(getCentralHooksDir());
 }

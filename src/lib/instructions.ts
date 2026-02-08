@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { AGENTS, ALL_AGENT_IDS } from './agents.js';
+import { getMemoryDir } from './state.js';
 import type { AgentId } from './types.js';
 
 export type InstructionsScope = 'user' | 'project';
@@ -216,4 +217,63 @@ export function getInstructionsContent(agentId: AgentId, scope: InstructionsScop
   } catch {
     return null;
   }
+}
+
+/**
+ * Install instructions/memory files to central ~/.agents/memory/ directory.
+ * Shims will symlink these to per-agent directories for synced agents.
+ */
+export function installInstructionsCentrally(
+  repoPath: string
+): { installed: string[]; errors: string[] } {
+  const installed: string[] = [];
+  const errors: string[] = [];
+
+  const centralDir = getMemoryDir();
+  if (!fs.existsSync(centralDir)) {
+    fs.mkdirSync(centralDir, { recursive: true });
+  }
+
+  const instructionsDir = path.join(repoPath, 'instructions');
+  if (!fs.existsSync(instructionsDir)) {
+    return { installed, errors };
+  }
+
+  try {
+    const files = fs.readdirSync(instructionsDir);
+    for (const file of files) {
+      if (!file.endsWith('.md')) continue;
+
+      const sourcePath = path.join(instructionsDir, file);
+      const stat = fs.statSync(sourcePath);
+      if (!stat.isFile()) continue;
+
+      const targetPath = path.join(centralDir, file);
+
+      try {
+        fs.copyFileSync(sourcePath, targetPath);
+        installed.push(file);
+      } catch (err) {
+        errors.push(`${file}: ${(err as Error).message}`);
+      }
+    }
+  } catch (err) {
+    errors.push(`Failed to read instructions directory: ${(err as Error).message}`);
+  }
+
+  return { installed, errors };
+}
+
+/**
+ * List memory files from central ~/.agents/memory/ directory.
+ */
+export function listCentralMemory(): string[] {
+  const centralDir = getMemoryDir();
+  if (!fs.existsSync(centralDir)) {
+    return [];
+  }
+
+  return fs
+    .readdirSync(centralDir)
+    .filter((f) => f.endsWith('.md'));
 }

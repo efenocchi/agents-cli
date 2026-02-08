@@ -142,6 +142,7 @@ if [ "$(is_synced)" = "yes" ]; then
   fi
 fi
 
+export AGENTS_REAL_HOME="$REAL_HOME"
 export HOME="$VERSION_HOME"
 
 exec "$BINARY" "$@"

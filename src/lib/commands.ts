@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as yaml from 'yaml';
 import { AGENTS, ensureCommandsDir } from './agents.js';
 import { markdownToToml } from './convert.js';
+import { getCommandsDir } from './state.js';
 import type { AgentId, CommandInstallation } from './types.js';
 
 export type CommandScope = 'user' | 'project';
@@ -421,4 +422,60 @@ export function promoteCommandToUser(
   } catch (err) {
     return { success: false, error: (err as Error).message };
   }
+}
+
+/**
+ * Install a command to central ~/.agents/commands/ directory.
+ * Shims will symlink this to per-agent directories for synced agents.
+ */
+export function installCommandCentrally(
+  sourcePath: string,
+  commandName: string
+): { success: boolean; path: string; error?: string; warnings?: string[] } {
+  // Validate command metadata before installation
+  const metadata = parseCommandMetadata(sourcePath);
+  const validation = validateCommandMetadata(metadata, commandName);
+
+  if (!validation.valid) {
+    return {
+      success: false,
+      path: '',
+      error: `Invalid command: ${validation.errors.join(', ')}`,
+      warnings: validation.warnings,
+    };
+  }
+
+  const centralDir = getCommandsDir();
+  if (!fs.existsSync(centralDir)) {
+    fs.mkdirSync(centralDir, { recursive: true });
+  }
+
+  // Always use markdown for central storage
+  const targetPath = path.join(centralDir, `${commandName}.md`);
+
+  if (fs.existsSync(targetPath)) {
+    fs.unlinkSync(targetPath);
+  }
+
+  try {
+    fs.copyFileSync(sourcePath, targetPath);
+    return { success: true, path: targetPath, warnings: validation.warnings };
+  } catch (err) {
+    return { success: false, path: '', error: (err as Error).message };
+  }
+}
+
+/**
+ * List commands from central ~/.agents/commands/ directory.
+ */
+export function listCentralCommands(): string[] {
+  const centralDir = getCommandsDir();
+  if (!fs.existsSync(centralDir)) {
+    return [];
+  }
+
+  return fs
+    .readdirSync(centralDir)
+    .filter((f) => f.endsWith('.md'))
+    .map((f) => f.replace('.md', ''));
 }

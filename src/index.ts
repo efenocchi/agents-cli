@@ -70,6 +70,7 @@ import {
   discoverCommands,
   resolveCommandSource,
   installCommand,
+  installCommandCentrally,
   uninstallCommand,
   listInstalledCommands,
   listInstalledCommandsWithScope,
@@ -80,6 +81,7 @@ import {
 import {
   discoverHooksFromRepo,
   installHooks,
+  installHooksCentrally,
   listInstalledHooksWithScope,
   promoteHookToUser,
   removeHook,
@@ -90,6 +92,7 @@ import {
 import {
   discoverSkillsFromRepo,
   installSkill,
+  installSkillCentrally,
   uninstallSkill,
   listInstalledSkillsWithScope,
   promoteSkillToUser,
@@ -102,6 +105,7 @@ import {
   discoverInstructionsFromRepo,
   resolveInstructionsSource,
   installInstructions,
+  installInstructionsCentrally,
   uninstallInstructions,
   listInstalledInstructionsWithScope,
   promoteInstructionsToUser,
@@ -1132,21 +1136,6 @@ program
         }
       }
 
-      // Determine installation method
-      let method: 'symlink' | 'copy';
-      if (options.yes || options.force) {
-        method = manifest?.defaults?.method || 'symlink';
-      } else {
-        method = await select({
-          message: 'Installation method:',
-          choices: [
-            { name: 'Symlink (updates automatically)', value: 'symlink' as const },
-            { name: 'Copy (independent files)', value: 'copy' as const },
-          ],
-          default: manifest?.defaults?.method || 'symlink',
-        });
-      }
-
       // Per-resource conflict decisions
       const decisions = new Map<string, ResourceDecision>();
 
@@ -1190,24 +1179,27 @@ program
       let installed = { commands: 0, skills: 0, hooks: 0, mcps: 0, instructions: 0, jobs: 0, drives: 0 };
       let skipped = { commands: 0, skills: 0, hooks: 0, mcps: 0, instructions: 0, jobs: 0, drives: 0 };
 
-      // Install commands
-      const cmdSpinner = ora('Installing commands...').start();
+      // Install commands to central ~/.agents/commands/
+      const cmdSpinner = ora('Installing commands to central storage...').start();
+      const seenCommands = new Set<string>();
       for (const item of [...newItems, ...existingItems].filter((i) => i.type === 'command')) {
+        if (seenCommands.has(item.name)) continue;
+        seenCommands.add(item.name);
+
         const decision = item.isNew ? 'overwrite' : decisions.get(`command:${item.name}`);
         if (decision === 'skip') {
           skipped.commands++;
           continue;
         }
 
-        for (const agentId of item.agents) {
-          const sourcePath = resolveCommandSource(localPath, item.name, agentId);
-          if (sourcePath) {
-            const result = installCommand(sourcePath, agentId, item.name, method);
-            if (result.error) {
-              console.log(chalk.yellow(`\n  Warning: ${item.name} (${AGENTS[agentId].name}): ${result.error}`));
-            } else {
-              installed.commands++;
-            }
+        // Find source path (prefer shared, then agent-specific)
+        const sourcePath = resolveCommandSource(localPath, item.name, item.agents[0] || 'claude');
+        if (sourcePath) {
+          const result = installCommandCentrally(sourcePath, item.name);
+          if (result.error) {
+            console.log(chalk.yellow(`\n  Warning: ${item.name}: ${result.error}`));
+          } else {
+            installed.commands++;
           }
         }
       }
@@ -1219,10 +1211,10 @@ program
         cmdSpinner.info('No commands to install');
       }
 
-      // Install skills
+      // Install skills to central ~/.agents/skills/
       const skillItems = [...newItems, ...existingItems].filter((i) => i.type === 'skill');
       if (skillItems.length > 0) {
-        const skillSpinner = ora('Installing skills...').start();
+        const skillSpinner = ora('Installing skills to central storage...').start();
         for (const item of skillItems) {
           const decision = item.isNew ? 'overwrite' : decisions.get(`skill:${item.name}`);
           if (decision === 'skip') {
@@ -1232,7 +1224,7 @@ program
 
           const skill = allSkills.find((s) => s.name === item.name);
           if (skill) {
-            const result = installSkill(skill.path, skill.name, item.agents);
+            const result = installSkillCentrally(skill.path, skill.name);
             if (result.success) installed.skills++;
           }
         }
@@ -1245,12 +1237,17 @@ program
         }
       }
 
-      // Install hooks
+      // Install hooks to central ~/.agents/hooks/
       const hookItems = [...newItems, ...existingItems].filter((i) => i.type === 'hook');
-      if (hookItems.length > 0 && hookAgents.length > 0) {
-        const hookSpinner = ora('Installing hooks...').start();
-        const result = await installHooks(localPath, hookAgents, { scope: 'user' });
-        hookSpinner.succeed(`Installed ${result.installed.length} hooks`);
+      if (hookItems.length > 0) {
+        const hookSpinner = ora('Installing hooks to central storage...').start();
+        const result = await installHooksCentrally(localPath);
+        if (result.installed.length > 0) {
+          hookSpinner.succeed(`Installed ${result.installed.length} hooks`);
+          installed.hooks = result.installed.length;
+        } else {
+          hookSpinner.info('No hooks to install');
+        }
       }
 
       // Register MCP servers
@@ -1284,35 +1281,16 @@ program
         }
       }
 
-      // Install instructions
+      // Install instructions/memory to central ~/.agents/memory/
       const instructionItems = [...newItems, ...existingItems].filter((i) => i.type === 'instructions');
       if (instructionItems.length > 0) {
-        const instrSpinner = ora('Installing instructions...').start();
-        for (const item of instructionItems) {
-          const decision = item.isNew ? 'overwrite' : decisions.get(`instructions:${item.name}`);
-          if (decision === 'skip') {
-            skipped.instructions++;
-            continue;
-          }
-
-          for (const agentId of item.agents) {
-            const sourcePath = resolveInstructionsSource(localPath, agentId);
-            if (sourcePath) {
-              const result = installInstructions(sourcePath, agentId, method);
-              if (result.error) {
-                console.log(chalk.yellow(`\n  Warning: ${item.name} (${AGENTS[agentId].name}): ${result.error}`));
-              } else {
-                installed.instructions++;
-              }
-            }
-          }
-        }
-        if (skipped.instructions > 0) {
-          instrSpinner.succeed(`Installed ${installed.instructions} instructions (skipped ${skipped.instructions})`);
-        } else if (installed.instructions > 0) {
-          instrSpinner.succeed(`Installed ${installed.instructions} instructions`);
+        const instrSpinner = ora('Installing memory files to central storage...').start();
+        const memResult = installInstructionsCentrally(localPath);
+        if (memResult.installed.length > 0) {
+          instrSpinner.succeed(`Installed ${memResult.installed.length} memory files`);
+          installed.instructions = memResult.installed.length;
         } else {
-          instrSpinner.info('No instructions to install');
+          instrSpinner.info('No memory files to install');
         }
       }
 
@@ -1409,6 +1387,16 @@ program
         } else {
           cliSpinner.succeed('CLI versions match');
         }
+      }
+
+      // Update sync list with selected agents
+      // Resources are now stored centrally, shims create symlinks for synced agents
+      if (selectedAgents.length > 0) {
+        const meta = readMeta();
+        meta.sync = selectedAgents;
+        writeMeta(meta);
+        console.log(chalk.gray(`\nSync list updated: ${selectedAgents.map(id => AGENTS[id].name).join(', ')}`));
+        console.log(chalk.gray('Central resources will be symlinked on next agent run.'));
       }
 
       // Update scope config
