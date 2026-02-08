@@ -2652,17 +2652,22 @@ program
   .command('list')
   .description('List installed agent CLI versions')
   .action(async () => {
+    const cliStates = await getAllCliStates();
     console.log(chalk.bold('Installed Agent CLIs\n'));
 
     let hasAny = false;
+    let hasVersionManaged = false;
 
     for (const agentId of ALL_AGENT_IDS) {
       const agent = AGENTS[agentId];
       const versions = listInstalledVersions(agentId);
       const globalDefault = getGlobalDefault(agentId);
+      const cliState = cliStates[agentId];
 
       if (versions.length > 0) {
+        // Version-managed install
         hasAny = true;
+        hasVersionManaged = true;
         console.log(`  ${chalk.bold(agent.name)}`);
 
         for (const version of versions) {
@@ -2678,6 +2683,12 @@ program
         }
 
         console.log();
+      } else if (cliState?.installed) {
+        // Globally installed (not version-managed)
+        hasAny = true;
+        console.log(`  ${chalk.bold(agent.name)}`);
+        console.log(`    ${cliState.version || 'installed'} ${chalk.gray('(global)')}`);
+        console.log();
       }
     }
 
@@ -2688,7 +2699,7 @@ program
     }
 
     // Show shims path status
-    if (hasAny) {
+    if (hasVersionManaged) {
       const shimsDir = getShimsDir();
       if (isShimsInPath()) {
         console.log(chalk.gray(`Shims: ${shimsDir} (in PATH)`));
