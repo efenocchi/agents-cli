@@ -199,7 +199,8 @@ export async function registerMcp(
   agentId: AgentId,
   name: string,
   command: string,
-  scope: 'user' | 'project' = 'user'
+  scope: 'user' | 'project' = 'user',
+  transport: string = 'stdio'
 ): Promise<{ success: boolean; error?: string }> {
   const agent = AGENTS[agentId];
   if (!agent.capabilities.mcp) {
@@ -212,9 +213,9 @@ export async function registerMcp(
   try {
     let cmd: string;
     if (agentId === 'claude') {
-      cmd = `${agent.cliCommand} mcp add --scope ${scope} "${name}" ${command}`;
+      cmd = `${agent.cliCommand} mcp add --transport ${transport} --scope ${scope} "${name}" -- ${command}`;
     } else {
-      cmd = `${agent.cliCommand} mcp add "${name}" ${command}`;
+      cmd = `${agent.cliCommand} mcp add "${name}" -- ${command}`;
     }
     await execAsync(cmd);
     return { success: true };

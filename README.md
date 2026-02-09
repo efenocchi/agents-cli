@@ -33,7 +33,7 @@ agents pull
 
 Five agents, five config directories, five MCP registrations for a single server. A new machine means re-doing all of it. Sharing a setup with your team means writing a wiki nobody reads.
 
-`agents` collapses that into one repo and one CLI. Define your commands, skills, MCP servers, and instructions in a `.agents` directory. Run `agents pull` and every agent on the machine picks up the changes. Pin CLI versions per project, schedule autonomous jobs, and sandbox them so they only touch what you allow.
+`agents` collapses that into one repo and one CLI. Define your commands, skills, MCP servers, and memory files in a `.agents` directory. Run `agents pull` and every agent on the machine picks up the changes. Pin CLI versions per project, schedule autonomous jobs, and sandbox them so they only touch what you allow.
 
 ## Version Control
 
@@ -207,7 +207,7 @@ The agent cannot access `~/.ssh`, `~/.aws`, `~/.gitconfig`, API keys in env vars
 
 ## Compatibility
 
-| Agent | Commands | MCP | Hooks | Skills | Instructions | Jobs |
+| Agent | Commands | MCP | Hooks | Skills | Memory | Jobs |
 |-------|----------|-----|-------|--------|-------------|------|
 | Claude Code | yes | yes | yes | yes | yes | yes |
 | Codex | yes | yes | -- | yes | yes | yes |
@@ -222,7 +222,6 @@ Env
   status [agent]                  Show installed agents and sync status
   pull [source] [agent]           Sync from .agents repo
   push                            Push config to your .agents repo
-  self-upgrade                    Upgrade agents-cli
 
 Agents
   add <agent>[@version]           Install agent CLI version
@@ -231,7 +230,7 @@ Agents
   list [agent]                    List installed versions
 
 Resources
-  instructions list|view|diff|push|remove
+  memory list|view|diff|push|remove
   commands list|add|remove|push
   mcp list|add|remove|register|push
   skills list|add|view|remove|push

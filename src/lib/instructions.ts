@@ -39,8 +39,8 @@ export function instructionsExists(agentId: AgentId, scope: InstructionsScope = 
 export function discoverInstructionsFromRepo(repoPath: string): DiscoveredInstructions[] {
   const instructions: DiscoveredInstructions[] = [];
 
-  const instructionsDir = path.join(repoPath, 'instructions');
-  if (!fs.existsSync(instructionsDir)) {
+  const memoryDir = path.join(repoPath, 'memory');
+  if (!fs.existsSync(memoryDir)) {
     return instructions;
   }
 
@@ -52,7 +52,7 @@ export function discoverInstructionsFromRepo(repoPath: string): DiscoveredInstru
     ];
 
     for (const filename of possibleNames) {
-      const sourcePath = path.join(instructionsDir, filename);
+      const sourcePath = path.join(memoryDir, filename);
       if (fs.existsSync(sourcePath)) {
         instructions.push({
           agentId,
@@ -69,9 +69,9 @@ export function discoverInstructionsFromRepo(repoPath: string): DiscoveredInstru
 
 export function resolveInstructionsSource(repoPath: string, agentId: AgentId): string | null {
   const agent = AGENTS[agentId];
-  const instructionsDir = path.join(repoPath, 'instructions');
+  const memoryDir = path.join(repoPath, 'memory');
 
-  if (!fs.existsSync(instructionsDir)) {
+  if (!fs.existsSync(memoryDir)) {
     return null;
   }
 
@@ -81,13 +81,29 @@ export function resolveInstructionsSource(repoPath: string, agentId: AgentId): s
   ];
 
   for (const filename of possibleNames) {
-    const sourcePath = path.join(instructionsDir, filename);
+    const sourcePath = path.join(memoryDir, filename);
     if (fs.existsSync(sourcePath)) {
       return sourcePath;
     }
   }
 
   return null;
+}
+
+export function discoverMemoryFilesFromRepo(repoPath: string): string[] {
+  const memoryDir = path.join(repoPath, 'memory');
+  if (!fs.existsSync(memoryDir)) {
+    return [];
+  }
+
+  try {
+    return fs
+      .readdirSync(memoryDir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+      .map((entry) => entry.name);
+  } catch {
+    return [];
+  }
 }
 
 export function installInstructions(
@@ -220,11 +236,12 @@ export function getInstructionsContent(agentId: AgentId, scope: InstructionsScop
 }
 
 /**
- * Install instructions/memory files to central ~/.agents/memory/ directory.
+ * Install memory files from repo memory/ to central ~/.agents/memory/ directory.
  * Shims will symlink these to per-agent directories for synced agents.
  */
 export function installInstructionsCentrally(
-  repoPath: string
+  repoPath: string,
+  filesToInstall?: string[]
 ): { installed: string[]; errors: string[] } {
   const installed: string[] = [];
   const errors: string[] = [];
@@ -234,17 +251,17 @@ export function installInstructionsCentrally(
     fs.mkdirSync(centralDir, { recursive: true });
   }
 
-  const instructionsDir = path.join(repoPath, 'instructions');
-  if (!fs.existsSync(instructionsDir)) {
+  const memoryDir = path.join(repoPath, 'memory');
+  if (!fs.existsSync(memoryDir)) {
     return { installed, errors };
   }
 
   try {
-    const files = fs.readdirSync(instructionsDir);
+    const files = filesToInstall ?? fs.readdirSync(memoryDir);
     for (const file of files) {
       if (!file.endsWith('.md')) continue;
 
-      const sourcePath = path.join(instructionsDir, file);
+      const sourcePath = path.join(memoryDir, file);
       const stat = fs.statSync(sourcePath);
       if (!stat.isFile()) continue;
 
@@ -258,7 +275,7 @@ export function installInstructionsCentrally(
       }
     }
   } catch (err) {
-    errors.push(`Failed to read instructions directory: ${(err as Error).message}`);
+    errors.push(`Failed to read memory directory: ${(err as Error).message}`);
   }
 
   return { installed, errors };
