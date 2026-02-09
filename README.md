@@ -280,16 +280,17 @@ Agents
   use <agent>@<version>           Set default version (-p for project)
   list [agent]                    List installed versions
 
+Packages
+  search <query>                  Search MCP and skill registries
+  install <identifier>            Install mcp:<name>, skill:<name>, or gh:<user/repo>
+
 Resources
   memory list|view|diff|push|remove
   commands list|add|remove|push
   mcp list|add|remove|register|push
   skills list|add|view|remove|push
   hooks list|add|remove|push
-
-Packages
-  search <query>                  Search MCP and skill registries
-  install <identifier>            Install mcp:<name>, skill:<name>, or gh:<user/repo>
+  drive create|list|info|edit|delete|link|sync|generate|serve
 
 Automation
   jobs list|add|run|logs|report|enable|disable
