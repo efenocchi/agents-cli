@@ -149,6 +149,22 @@ if [ "$(is_synced)" = "yes" ]; then
   fi
 fi
 
+# Symlink entries from real agent config dir into version home
+# Ensures user-installed skills, settings, hooks, etc. are visible
+# Sync-provided resources (above) take precedence
+REAL_AGENT_DIR="$REAL_HOME/$AGENT_CONFIG_DIR"
+AGENT_DIR="$VERSION_HOME/$AGENT_CONFIG_DIR"
+mkdir -p "$AGENT_DIR"
+
+if [ -d "$REAL_AGENT_DIR" ]; then
+  for entry in "$REAL_AGENT_DIR"/* "$REAL_AGENT_DIR"/.[!.]*; do
+    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    name="$(basename "$entry")"
+    target="$AGENT_DIR/$name"
+    [ -e "$target" ] || [ -L "$target" ] || ln -s "$entry" "$target" 2>/dev/null
+  done
+fi
+
 export AGENTS_REAL_HOME="$REAL_HOME"
 export HOME="$VERSION_HOME"
 
