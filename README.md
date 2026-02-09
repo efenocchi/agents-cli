@@ -1,6 +1,6 @@
 # agents
 
-**`nvm` + `systemctl` for AI coding agents.** Install, configure, schedule, and sandbox Claude Code, Codex, Gemini CLI, Cursor, and OpenCode from one place.
+**One CLI for every AI coding agent.** Version manager, config sync, package manager, and automation daemon for Claude Code, Codex, Gemini CLI, Cursor, and OpenCode.
 
 [![npm](https://img.shields.io/npm/v/@swarmify/agents-cli)](https://www.npmjs.com/package/@swarmify/agents-cli) [![license](https://img.shields.io/npm/l/@swarmify/agents-cli)](LICENSE) [![node](https://img.shields.io/node/v/@swarmify/agents-cli)](package.json)
 
@@ -31,9 +31,16 @@ agents pull
 
 ## Why
 
-Five agents, five config directories, five MCP registrations for a single server. A new machine means re-doing all of it. Sharing a setup with your team means writing a wiki nobody reads.
+Every agent works differently. Installing an MCP server in Claude is `claude mcp add`. In Codex it's `codex mcp add` with different flags. In OpenCode it's interactive. Gemini wants a config file edit. Skills, commands, memory files -- same story, different formats, different locations, different procedures for each agent.
 
-`agents` collapses that into one repo and one CLI. Define your commands, skills, MCP servers, and memory files in a `.agents` directory. Run `agents pull` and every agent on the machine picks up the changes. Pin CLI versions per project, schedule autonomous jobs, and sandbox them so they only touch what you allow.
+If you use more than one agent, you're doing everything N times. New machine? Do it all again. Teammate wants your setup? Good luck explaining five different config systems.
+
+`agents` is one CLI that handles all of it:
+
+- **Version manager** -- install, pin, and switch agent CLI versions per project, like `nvm` for Node
+- **Config sync** -- back up commands, skills, MCPs, memory files, and hooks to a single Git repo. `agents pull` on a new machine and everything is configured across every agent
+- **Package manager** -- `agents search notion` finds MCP servers across registries, `agents install mcp:com.notion/mcp` installs and registers it with every agent in one step
+- **Automation daemon** -- schedule agents to run on cron with sandboxed permissions, like `systemctl` for AI agents
 
 ## Version Control
 
