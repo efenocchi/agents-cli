@@ -92,7 +92,7 @@ export const AGENTS: Record<AgentId, AgentConfig> = {
     commandsSubdir: 'commands',
     skillsDir: path.join(HOME, '.opencode', 'skills'),
     hooksDir: 'hooks',
-    instructionsFile: 'OPENCODE.md',
+    instructionsFile: 'AGENTS.md',
     format: 'markdown',
     variableSyntax: '$ARGUMENTS',
     supportsHooks: false,
