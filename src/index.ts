@@ -215,15 +215,6 @@ program.helpInformation = function () {
 
 Manage AI coding agents - configs, CLIs, and automation
 
-Options:
-  -V, --version                   Show version number
-  -h, --help                      Show help
-
-Env
-  status                          Show installed agents and sync status
-  pull [source]                   Sync from .agents repo
-  push                            Push config to your .agents repo
-
 Agents
   add <agent>[@version]           Install agent CLI
   remove <agent>[@version]        Remove agent CLI
@@ -247,6 +238,15 @@ Automation
 
 Context
   drive                           Manage context drives
+
+Env
+  status                          Show installed agents and sync status
+  pull [source]                   Sync from .agents repo
+  push                            Push config to your .agents repo
+
+Options:
+  -V, --version                   Show version number
+  -h, --help                      Show help
 
 Run 'agents <command> --help' for details.
 `;
