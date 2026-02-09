@@ -131,12 +131,19 @@ if [ "$(is_synced)" = "yes" ]; then
     ln -s "$AGENTS_DIR/skills" "$AGENT_DIR/skills" 2>/dev/null
   fi
 
-  # Symlink memory files (AGENTS.md, CLAUDE.md, etc.) - copy the right one
+  # Link canonical AGENTS.md as this agent's instructionsFile name
+  AGENT_INSTRUCTIONS_FILE="${agentConfig.instructionsFile}"
+  CANONICAL_MEMORY="$AGENTS_DIR/memory/AGENTS.md"
+  if [ -f "$CANONICAL_MEMORY" ] && [ ! -e "$AGENT_DIR/$AGENT_INSTRUCTIONS_FILE" ]; then
+    ln -s "$CANONICAL_MEMORY" "$AGENT_DIR/$AGENT_INSTRUCTIONS_FILE" 2>/dev/null
+  fi
+
+  # Symlink other memory files (e.g. SOUL.md) by original name
   if [ -d "$AGENTS_DIR/memory" ]; then
     for memfile in "$AGENTS_DIR/memory"/*; do
       [ -f "$memfile" ] || continue
       memname="$(basename "$memfile")"
-      # Only link if it doesn't exist in agent dir
+      [ "$memname" = "AGENTS.md" ] && continue
       [ -e "$AGENT_DIR/$memname" ] || ln -s "$memfile" "$AGENT_DIR/$memname" 2>/dev/null
     done
   fi
