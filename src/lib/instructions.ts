@@ -28,6 +28,11 @@ export function getInstructionsPath(agentId: AgentId, scope: InstructionsScope, 
   if (scope === 'user') {
     return path.join(agent.configDir, agent.instructionsFile);
   }
+  // Check root-level first (where agents actually read from), then subdirectory
+  const rootPath = path.join(cwd, agent.instructionsFile);
+  if (fs.existsSync(rootPath)) {
+    return rootPath;
+  }
   return path.join(cwd, `.${agentId}`, agent.instructionsFile);
 }
 
