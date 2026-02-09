@@ -25,8 +25,24 @@ function normalizeContent(content: string): string {
 }
 
 /**
+ * Get the real HOME directory, seeing through shim HOME overlays.
+ * Shim HOME follows the pattern: ~/.agents/versions/{agent}/{version}/home
+ * The env var AGENTS_REAL_HOME is set by newer shims, but we also detect by path pattern.
+ */
+function getRealHome(): string | null {
+  const realHome = process.env.AGENTS_REAL_HOME;
+  if (realHome) return realHome;
+  // Detect shim HOME by path pattern: {realHome}/.agents/versions/{agent}/{version}/home
+  const home = os.homedir();
+  const shimSuffix = /\/\.agents\/versions\/[^/]+\/[^/]+\/home$/;
+  if (shimSuffix.test(home)) {
+    return home.replace(shimSuffix, '');
+  }
+  return null;
+}
+
+/**
  * Get the user-scope config dir for an agent, checking both shim HOME and real HOME.
- * When running inside a shim, AGENTS_REAL_HOME points to the actual HOME.
  */
 function getUserConfigDir(agentId: AgentId): string {
   const agent = AGENTS[agentId];
@@ -35,7 +51,7 @@ function getUserConfigDir(agentId: AgentId): string {
     return agent.configDir;
   }
   // Check real HOME if we're inside a shim
-  const realHome = process.env.AGENTS_REAL_HOME;
+  const realHome = getRealHome();
   if (realHome && realHome !== os.homedir()) {
     const realConfigDir = path.join(realHome, `.${agentId}`);
     const realPath = path.join(realConfigDir, agent.instructionsFile);
