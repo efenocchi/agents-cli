@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import { AGENTS, ALL_AGENT_IDS } from './agents.js';
 import { getMemoryDir } from './state.js';
 import type { AgentId } from './types.js';
@@ -23,10 +24,32 @@ function normalizeContent(content: string): string {
   return content.replace(/\r\n/g, '\n').trim();
 }
 
+/**
+ * Get the user-scope config dir for an agent, checking both shim HOME and real HOME.
+ * When running inside a shim, AGENTS_REAL_HOME points to the actual HOME.
+ */
+function getUserConfigDir(agentId: AgentId): string {
+  const agent = AGENTS[agentId];
+  const shimPath = path.join(agent.configDir, agent.instructionsFile);
+  if (fs.existsSync(shimPath)) {
+    return agent.configDir;
+  }
+  // Check real HOME if we're inside a shim
+  const realHome = process.env.AGENTS_REAL_HOME;
+  if (realHome && realHome !== os.homedir()) {
+    const realConfigDir = path.join(realHome, `.${agentId}`);
+    const realPath = path.join(realConfigDir, agent.instructionsFile);
+    if (fs.existsSync(realPath)) {
+      return realConfigDir;
+    }
+  }
+  return agent.configDir;
+}
+
 export function getInstructionsPath(agentId: AgentId, scope: InstructionsScope, cwd: string = process.cwd()): string {
   const agent = AGENTS[agentId];
   if (scope === 'user') {
-    return path.join(agent.configDir, agent.instructionsFile);
+    return path.join(getUserConfigDir(agentId), agent.instructionsFile);
   }
   // Check root-level first (where agents actually read from), then subdirectory
   const rootPath = path.join(cwd, agent.instructionsFile);
@@ -184,7 +207,8 @@ export function listInstalledInstructionsWithScope(
   const results: InstalledInstructions[] = [];
   const agent = AGENTS[agentId];
 
-  const userPath = path.join(agent.configDir, agent.instructionsFile);
+  const userConfigDir = getUserConfigDir(agentId);
+  const userPath = path.join(userConfigDir, agent.instructionsFile);
   results.push({
     agentId,
     scope: 'user',
