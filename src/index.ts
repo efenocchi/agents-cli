@@ -48,6 +48,7 @@ import {
   writeMeta,
   ensureAgentsDir,
   getRepoLocalPath,
+  getMemoryDir,
   getRepo,
   setRepo,
   removeRepo,
@@ -103,6 +104,7 @@ import {
 } from './lib/skills.js';
 import {
   discoverInstructionsFromRepo,
+  discoverMemoryFilesFromRepo,
   resolveInstructionsSource,
   installInstructions,
   installInstructionsCentrally,
@@ -221,7 +223,6 @@ Env
   status                          Show installed agents and sync status
   pull [source]                   Sync from .agents repo
   push                            Push config to your .agents repo
-  self-upgrade                    Upgrade agents-cli
 
 Agents
   add <agent>[@version]           Install agent CLI
@@ -230,7 +231,7 @@ Agents
   list                            List installed versions
 
 Resources
-  instructions                    Manage CLAUDE.md, GEMINI.md, etc.
+  memory                          Manage AGENTS.md, SOUL.md, etc.
   commands                        Manage slash commands
   mcp                             Manage MCP servers
   skills                          Manage skills (SKILL.md + rules/)
@@ -515,7 +516,7 @@ program
       }
     }
 
-    // Instructions
+    // Memory
     const userInstructions: StatusResource[] = [];
     const projectInstructions: StatusResource[] = [];
     const seenUserInstr = new Set<string>();
@@ -624,8 +625,8 @@ program
       renderSection('MCP Servers', userMcps, projectMcps, !filterAgentId);
     }
 
-    // 5. Instructions
-    renderSection('Instructions', userInstructions, projectInstructions);
+    // 5. Memory
+    renderSection('Memory', userInstructions, projectInstructions);
 
     // 6. Hooks (only if any exist)
     if (hooksAgentsToShow.length > 0 && (userHooks.length > 0 || projectHooks.length > 0)) {
@@ -687,7 +688,7 @@ function isAgentName(input: string): boolean {
 
 // Resource item for tracking new vs existing
 interface ResourceItem {
-  type: 'command' | 'skill' | 'hook' | 'mcp' | 'instructions' | 'job' | 'drive';
+  type: 'command' | 'skill' | 'hook' | 'mcp' | 'memory' | 'job' | 'drive';
   name: string;
   agents: AgentId[];
   isNew: boolean;
@@ -775,6 +776,7 @@ program
       const allSkills = discoverSkillsFromRepo(localPath);
       const discoveredHooks = discoverHooksFromRepo(localPath);
       const allInstructions = discoverInstructionsFromRepo(localPath);
+      const allMemoryFiles = discoverMemoryFilesFromRepo(localPath);
       const allDiscoveredJobs = discoverJobsFromRepo(localPath);
       const allDiscoveredDrives = discoverDrivesFromRepo(localPath);
 
@@ -959,17 +961,48 @@ program
         }
       }
 
-      // Process instructions
+      // Process agent-specific memory files
       for (const instr of allInstructions) {
         if (!selectedAgents.includes(instr.agentId)) continue;
 
         const hasExisting = instructionsExists(instr.agentId, 'user');
         if (!hasExisting) {
-          newItems.push({ type: 'instructions', name: AGENTS[instr.agentId].instructionsFile, agents: [instr.agentId], isNew: true });
+          newItems.push({ type: 'memory', name: AGENTS[instr.agentId].instructionsFile, agents: [instr.agentId], isNew: true });
         } else if (instructionsContentMatches(instr.agentId, instr.sourcePath, 'user')) {
-          upToDateItems.push({ type: 'instructions', name: AGENTS[instr.agentId].instructionsFile, agents: [instr.agentId], isNew: false });
+          upToDateItems.push({ type: 'memory', name: AGENTS[instr.agentId].instructionsFile, agents: [instr.agentId], isNew: false });
         } else {
-          existingItems.push({ type: 'instructions', name: AGENTS[instr.agentId].instructionsFile, agents: [instr.agentId], isNew: false });
+          existingItems.push({ type: 'memory', name: AGENTS[instr.agentId].instructionsFile, agents: [instr.agentId], isNew: false });
+        }
+      }
+
+      // Process additional repo memory files (for example SOUL.md)
+      const normalizedMemoryContent = (content: string) => content.replace(/\r\n/g, '\n').trim();
+      const agentMemoryNames = new Set(
+        allInstructions.map((instr) => AGENTS[instr.agentId].instructionsFile)
+      );
+      const centralMemoryDir = getMemoryDir();
+
+      for (const memoryFile of allMemoryFiles) {
+        if (agentMemoryNames.has(memoryFile)) continue;
+
+        const sourcePath = path.join(localPath, 'memory', memoryFile);
+        const targetPath = path.join(centralMemoryDir, memoryFile);
+
+        if (!fs.existsSync(targetPath)) {
+          newItems.push({ type: 'memory', name: memoryFile, agents: [], isNew: true });
+          continue;
+        }
+
+        try {
+          const sourceContent = fs.readFileSync(sourcePath, 'utf-8');
+          const targetContent = fs.readFileSync(targetPath, 'utf-8');
+          if (normalizedMemoryContent(sourceContent) === normalizedMemoryContent(targetContent)) {
+            upToDateItems.push({ type: 'memory', name: memoryFile, agents: [], isNew: false });
+          } else {
+            existingItems.push({ type: 'memory', name: memoryFile, agents: [], isNew: false });
+          }
+        } catch {
+          existingItems.push({ type: 'memory', name: memoryFile, agents: [], isNew: false });
         }
       }
 
@@ -1006,7 +1039,7 @@ program
 
       if (newItems.length > 0) {
         console.log(chalk.green('  NEW (will install):\n'));
-        const byType = { command: [] as ResourceItem[], skill: [] as ResourceItem[], hook: [] as ResourceItem[], mcp: [] as ResourceItem[], instructions: [] as ResourceItem[], job: [] as ResourceItem[], drive: [] as ResourceItem[] };
+        const byType = { command: [] as ResourceItem[], skill: [] as ResourceItem[], hook: [] as ResourceItem[], mcp: [] as ResourceItem[], memory: [] as ResourceItem[], job: [] as ResourceItem[], drive: [] as ResourceItem[] };
         for (const item of newItems) byType[item.type].push(item);
 
         // Central resources - shared across all synced agents
@@ -1028,9 +1061,9 @@ program
             console.log(`      ${chalk.cyan(item.name)}`);
           }
         }
-        if (byType.instructions.length > 0) {
+        if (byType.memory.length > 0) {
           console.log(`    Memory ${chalk.gray('(~/.agents/memory/)')}:`);
-          for (const item of byType.instructions) {
+          for (const item of byType.memory) {
             console.log(`      ${chalk.cyan(item.name)}`);
           }
         }
@@ -1060,7 +1093,7 @@ program
 
       if (existingItems.length > 0) {
         console.log(chalk.yellow('  CONFLICTS (will prompt):\n'));
-        const byType = { command: [] as ResourceItem[], skill: [] as ResourceItem[], hook: [] as ResourceItem[], mcp: [] as ResourceItem[], instructions: [] as ResourceItem[], job: [] as ResourceItem[], drive: [] as ResourceItem[] };
+        const byType = { command: [] as ResourceItem[], skill: [] as ResourceItem[], hook: [] as ResourceItem[], mcp: [] as ResourceItem[], memory: [] as ResourceItem[], job: [] as ResourceItem[], drive: [] as ResourceItem[] };
         for (const item of existingItems) byType[item.type].push(item);
 
         // Central resources
@@ -1073,8 +1106,8 @@ program
         if (byType.hook.length > 0) {
           console.log(`    Hooks: ${chalk.yellow(byType.hook.map(i => i.name).join(', '))}`);
         }
-        if (byType.instructions.length > 0) {
-          console.log(`    Memory: ${chalk.yellow(byType.instructions.map(i => i.name).join(', '))}`);
+        if (byType.memory.length > 0) {
+          console.log(`    Memory: ${chalk.yellow(byType.memory.map(i => i.name).join(', '))}`);
         }
 
         // Per-agent resources
@@ -1124,9 +1157,10 @@ program
         for (const item of existingItems) {
           const typeLabel = item.type.charAt(0).toUpperCase() + item.type.slice(1);
           const agentList = formatAgentList(item.agents);
+          const conflictContext = agentList ? ` (${agentList})` : '';
 
           const decision = await select({
-            message: `${typeLabel} '${item.name}' exists (${agentList})`,
+            message: `${typeLabel} '${item.name}' exists${conflictContext}`,
             choices: [
               { name: 'Overwrite', value: 'overwrite' as const },
               { name: 'Skip', value: 'skip' as const },
@@ -1155,8 +1189,8 @@ program
 
       // Install new items (no conflicts)
       console.log();
-      let installed = { commands: 0, skills: 0, hooks: 0, mcps: 0, instructions: 0, jobs: 0, drives: 0 };
-      let skipped = { commands: 0, skills: 0, hooks: 0, mcps: 0, instructions: 0, jobs: 0, drives: 0 };
+      let installed = { commands: 0, skills: 0, hooks: 0, mcps: 0, memory: 0, jobs: 0, drives: 0 };
+      let skipped = { commands: 0, skills: 0, hooks: 0, mcps: 0, memory: 0, jobs: 0, drives: 0 };
 
       // Install commands to central ~/.agents/commands/
       const cmdSpinner = ora('Installing commands to central storage...').start();
@@ -1247,8 +1281,14 @@ program
             if (!item.isNew) {
               await unregisterMcp(agentId, item.name);
             }
-            const result = await registerMcp(agentId, item.name, config.command, config.scope);
-            if (result.success) installed.mcps++;
+            const result = await registerMcp(agentId, item.name, config.command, config.scope, config.transport || 'stdio');
+            if (result.success) {
+              installed.mcps++;
+            } else {
+              mcpSpinner.stop();
+              console.log(chalk.yellow(`  Warning: ${item.name} (${AGENTS[agentId].name}): ${result.error}`));
+              mcpSpinner.start();
+            }
           }
         }
         if (skipped.mcps > 0) {
@@ -1260,16 +1300,35 @@ program
         }
       }
 
-      // Install instructions/memory to central ~/.agents/memory/
-      const instructionItems = [...newItems, ...existingItems].filter((i) => i.type === 'instructions');
-      if (instructionItems.length > 0) {
-        const instrSpinner = ora('Installing memory files to central storage...').start();
-        const memResult = installInstructionsCentrally(localPath);
-        if (memResult.installed.length > 0) {
-          instrSpinner.succeed(`Installed ${memResult.installed.length} memory files`);
-          installed.instructions = memResult.installed.length;
-        } else {
+      // Install memory files to central ~/.agents/memory/
+      const memoryItems = [...newItems, ...existingItems].filter((i) => i.type === 'memory');
+      if (memoryItems.length > 0) {
+        const memoryNames = [...new Set(memoryItems.map((item) => item.name))];
+        const selectedMemoryNames = memoryNames.filter((name) => {
+          const memoryItem = memoryItems.find((item) => item.name === name);
+          if (!memoryItem || memoryItem.isNew) return true;
+          const decision = decisions.get(`memory:${name}`);
+          return decision !== 'skip';
+        });
+
+        skipped.memory = memoryNames.length - selectedMemoryNames.length;
+
+        if (selectedMemoryNames.length === 0) {
+          const instrSpinner = ora('Installing memory files to central storage...').start();
           instrSpinner.info('No memory files to install');
+        } else {
+          const instrSpinner = ora('Installing memory files to central storage...').start();
+          const memResult = installInstructionsCentrally(localPath, selectedMemoryNames);
+          if (memResult.installed.length > 0) {
+            if (skipped.memory > 0) {
+              instrSpinner.succeed(`Installed ${memResult.installed.length} memory files (skipped ${skipped.memory})`);
+            } else {
+              instrSpinner.succeed(`Installed ${memResult.installed.length} memory files`);
+            }
+            installed.memory = memResult.installed.length;
+          } else {
+            instrSpinner.info('No memory files to install');
+          }
         }
       }
 
@@ -1374,8 +1433,6 @@ program
         const meta = readMeta();
         meta.sync = selectedAgents;
         writeMeta(meta);
-        console.log(chalk.gray(`\nSync list updated: ${selectedAgents.map(id => AGENTS[id].name).join(', ')}`));
-        console.log(chalk.gray('Central resources will be symlinked on next agent run.'));
       }
 
       // Update scope config
@@ -2187,17 +2244,16 @@ skillsCmd
   });
 
 // =============================================================================
-// INSTRUCTIONS COMMANDS
+// MEMORY COMMANDS
 // =============================================================================
 
-const instructionsCmd = program
-  .command('instructions')
-  .alias('instr')
-  .description('Manage agent instructions files');
+const memoryCmd = program
+  .command('memory')
+  .description('Manage agent memory files');
 
-instructionsCmd
+memoryCmd
   .command('list')
-  .description('List installed instructions')
+  .description('List installed memory files')
   .option('-a, --agent <agent>', 'Filter by agent')
   .action(async (options) => {
     const cwd = process.cwd();
@@ -2205,7 +2261,7 @@ instructionsCmd
       ? [resolveAgentName(options.agent)].filter(Boolean) as AgentId[]
       : ALL_AGENT_IDS;
 
-    console.log(chalk.bold('Installed Instructions\n'));
+    console.log(chalk.bold('Installed Memory\n'));
 
     for (const agentId of agents) {
       const agent = AGENTS[agentId];
@@ -2223,10 +2279,10 @@ instructionsCmd
     }
   });
 
-instructionsCmd
+memoryCmd
   .command('view [agent]')
   .alias('show')
-  .description('Show instructions content for an agent')
+  .description('Show memory content for an agent')
   .option('-s, --scope <scope>', 'Scope: user or project', 'user')
   .action(async (agentArg?: string, options?: { scope?: string }) => {
     const cwd = process.cwd();
@@ -2241,7 +2297,7 @@ instructionsCmd
     } else {
       const choices = ALL_AGENT_IDS.filter((id) => instructionsExists(id, 'user', cwd) || instructionsExists(id, 'project', cwd));
       if (choices.length === 0) {
-        console.log(chalk.yellow('No instructions files found.'));
+        console.log(chalk.yellow('No memory files found.'));
         return;
       }
       agentId = await select({
@@ -2254,17 +2310,17 @@ instructionsCmd
     const content = getInstructionsContent(agentId, scope, cwd);
 
     if (!content) {
-      console.log(chalk.yellow(`No ${scope} instructions found for ${AGENTS[agentId].name}`));
+      console.log(chalk.yellow(`No ${scope} memory found for ${AGENTS[agentId].name}`));
       return;
     }
 
-    console.log(chalk.bold(`\n${AGENTS[agentId].name} Instructions (${scope}):\n`));
+    console.log(chalk.bold(`\n${AGENTS[agentId].name} Memory (${scope}):\n`));
     console.log(content);
   });
 
-instructionsCmd
+memoryCmd
   .command('diff [agent]')
-  .description('Diff installed instructions against repo')
+  .description('Diff installed memory against repo')
   .action(async (agentArg?: string) => {
     const cwd = process.cwd();
     const meta = readMeta();
@@ -2315,9 +2371,9 @@ instructionsCmd
     }
   });
 
-instructionsCmd
+memoryCmd
   .command('push <agent>')
-  .description('Promote project instructions to user scope')
+  .description('Promote project memory to user scope')
   .action((agentArg: string) => {
     const cwd = process.cwd();
     const agentId = resolveAgentName(agentArg);
@@ -2331,13 +2387,13 @@ instructionsCmd
     if (result.success) {
       console.log(chalk.green(`Pushed ${AGENTS[agentId].instructionsFile} to user scope`));
     } else {
-      console.log(chalk.red(result.error || 'Failed to push instructions'));
+      console.log(chalk.red(result.error || 'Failed to push memory'));
     }
   });
 
-instructionsCmd
+memoryCmd
   .command('remove <agent>')
-  .description('Remove user instructions for an agent')
+  .description('Remove user memory for an agent')
   .action((agentArg: string) => {
     const agentId = resolveAgentName(agentArg);
 
@@ -2350,7 +2406,7 @@ instructionsCmd
     if (result) {
       console.log(chalk.green(`Removed ${AGENTS[agentId].instructionsFile}`));
     } else {
-      console.log(chalk.yellow(`No instructions file found for ${AGENTS[agentId].name}`));
+      console.log(chalk.yellow(`No memory file found for ${AGENTS[agentId].name}`));
     }
   });
 
@@ -2554,7 +2610,7 @@ mcpCmd
         for (const agentId of config.agents) {
           if (!cliStates[agentId]?.installed) continue;
 
-          const result = await registerMcp(agentId, mcpName, config.command, config.scope);
+          const result = await registerMcp(agentId, mcpName, config.command, config.scope, config.transport || 'stdio');
           if (result.success) {
             console.log(`    ${chalk.green('+')} ${AGENTS[agentId].name}`);
           } else {
@@ -3447,74 +3503,6 @@ program
     } catch (err) {
       spinner.fail('Installation failed');
       console.error(chalk.red((err as Error).message));
-      process.exit(1);
-    }
-  });
-
-// Self-upgrade command
-program
-  .command('self-upgrade')
-  .description('Upgrade agents-cli to the latest version')
-  .action(async () => {
-    const spinner = ora('Checking for updates...').start();
-
-    try {
-      // Get current version from package.json
-      const currentVersion = program.version() || '0.0.0';
-
-      // Fetch latest version from npm
-      const response = await fetch('https://registry.npmjs.org/@swarmify/agents-cli/latest');
-      if (!response.ok) {
-        throw new Error('Failed to fetch latest version');
-      }
-      const data = (await response.json()) as { version: string };
-      const latestVersion = data.version;
-
-      if (currentVersion === latestVersion) {
-        spinner.succeed(`Already on latest version (${currentVersion})`);
-        return;
-      }
-
-      spinner.text = `Upgrading to ${latestVersion}...`;
-
-      // Detect package manager
-      const { execSync, exec } = await import('child_process');
-      const { promisify } = await import('util');
-      const execAsync = promisify(exec);
-      let cmd: string;
-
-      // Check if installed globally via npm, bun, or other
-      try {
-        const npmList = execSync('npm list -g @swarmify/agents-cli 2>/dev/null', { encoding: 'utf-8' });
-        if (npmList.includes('@swarmify/agents-cli')) {
-          cmd = 'npm install -g @swarmify/agents-cli@latest';
-        } else {
-          throw new Error('not npm');
-        }
-      } catch {
-        try {
-          const bunList = execSync('bun pm ls -g 2>/dev/null', { encoding: 'utf-8' });
-          if (bunList.includes('@swarmify/agents-cli')) {
-            cmd = 'bun install -g @swarmify/agents-cli@latest';
-          } else {
-            throw new Error('not bun');
-          }
-        } catch {
-          // Default to npm
-          cmd = 'npm install -g @swarmify/agents-cli@latest';
-        }
-      }
-
-      // Run silently (suppress npm/bun output) - use async to allow spinner to animate
-      await execAsync(cmd);
-      spinner.succeed(`Upgraded to ${latestVersion}`);
-
-      // Show what's new from changelog
-      await showWhatsNew(currentVersion, latestVersion);
-    } catch (err) {
-      spinner.fail('Upgrade failed');
-      console.error(chalk.red((err as Error).message));
-      console.log(chalk.gray('\nManual upgrade: npm install -g @swarmify/agents-cli@latest'));
       process.exit(1);
     }
   });

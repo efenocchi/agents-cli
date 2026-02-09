@@ -16,7 +16,7 @@ src/
     hooks.ts            # Hook discovery and installation
     commands.ts         # Slash command discovery and installation
     skills.ts           # Agent Skills (SKILL.md + rules/) management
-    instructions.ts     # Agent instructions (CLAUDE.md, etc.) management
+    instructions.ts     # Agent memory files (CLAUDE.md, AGENTS.md, etc.) management
     convert.ts          # Markdown <-> TOML conversion
     registry.ts         # Package registry client (MCP, skills)
     jobs.ts             # Job config YAML parsing and management
@@ -63,7 +63,7 @@ interface JobConfig {
 
 Each agent has different paths and formats. See `AGENTS` object in `lib/agents.ts`:
 
-| Agent | Commands Dir | Format | Instructions File | MCP Support |
+| Agent | Commands Dir | Format | Memory File | MCP Support |
 |-------|--------------|--------|-------------------|-------------|
 | Claude | `~/.claude/commands/` | markdown | `CLAUDE.md` | Yes |
 | Codex | `~/.codex/prompts/` | markdown | `AGENTS.md` | Yes |
@@ -115,7 +115,7 @@ agents upgrade claude          # Upgrade specific agent
 
 ### Installation Scope
 
-Commands, skills, hooks, MCPs, and instructions can exist at two scopes:
+Commands, skills, hooks, MCPs, and memory files can exist at two scopes:
 
 | Scope | Location | Use Case |
 |-------|----------|----------|
@@ -292,15 +292,15 @@ bun test         # Run vitest
 |------|------|
 | Claude commands | `~/.claude/commands/` |
 | Claude skills | `~/.claude/skills/` |
-| Claude instructions | `~/.claude/CLAUDE.md` |
+| Claude memory | `~/.claude/CLAUDE.md` |
 | Claude MCP config | `~/.claude/settings.json` |
 | Codex prompts | `~/.codex/prompts/` |
 | Codex skills | `~/.codex/skills/` |
-| Codex instructions | `~/.codex/AGENTS.md` |
+| Codex memory | `~/.codex/AGENTS.md` |
 | Codex MCP config | `~/.codex/config.json` |
 | Gemini commands | `~/.gemini/commands/` |
 | Gemini skills | `~/.gemini/skills/` |
-| Gemini instructions | `~/.gemini/GEMINI.md` |
+| Gemini memory | `~/.gemini/GEMINI.md` |
 | Gemini MCP config | `~/.gemini/settings.json` |
 
 ### Project Scope (per-directory)
@@ -309,13 +309,13 @@ bun test         # Run vitest
 |------|------|
 | Claude commands | `./.claude/commands/` |
 | Claude skills | `./.claude/skills/` |
-| Claude instructions | `./.claude/CLAUDE.md` |
+| Claude memory | `./.claude/CLAUDE.md` |
 | Claude MCP config | `./.claude/settings.json` |
 | Codex prompts | `./.codex/prompts/` |
 | Codex skills | `./.codex/skills/` |
-| Codex instructions | `./.codex/AGENTS.md` |
+| Codex memory | `./.codex/AGENTS.md` |
 | Codex MCP config | `./.codex/config.json` |
 | Gemini commands | `./.gemini/commands/` |
 | Gemini skills | `./.gemini/skills/` |
-| Gemini instructions | `./.gemini/GEMINI.md` |
+| Gemini memory | `./.gemini/GEMINI.md` |
 | Gemini MCP config | `./.gemini/settings.json` |
