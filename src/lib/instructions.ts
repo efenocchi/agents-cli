@@ -192,7 +192,10 @@ export function listInstalledInstructionsWithScope(
     exists: fs.existsSync(userPath),
   });
 
-  const projectPath = path.join(cwd, `.${agentId}`, agent.instructionsFile);
+  // Check root-level first (where agents actually read from), then subdirectory
+  const rootPath = path.join(cwd, agent.instructionsFile);
+  const subPath = path.join(cwd, `.${agentId}`, agent.instructionsFile);
+  const projectPath = fs.existsSync(rootPath) ? rootPath : subPath;
   results.push({
     agentId,
     scope: 'project',
@@ -208,7 +211,10 @@ export function promoteInstructionsToUser(
   cwd: string = process.cwd()
 ): { success: boolean; error?: string } {
   const agent = AGENTS[agentId];
-  const projectPath = path.join(cwd, `.${agentId}`, agent.instructionsFile);
+  // Check root-level first, then subdirectory
+  const rootPath = path.join(cwd, agent.instructionsFile);
+  const subPath = path.join(cwd, `.${agentId}`, agent.instructionsFile);
+  const projectPath = fs.existsSync(rootPath) ? rootPath : subPath;
 
   if (!fs.existsSync(projectPath)) {
     return { success: false, error: `Project instructions not found at ${projectPath}` };
