@@ -92,9 +92,6 @@ agents list                    # Show all installed versions
 agents upgrade                 # Upgrade all to latest
 agents upgrade claude          # Upgrade specific agent
 
-agents sync                    # Link central resources to all version homes
-agents sync claude@2.1.37     # Link to specific version
-agents sync claude             # Link to all versions of claude
 ```
 
 ### How It Works

@@ -244,7 +244,6 @@ Env
   status                          Show installed agents and sync status
   pull [source]                   Sync from .agents repo
   push                            Push config to your .agents repo
-  sync [agent@version]            Link central resources to version homes
 
 Options:
   -V, --version                   Show version number
