@@ -60,12 +60,15 @@ describe('agents perf', () => {
 
   it('getCliState per agent (sequential)', async () => {
     let total = 0;
+    const versions = await import('../src/lib/versions.js');
     for (const agentId of ALL_AGENT_IDS) {
+      const managed = versions.listInstalledVersions(agentId).length > 0;
       const start = process.hrtime();
       await getCliState(agentId);
       const ms = timeMs(start);
       total += ms;
-      console.log(`  getCliState(${agentId}): ${ms.toFixed(1)}ms`);
+      const tag = managed ? 'fast-path' : 'slow-path';
+      console.log(`  getCliState(${agentId}): ${ms.toFixed(1)}ms [${tag}]`);
     }
     console.log(`  total sequential: ${total.toFixed(1)}ms`);
   });

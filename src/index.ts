@@ -9,6 +9,11 @@ import { fileURLToPath } from 'url';
 
 import { checkbox, confirm, select } from '@inquirer/prompts';
 
+// Force exit on Ctrl+C when no interactive prompt is handling it.
+// signal-exit (used by @inquirer/prompts) can leave a process-level SIGINT handler
+// installed after prompt cleanup, preventing the default termination behavior.
+process.on('SIGINT', () => process.exit(130));
+
 // Get version from package.json
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageJsonPath = path.join(__dirname, '..', 'package.json');

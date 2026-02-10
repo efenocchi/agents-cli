@@ -5,6 +5,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as TOML from 'smol-toml';
 import type { AgentConfig, AgentId } from './types.js';
+import { getVersionsDir, getShimsDir } from './state.js';
 
 export interface CliState {
   installed: boolean;
@@ -141,6 +142,27 @@ export async function getCliPath(agentId: AgentId): Promise<string | null> {
 }
 
 export async function getCliState(agentId: AgentId): Promise<CliState> {
+  // Fast path: if version-managed, derive state from filesystem (no subprocesses)
+  const agent = AGENTS[agentId];
+  const agentVersionsDir = path.join(getVersionsDir(), agentId);
+  if (fs.existsSync(agentVersionsDir)) {
+    const entries = fs.readdirSync(agentVersionsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const binaryPath = path.join(agentVersionsDir, entry.name, 'node_modules', '.bin', agent.cliCommand);
+        if (fs.existsSync(binaryPath)) {
+          const shimPath = path.join(getShimsDir(), agent.cliCommand);
+          return {
+            installed: true,
+            version: entry.name,
+            path: fs.existsSync(shimPath) ? shimPath : binaryPath,
+          };
+        }
+      }
+    }
+  }
+
+  // Slow path: fall back to subprocess detection for non-version-managed installs
   const installed = await isCliInstalled(agentId);
   return {
     installed,
