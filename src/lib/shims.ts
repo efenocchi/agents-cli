@@ -73,20 +73,19 @@ if [ ! -x "$BINARY" ]; then
   exit 1
 fi
 
-# Isolate agent config per version, pass through everything else
+# Isolate only THIS agent's config dir - everything else passes through
 REAL_HOME="$HOME"
 VERSION_HOME="$VERSION_DIR/home"
 mkdir -p "$VERSION_HOME"
 
-# Only these dirs get isolated per version - everything else is symlinked through
-ISOLATED=".claude .codex .gemini .cursor .opencode .agents"
+ISOLATED=".${agent} .agents"
 
 # Migration: clean up old Library directory (replaced by symlink)
 if [ -e "$VERSION_HOME/Library" ] && [ ! -L "$VERSION_HOME/Library" ]; then
   rm -rf "$VERSION_HOME/Library"
 fi
 
-# Symlink all HOME entries except isolated agent config dirs
+# Symlink all HOME entries except isolated dirs
 for entry in "$REAL_HOME"/.[!.]* "$REAL_HOME"/*; do
   [ -e "$entry" ] || [ -L "$entry" ] || continue
   name="$(basename "$entry")"
@@ -94,6 +93,14 @@ for entry in "$REAL_HOME"/.[!.]* "$REAL_HOME"/*; do
   target="$VERSION_HOME/$name"
   [ -e "$target" ] || [ -L "$target" ] || ln -s "$entry" "$target" 2>/dev/null
 done
+
+# Agent config directory setup
+AGENT_CONFIG_DIR=".${agent}"
+AGENT_COMMANDS_SUBDIR="${agentConfig.commandsSubdir}"
+AGENT_INSTRUCTIONS_FILE="${agentConfig.instructionsFile}"
+AGENT_DIR="$VERSION_HOME/$AGENT_CONFIG_DIR"
+REAL_AGENT_DIR="$REAL_HOME/$AGENT_CONFIG_DIR"
+mkdir -p "$AGENT_DIR"
 
 # Check if this agent should sync central resources
 is_synced() {
@@ -107,38 +114,21 @@ is_synced() {
   fi
 }
 
-# Agent-specific config directory and subdirectory mappings
-AGENT_CONFIG_DIR=".${agent}"
-AGENT_COMMANDS_SUBDIR="${agentConfig.commandsSubdir}"
-
-# If agent is in sync list, symlink central resources
+# 1. If agent is in sync list, symlink central resources (highest priority)
 if [ "$(is_synced)" = "yes" ]; then
-  AGENT_DIR="$VERSION_HOME/$AGENT_CONFIG_DIR"
-  mkdir -p "$AGENT_DIR"
-
-  # Symlink commands (agent uses different subdir names)
   if [ -d "$AGENTS_DIR/commands" ] && [ ! -e "$AGENT_DIR/$AGENT_COMMANDS_SUBDIR" ]; then
     ln -s "$AGENTS_DIR/commands" "$AGENT_DIR/$AGENT_COMMANDS_SUBDIR" 2>/dev/null
   fi
-
-  # Symlink hooks (if agent supports them)
   if [ -d "$AGENTS_DIR/hooks" ] && [ ! -e "$AGENT_DIR/hooks" ] && [ "${agentConfig.supportsHooks}" = "true" ]; then
     ln -s "$AGENTS_DIR/hooks" "$AGENT_DIR/hooks" 2>/dev/null
   fi
-
-  # Symlink skills
   if [ -d "$AGENTS_DIR/skills" ] && [ ! -e "$AGENT_DIR/skills" ]; then
     ln -s "$AGENTS_DIR/skills" "$AGENT_DIR/skills" 2>/dev/null
   fi
-
-  # Link canonical AGENTS.md as this agent's instructionsFile name
-  AGENT_INSTRUCTIONS_FILE="${agentConfig.instructionsFile}"
   CANONICAL_MEMORY="$AGENTS_DIR/memory/AGENTS.md"
   if [ -f "$CANONICAL_MEMORY" ] && [ ! -e "$AGENT_DIR/$AGENT_INSTRUCTIONS_FILE" ]; then
     ln -s "$CANONICAL_MEMORY" "$AGENT_DIR/$AGENT_INSTRUCTIONS_FILE" 2>/dev/null
   fi
-
-  # Symlink other memory files (e.g. SOUL.md) by original name
   if [ -d "$AGENTS_DIR/memory" ]; then
     for memfile in "$AGENTS_DIR/memory"/*; do
       [ -f "$memfile" ] || continue
@@ -149,20 +139,20 @@ if [ "$(is_synced)" = "yes" ]; then
   fi
 fi
 
-# Symlink entries from real agent config dir into version home
-# Ensures user-installed skills, settings, hooks, etc. are visible
-# Sync-provided resources (above) take precedence
-REAL_AGENT_DIR="$REAL_HOME/$AGENT_CONFIG_DIR"
-AGENT_DIR="$VERSION_HOME/$AGENT_CONFIG_DIR"
-mkdir -p "$AGENT_DIR"
-
+# 2. Symlink SUBDIRECTORIES from real agent config (skills, commands, hooks, etc.)
+#    Files are NOT symlinked — keeps auth/credentials isolated per version
 if [ -d "$REAL_AGENT_DIR" ]; then
   for entry in "$REAL_AGENT_DIR"/* "$REAL_AGENT_DIR"/.[!.]*; do
-    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    [ -d "$entry" ] || continue
     name="$(basename "$entry")"
     target="$AGENT_DIR/$name"
     [ -e "$target" ] || [ -L "$target" ] || ln -s "$entry" "$target" 2>/dev/null
   done
+fi
+
+# 3. Symlink memory/instructions file from real config
+if [ -f "$REAL_AGENT_DIR/$AGENT_INSTRUCTIONS_FILE" ] && [ ! -e "$AGENT_DIR/$AGENT_INSTRUCTIONS_FILE" ]; then
+  ln -s "$REAL_AGENT_DIR/$AGENT_INSTRUCTIONS_FILE" "$AGENT_DIR/$AGENT_INSTRUCTIONS_FILE" 2>/dev/null
 fi
 
 export AGENTS_REAL_HOME="$REAL_HOME"

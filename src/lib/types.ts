@@ -28,7 +28,7 @@ export interface McpServerConfig {
   url?: string;
   transport: 'stdio' | 'http' | 'sse';
   scope: 'user' | 'project';
-  agents: AgentId[];
+  agents?: AgentId[];
   env?: Record<string, string>;
   headers?: Record<string, string>;
 }
