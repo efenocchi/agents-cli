@@ -19,7 +19,7 @@ const HOME = os.homedir();
 export const AGENTS: Record<AgentId, AgentConfig> = {
   claude: {
     id: 'claude',
-    name: 'Claude Code',
+    name: 'Claude',
     cliCommand: 'claude',
     npmPackage: '@anthropic-ai/claude-code',
     configDir: path.join(HOME, '.claude'),
@@ -179,6 +179,37 @@ export function ensureSkillsDir(agentId: AgentId): void {
   const agent = AGENTS[agentId];
   if (!fs.existsSync(agent.skillsDir)) {
     fs.mkdirSync(agent.skillsDir, { recursive: true });
+  }
+}
+
+export async function getAccountEmail(
+  agentId: AgentId,
+  home?: string
+): Promise<string | null> {
+  const base = home || os.homedir();
+  try {
+    switch (agentId) {
+      case 'claude': {
+        const data = JSON.parse(await fs.promises.readFile(path.join(base, '.claude.json'), 'utf-8'));
+        return data.oauthAccount?.emailAddress || null;
+      }
+      case 'codex': {
+        const data = JSON.parse(await fs.promises.readFile(path.join(base, '.codex', 'auth.json'), 'utf-8'));
+        const token = data.tokens?.id_token || data.tokens?.access_token;
+        if (!token) return null;
+        const payload = token.split('.')[1];
+        const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString());
+        return decoded.email || null;
+      }
+      case 'gemini': {
+        const data = JSON.parse(await fs.promises.readFile(path.join(base, '.gemini', 'google_accounts.json'), 'utf-8'));
+        return data.active || null;
+      }
+      default:
+        return null;
+    }
+  } catch {
+    return null;
   }
 }
 
