@@ -35,6 +35,8 @@ import {
   unregisterMcp,
   listInstalledMcpsWithScope,
   promoteMcpToUser,
+  parseMcpConfig,
+  getMcpConfigPathForHome,
 } from './lib/agents.js';
 import {
   readManifest,
@@ -230,7 +232,7 @@ Resources
   hooks                           Manage agent hooks
 
 Packages
-  search <query>                  Search registries
+  search <query>                  Search MCP servers
   install <pkg>                   Install mcp:name or skill:user/repo
 
 Automation
@@ -238,11 +240,11 @@ Automation
   daemon                          Manage the scheduler daemon
 
 Context
-  drive                           Manage context drives
+  drive                           Manage context drives (experimental)
 
 Env
   status                          Show installed agents and sync status
-  pull [source]                   Sync from .agents repo
+  pull                            Sync from .agents repo
   push                            Push config to your .agents repo
 
 Options:
@@ -707,6 +709,7 @@ program
   .option('--dry-run', 'Show what would change')
   .option('--skip-clis', 'Do not sync CLI versions')
   .option('--skip-mcp', 'Do not register MCP servers')
+  .option('--clean', 'Remove MCPs not in repo')
   .action(async (arg1: string | undefined, arg2: string | undefined, options) => {
     // Parse source and agent filter from positional args
     let targetSource: string | undefined;
@@ -1382,7 +1385,16 @@ program
 
           for (const agentId of item.agents) {
             if (!item.isNew) {
-              await unregisterMcp(agentId, item.name);
+              const vl = agentVersionSelections.get(agentId) || [];
+              if (vl.length > 0) {
+                for (const ver of vl) {
+                  const home = getVersionHomePath(agentId, ver);
+                  const binary = getBinaryPath(agentId, ver);
+                  await unregisterMcp(agentId, item.name, { home, binary });
+                }
+              } else {
+                await unregisterMcp(agentId, item.name);
+              }
             }
             const versionsList = agentVersionSelections.get(agentId) || [];
             if (versionsList.length > 0) {
@@ -1419,6 +1431,44 @@ program
           mcpSpinner.succeed(`Registered ${installed.mcps} MCP servers`);
         } else {
           mcpSpinner.info('No MCP servers to register');
+        }
+      }
+
+      // --clean: remove MCPs not in manifest
+      if (options.clean && manifest?.mcp) {
+        const manifestMcpNames = new Set(Object.keys(manifest.mcp));
+        let removed = 0;
+
+        for (const agentId of selectedAgents) {
+          const versionsList = agentVersionSelections.get(agentId) || [];
+
+          if (versionsList.length > 0) {
+            for (const ver of versionsList) {
+              const home = getVersionHomePath(agentId, ver);
+              const configPath = getMcpConfigPathForHome(agentId, home);
+              const installedMcps = parseMcpConfig(agentId, configPath);
+              const binary = getBinaryPath(agentId, ver);
+
+              for (const name of Object.keys(installedMcps)) {
+                if (!manifestMcpNames.has(name)) {
+                  await unregisterMcp(agentId, name, { home, binary });
+                  removed++;
+                }
+              }
+            }
+          } else {
+            const installedList = listInstalledMcpsWithScope(agentId);
+            for (const mcp of installedList.filter(m => m.scope === 'user')) {
+              if (!manifestMcpNames.has(mcp.name)) {
+                await unregisterMcp(agentId, mcp.name);
+                removed++;
+              }
+            }
+          }
+        }
+
+        if (removed > 0) {
+          console.log(chalk.green(`  Removed ${removed} MCP servers not in repo`));
         }
       }
 
@@ -3958,7 +4008,11 @@ import {
 } from './lib/drives.js';
 import { runDriveServer } from './lib/drive-server.js';
 
-const driveCmd = program.command('drive').description('Manage context drives');
+const driveCmd = program.command('drive').description('Manage context drives (experimental)');
+
+driveCmd.hook('preAction', () => {
+  console.log(chalk.yellow('Note: Context drives is an experimental feature.\n'));
+});
 
 driveCmd
   .command('create <name>')
