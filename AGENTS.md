@@ -91,19 +91,24 @@ agents use claude@1.5.0 -p     # Pin version in project manifest
 agents list                    # Show all installed versions
 agents upgrade                 # Upgrade all to latest
 agents upgrade claude          # Upgrade specific agent
+
+agents sync                    # Link central resources to all version homes
+agents sync claude@2.1.37     # Link to specific version
+agents sync claude             # Link to all versions of claude
 ```
 
 ### How It Works
 
 1. **Version Storage**: Versions installed to `~/.agents/versions/{agent}/{version}/`
-2. **Config Isolation**: Each version has isolated HOME at `~/.agents/versions/{agent}/{version}/home/` for auth. Shared config (skills, commands, MCPs) is symlinked from `~/.agents/`.
-3. **Shims**: Wrapper scripts in `~/.agents/shims/` set HOME and delegate to correct version. They symlink all real HOME entries except agent config dirs (`.claude`, `.codex`, `.gemini`, `.cursor`, `.opencode`, `.agents`).
-4. **Resolution**: Project manifest (`.agents/agents.yaml`) overrides global default
-5. **Automatic Switching**: When shims are in PATH, running `claude` uses the resolved version
+2. **Config Isolation**: Each version has isolated HOME at `~/.agents/versions/{agent}/{version}/home/` for auth.
+3. **Resource Linking**: `syncResourcesToVersion()` symlinks central resources (`~/.agents/commands/`, `skills/`, `hooks/`, `memory/`) into the version's config dir at install time. For Gemini, commands are converted from markdown to TOML.
+4. **Shims**: Wrapper scripts in `~/.agents/shims/` do HOME overlay and exec -- nothing else. They isolate `.{agent}` and `.agents` dirs, symlink everything else from real HOME.
+5. **Resolution**: Project manifest (`.agents/agents.yaml`) overrides global default
+6. **Automatic Switching**: When shims are in PATH, running `claude` uses the resolved version
 
 ### Key Files
 
-- `lib/versions.ts` - `installVersion()`, `removeVersion()`, `resolveVersion()`
+- `lib/versions.ts` - `installVersion()`, `removeVersion()`, `resolveVersion()`, `syncResourcesToVersion()`
 - `lib/shims.ts` - `createShim()`, `generateShimScript()`
 
 ### Version Resolution Order

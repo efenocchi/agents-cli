@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.29
+
+**Version-aware resource installation**
+
+- `agents pull` now prompts for version selection per agent when multiple versions are installed
+- Resources (commands, skills, hooks, memory) are linked into version homes at pull time via `syncResourcesToVersion()`
+- New `agents sync` command to re-link central resources into version homes
+- Simplified shims: HOME overlay + exec only (~80 lines, down from ~160). No more runtime sync logic.
+- `registerMcp()` accepts `home` option for writing MCP config to version-specific config dirs
+
 ## 1.5.7
 
 - Remove trailing newlines from command output
