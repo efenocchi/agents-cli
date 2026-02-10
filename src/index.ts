@@ -864,12 +864,14 @@ program
           );
           const versionEmailMap = new Map(versionEmails.map((e) => [e.v, e.email]));
 
+          const maxLabelLen = Math.max(...versions.map((v) => (v === defaultVer ? `${v} (default)` : v).length));
           const versionResult = await checkbox<string>({
             message: `Which versions of ${AGENTS[agentFilter].name} should receive these resources?`,
             choices: [
               { name: chalk.bold('All versions'), value: 'all', checked: false },
               ...versions.map((v) => {
-                let label = v === defaultVer ? `${v} (default)` : v;
+                const base = v === defaultVer ? `${v} (default)` : v;
+                let label = base.padEnd(maxLabelLen);
                 const email = versionEmailMap.get(v);
                 if (email) label += chalk.cyan(`  ${email}`);
                 return { name: label, value: v, checked: v === defaultVer };
@@ -953,12 +955,14 @@ program
           );
           const versionEmailMap = new Map(versionEmails.map((e) => [e.v, e.email]));
 
+          const maxLabelLen = Math.max(...versions.map((v) => (v === defaultVer ? `${v} (default)` : v).length));
           const versionResult = await checkbox<string>({
             message: `Which versions of ${AGENTS[agentId].name} should receive these resources?`,
             choices: [
               { name: chalk.bold('All versions'), value: 'all', checked: false },
               ...versions.map((v) => {
-                let label = v === defaultVer ? `${v} (default)` : v;
+                const base = v === defaultVer ? `${v} (default)` : v;
+                let label = base.padEnd(maxLabelLen);
                 const email = versionEmailMap.get(v);
                 if (email) label += chalk.cyan(`  ${email}`);
                 return { name: label, value: v, checked: v === defaultVer };
@@ -3087,11 +3091,13 @@ program
       );
       const pickerEmailMap = new Map(pickerEmails.map((e) => [e.v, e.email]));
 
+      const maxLabelLen = Math.max(...versions.map((v) => (v === globalDefault ? `${v} (default)` : v).length));
       selectedVersion = await select({
         message: `Select ${agentConfig.name} version:`,
         choices: versions.map((v) => {
-          let label = v;
-          if (v === globalDefault) label += chalk.green(' (default)');
+          let label = v === globalDefault ? `${v}${chalk.green(' (default)')}` : v;
+          const padLen = maxLabelLen - (v === globalDefault ? `${v} (default)` : v).length;
+          if (padLen > 0) label += ' '.repeat(padLen);
           const email = pickerEmailMap.get(v);
           if (email) label += chalk.cyan(`  ${email}`);
           return { name: label, value: v };
@@ -3222,12 +3228,15 @@ program
         hasVersionManaged = true;
         console.log(`  ${chalk.bold(agent.name)}`);
 
+        const maxVerLabel = Math.max(...versions.map((v) => (v === globalDefault ? `${v} (default)` : v).length));
         for (const version of versions) {
           const isDefault = version === globalDefault;
-          const marker = isDefault ? chalk.green(' (default)') : '';
+          const base = isDefault ? `${version} (default)` : version;
+          const padded = base.padEnd(maxVerLabel);
+          const label = isDefault ? `${version}${chalk.green(' (default)')}${' '.repeat(maxVerLabel - base.length)}` : padded;
           const vEmail = listEmailMap.get(`${agentId}:${version}`);
-          const vEmailStr = vEmail ? `    ${chalk.cyan(vEmail)}` : '';
-          console.log(`    ${version}${marker}${vEmailStr}`);
+          const vEmailStr = vEmail ? `  ${chalk.cyan(vEmail)}` : '';
+          console.log(`    ${label}${vEmailStr}`);
           if (showPaths) {
             const versionDir = getVersionDir(agentId, version);
             console.log(chalk.gray(`      ${versionDir}`));
