@@ -37,6 +37,7 @@ import {
   promoteMcpToUser,
   parseMcpConfig,
   getMcpConfigPathForHome,
+  getAccountEmail,
 } from './lib/agents.js';
 import {
   readManifest,
@@ -140,6 +141,7 @@ import {
   getVersionDir,
   getVersionHomePath,
   syncResourcesToVersion,
+  resolveVersion,
 } from './lib/versions.js';
 import {
   createShim,
@@ -606,13 +608,26 @@ program
 
     // 1. Agent CLIs
     console.log(chalk.bold('Agent CLIs\n'));
+
+    // Fetch emails in parallel for all agents
+    const statusEmails = await Promise.all(
+      agentsToShow.map(async (agentId) => {
+        const resolvedVer = resolveVersion(agentId, process.cwd());
+        const home = resolvedVer ? getVersionHomePath(agentId, resolvedVer) : undefined;
+        return { agentId, email: await getAccountEmail(agentId, home) };
+      })
+    );
+    const statusEmailMap = new Map(statusEmails.map((e) => [e.agentId, e.email]));
+
     for (const agentId of agentsToShow) {
       const agent = AGENTS[agentId];
       const cli = cliStates[agentId];
       const status = cli?.installed
         ? chalk.green(cli.version || 'installed')
         : chalk.gray('not installed');
-      console.log(`  ${agent.name.padEnd(14)} ${status}`);
+      const email = statusEmailMap.get(agentId);
+      const emailStr = email ? chalk.cyan(`  ${email}`) : '';
+      console.log(`  ${agent.name.padEnd(14)} ${status}${emailStr}`);
     }
 
     // 2. Commands
@@ -837,15 +852,23 @@ program
         const defaultVer = getGlobalDefault(agentFilter);
 
         if (versions.length > 1 && !options.yes && !options.force) {
+          const versionEmails = await Promise.all(
+            versions.map((v) =>
+              getAccountEmail(agentFilter, getVersionHomePath(agentFilter, v)).then((email) => ({ v, email }))
+            )
+          );
+          const versionEmailMap = new Map(versionEmails.map((e) => [e.v, e.email]));
+
           const versionResult = await checkbox<string>({
             message: `Which versions of ${AGENTS[agentFilter].name} should receive these resources?`,
             choices: [
               { name: chalk.bold('All versions'), value: 'all', checked: false },
-              ...versions.map((v) => ({
-                name: v === defaultVer ? `${v} (default)` : v,
-                value: v,
-                checked: v === defaultVer,
-              })),
+              ...versions.map((v) => {
+                let label = v === defaultVer ? `${v} (default)` : v;
+                const email = versionEmailMap.get(v);
+                if (email) label += chalk.cyan(`  ${email}`);
+                return { name: label, value: v, checked: v === defaultVer };
+              }),
             ],
           });
           if (versionResult.includes('all')) {
@@ -918,15 +941,23 @@ program
             continue;
           }
           const defaultVer = getGlobalDefault(agentId);
+          const versionEmails = await Promise.all(
+            versions.map((v) =>
+              getAccountEmail(agentId, getVersionHomePath(agentId, v)).then((email) => ({ v, email }))
+            )
+          );
+          const versionEmailMap = new Map(versionEmails.map((e) => [e.v, e.email]));
+
           const versionResult = await checkbox<string>({
             message: `Which versions of ${AGENTS[agentId].name} should receive these resources?`,
             choices: [
               { name: chalk.bold('All versions'), value: 'all', checked: false },
-              ...versions.map((v) => ({
-                name: v === defaultVer ? `${v} (default)` : v,
-                value: v,
-                checked: v === defaultVer,
-              })),
+              ...versions.map((v) => {
+                let label = v === defaultVer ? `${v} (default)` : v;
+                const email = versionEmailMap.get(v);
+                if (email) label += chalk.cyan(`  ${email}`);
+                return { name: label, value: v, checked: v === defaultVer };
+              }),
             ],
           });
           if (versionResult.includes('all')) {
@@ -1782,17 +1813,29 @@ const commandsCmd = program
   .description('Manage slash commands');
 
 commandsCmd
-  .command('list')
+  .command('list [agent]')
   .description('List installed commands')
   .option('-a, --agent <agent>', 'Filter by agent')
   .option('-s, --scope <scope>', 'Filter by scope: user, project, or all', 'all')
-  .action(async (options) => {
+  .action(async (agentArg, options) => {
     const spinner = ora({ text: 'Loading...', isSilent: !process.stdout.isTTY }).start();
     const cwd = process.cwd();
 
-    const agents = options.agent
-      ? [options.agent as AgentId]
-      : ALL_AGENT_IDS;
+    // Resolve agent filter - positional arg takes precedence over -a flag
+    const agentInput = agentArg || options.agent;
+    let agents: AgentId[];
+    if (agentInput) {
+      const resolved = resolveAgentName(agentInput);
+      if (!resolved) {
+        spinner.stop();
+        console.log(chalk.red(`Unknown agent '${agentInput}'. Use ${ALL_AGENT_IDS.join(', ')}`));
+        process.exit(1);
+      }
+      agents = [resolved];
+    } else {
+      agents = ALL_AGENT_IDS;
+    }
+    const showPaths = !!agentInput;
 
     // Collect all data while spinner is active
     const agentCommands = agents.map((agentId) => ({
@@ -1819,6 +1862,7 @@ commandsCmd
           for (const cmd of userCommands) {
             const desc = cmd.description ? ` - ${chalk.gray(cmd.description)}` : '';
             console.log(`      ${chalk.cyan(cmd.name)}${desc}`);
+            if (showPaths) console.log(chalk.gray(`        ${cmd.path}`));
           }
         }
 
@@ -1827,6 +1871,7 @@ commandsCmd
           for (const cmd of projectCommands) {
             const desc = cmd.description ? ` - ${chalk.gray(cmd.description)}` : '';
             console.log(`      ${chalk.yellow(cmd.name)}${desc}`);
+            if (showPaths) console.log(chalk.gray(`        ${cmd.path}`));
           }
         }
       }
@@ -2124,17 +2169,29 @@ const skillsCmd = program
   .description('Manage skills (SKILL.md + rules/)');
 
 skillsCmd
-  .command('list')
+  .command('list [agent]')
   .description('List installed skills')
   .option('-a, --agent <agent>', 'Filter by agent')
   .option('-s, --scope <scope>', 'Filter by scope: user, project, or all', 'all')
-  .action(async (options) => {
+  .action(async (agentArg, options) => {
     const spinner = ora({ text: 'Loading...', isSilent: !process.stdout.isTTY }).start();
     const cwd = process.cwd();
 
-    const agents = options.agent
-      ? [options.agent as AgentId]
-      : SKILLS_CAPABLE_AGENTS;
+    // Resolve agent filter - positional arg takes precedence over -a flag
+    const agentInput = agentArg || options.agent;
+    let agents: AgentId[];
+    if (agentInput) {
+      const resolved = resolveAgentName(agentInput);
+      if (!resolved) {
+        spinner.stop();
+        console.log(chalk.red(`Unknown agent '${agentInput}'. Use ${ALL_AGENT_IDS.join(', ')}`));
+        process.exit(1);
+      }
+      agents = [resolved];
+    } else {
+      agents = SKILLS_CAPABLE_AGENTS;
+    }
+    const showPaths = !!agentInput;
 
     // Collect all data while spinner is active
     const agentSkills = agents.map((agentId) => ({
@@ -2170,6 +2227,7 @@ skillsCmd
             const desc = skill.metadata.description ? ` - ${chalk.gray(skill.metadata.description)}` : '';
             const ruleInfo = skill.ruleCount > 0 ? chalk.gray(` (${skill.ruleCount} rules)`) : '';
             console.log(`      ${chalk.cyan(skill.name)}${desc}${ruleInfo}`);
+            if (showPaths) console.log(chalk.gray(`        ${skill.path}`));
           }
         }
 
@@ -2179,6 +2237,7 @@ skillsCmd
             const desc = skill.metadata.description ? ` - ${chalk.gray(skill.metadata.description)}` : '';
             const ruleInfo = skill.ruleCount > 0 ? chalk.gray(` (${skill.ruleCount} rules)`) : '';
             console.log(`      ${chalk.yellow(skill.name)}${desc}${ruleInfo}`);
+            if (showPaths) console.log(chalk.gray(`        ${skill.path}`));
           }
         }
       }
@@ -2399,14 +2458,26 @@ const memoryCmd = program
   .description('Manage agent memory files');
 
 memoryCmd
-  .command('list')
+  .command('list [agent]')
   .description('List installed memory files')
   .option('-a, --agent <agent>', 'Filter by agent')
-  .action(async (options) => {
+  .action(async (agentArg, options) => {
     const cwd = process.cwd();
-    const agents = options.agent
-      ? [resolveAgentName(options.agent)].filter(Boolean) as AgentId[]
-      : ALL_AGENT_IDS;
+
+    // Resolve agent filter - positional arg takes precedence over -a flag
+    const agentInput = agentArg || options.agent;
+    let agents: AgentId[];
+    if (agentInput) {
+      const resolved = resolveAgentName(agentInput);
+      if (!resolved) {
+        console.log(chalk.red(`Unknown agent '${agentInput}'. Use ${ALL_AGENT_IDS.join(', ')}`));
+        process.exit(1);
+      }
+      agents = [resolved];
+    } else {
+      agents = ALL_AGENT_IDS;
+    }
+    const showPaths = !!agentInput;
 
     console.log(chalk.bold('Installed Memory\n'));
 
@@ -2421,7 +2492,9 @@ memoryCmd
 
       console.log(`  ${chalk.bold(agent.name)}:`);
       console.log(`    ${chalk.gray('User:')} ${userStatus}`);
+      if (showPaths && userInstr?.exists) console.log(chalk.gray(`        ${userInstr.path}`));
       console.log(`    ${chalk.gray('Project:')} ${projectStatus}`);
+      if (showPaths && projectInstr?.exists) console.log(chalk.gray(`        ${projectInstr.path}`));
       console.log();
     }
   });
@@ -2566,17 +2639,29 @@ const mcpCmd = program
   .description('Manage MCP servers');
 
 mcpCmd
-  .command('list')
+  .command('list [agent]')
   .description('List MCP servers and registration status')
   .option('-a, --agent <agent>', 'Filter by agent')
   .option('-s, --scope <scope>', 'Filter by scope: user, project, or all', 'all')
-  .action(async (options) => {
+  .action(async (agentArg, options) => {
     const spinner = ora({ text: 'Loading...', isSilent: !process.stdout.isTTY }).start();
     const cwd = process.cwd();
 
-    const agents = options.agent
-      ? [options.agent as AgentId]
-      : MCP_CAPABLE_AGENTS;
+    // Resolve agent filter - positional arg takes precedence over -a flag
+    const agentInput = agentArg || options.agent;
+    let agents: AgentId[];
+    if (agentInput) {
+      const resolved = resolveAgentName(agentInput);
+      if (!resolved) {
+        spinner.stop();
+        console.log(chalk.red(`Unknown agent '${agentInput}'. Use ${ALL_AGENT_IDS.join(', ')}`));
+        process.exit(1);
+      }
+      agents = [resolved];
+    } else {
+      agents = MCP_CAPABLE_AGENTS;
+    }
+    const showPaths = !!agentInput;
 
     // Collect all data while spinner is active
     const cliStates = await getAllCliStates();
@@ -2627,6 +2712,7 @@ mcpCmd
           console.log(`    ${chalk.gray('User:')}`);
           for (const mcp of userMcps) {
             console.log(`      ${chalk.cyan(mcp.name)}`);
+            if (showPaths && mcp.command) console.log(chalk.gray(`        ${mcp.command}`));
           }
         }
 
@@ -2634,6 +2720,7 @@ mcpCmd
           console.log(`    ${chalk.gray('Project:')}`);
           for (const mcp of projectMcps) {
             console.log(`      ${chalk.yellow(mcp.name)}`);
+            if (showPaths && mcp.command) console.log(chalk.gray(`        ${mcp.command}`));
           }
         }
       }
@@ -2963,6 +3050,7 @@ program
   .description('Set the default agent CLI version')
   .option('-p, --project', 'Set in project manifest instead of global default')
   .action(async (spec: string, options) => {
+    try {
     const parsed = parseAgentSpec(spec);
     if (!parsed) {
       console.log(chalk.red(`Invalid agent: ${spec}`));
@@ -2985,12 +3073,24 @@ program
       }
 
       const globalDefault = getGlobalDefault(agent);
+
+      // Pre-fetch emails for picker labels
+      const pickerEmails = await Promise.all(
+        versions.map((v) =>
+          getAccountEmail(agent, getVersionHomePath(agent, v)).then((email) => ({ v, email }))
+        )
+      );
+      const pickerEmailMap = new Map(pickerEmails.map((e) => [e.v, e.email]));
+
       selectedVersion = await select({
         message: `Select ${agentConfig.name} version:`,
-        choices: versions.map((v) => ({
-          name: v === globalDefault ? `${v} (current default)` : v,
-          value: v,
-        })),
+        choices: versions.map((v) => {
+          let label = v;
+          if (v === globalDefault) label += chalk.green(' (default)');
+          const email = pickerEmailMap.get(v);
+          if (email) label += chalk.cyan(`  ${email}`);
+          return { name: label, value: v };
+        }),
       });
     }
 
@@ -3017,11 +3117,19 @@ program
       manifest.agents[agent] = selectedVersion;
 
       writeManifest(process.cwd(), manifest);
-      console.log(chalk.green(`Set ${agentConfig.name}@${selectedVersion} for this project`));
+      const projEmail = await getAccountEmail(agent, getVersionHomePath(agent, selectedVersion));
+      const projEmailStr = projEmail ? chalk.cyan(` (${projEmail})`) : '';
+      console.log(chalk.green(`Set ${agentConfig.name}@${selectedVersion} for this project`) + projEmailStr);
     } else {
       // Set global default
       setGlobalDefault(agent, selectedVersion);
-      console.log(chalk.green(`Set ${agentConfig.name}@${selectedVersion} as global default`));
+      const useEmail = await getAccountEmail(agent, getVersionHomePath(agent, selectedVersion));
+      const useEmailStr = useEmail ? chalk.cyan(` (${useEmail})`) : '';
+      console.log(chalk.green(`Set ${agentConfig.name}@${selectedVersion} as global default`) + useEmailStr);
+    }
+    } catch (err) {
+      if (isPromptCancelled(err)) return;
+      throw err;
     }
   });
 
@@ -3029,11 +3137,7 @@ program
   .command('list [agent]')
   .description('List installed agent CLI versions')
   .action(async (agentArg?: string) => {
-    const spinner = ora('Checking installed agents...').start();
-    const cliStates = await getAllCliStates();
-    spinner.stop();
-
-    // Resolve agent filter
+    // Resolve agent filter before spinner so we can personalize the message
     let filterAgentId: AgentId | undefined;
     if (agentArg) {
       const agentMap: Record<string, AgentId> = {
@@ -3052,10 +3156,51 @@ program
       }
     }
 
+    const spinnerText = filterAgentId
+      ? `Checking ${AGENTS[filterAgentId].name} agents...`
+      : 'Checking installed agents...';
+    const spinner = ora(spinnerText).start();
+    const cliStates = await getAllCliStates();
+    spinner.stop();
+
     const agentsToShow = filterAgentId ? [filterAgentId] : ALL_AGENT_IDS;
     const showPaths = !!filterAgentId; // Show paths when filtering to single agent
 
     console.log(chalk.bold('Installed Agent CLIs\n'));
+
+    // Pre-fetch emails for all versions in parallel
+    const emailFetches: Promise<{ agentId: AgentId; version: string; email: string | null }>[] = [];
+    const globalEmailFetches: Promise<{ agentId: AgentId; email: string | null }>[] = [];
+    for (const agentId of agentsToShow) {
+      const versions = listInstalledVersions(agentId);
+      if (versions.length > 0) {
+        for (const ver of versions) {
+          emailFetches.push(
+            getAccountEmail(agentId, getVersionHomePath(agentId, ver)).then((email) => ({
+              agentId,
+              version: ver,
+              email,
+            }))
+          );
+        }
+      } else {
+        globalEmailFetches.push(
+          getAccountEmail(agentId).then((email) => ({ agentId, email }))
+        );
+      }
+    }
+    const emailResults = await Promise.all(emailFetches);
+    const globalEmailResults = await Promise.all(globalEmailFetches);
+
+    // Build lookup: agentId:version -> email
+    const listEmailMap = new Map<string, string | null>();
+    for (const { agentId, version, email } of emailResults) {
+      listEmailMap.set(`${agentId}:${version}`, email);
+    }
+    const globalListEmailMap = new Map<string, string | null>();
+    for (const { agentId, email } of globalEmailResults) {
+      globalListEmailMap.set(agentId, email);
+    }
 
     let hasAny = false;
     let hasVersionManaged = false;
@@ -3075,7 +3220,9 @@ program
         for (const version of versions) {
           const isDefault = version === globalDefault;
           const marker = isDefault ? chalk.green(' (default)') : '';
-          console.log(`    ${version}${marker}`);
+          const vEmail = listEmailMap.get(`${agentId}:${version}`);
+          const vEmailStr = vEmail ? `    ${chalk.cyan(vEmail)}` : '';
+          console.log(`    ${version}${marker}${vEmailStr}`);
           if (showPaths) {
             const versionDir = getVersionDir(agentId, version);
             console.log(chalk.gray(`      ${versionDir}`));
@@ -3093,7 +3240,9 @@ program
         // Globally installed (not version-managed)
         hasAny = true;
         console.log(`  ${chalk.bold(agent.name)}`);
-        console.log(`    ${cliState.version || 'installed'} ${chalk.gray('(global)')}`);
+        const gEmail = globalListEmailMap.get(agentId);
+        const gEmailStr = gEmail ? `    ${chalk.cyan(gEmail)}` : '';
+        console.log(`    ${cliState.version || 'installed'} ${chalk.gray('(global)')}${gEmailStr}`);
         if (showPaths && cliState.path) {
           console.log(chalk.gray(`      ${cliState.path}`));
         }

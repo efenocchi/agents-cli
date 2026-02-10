@@ -1,6 +1,6 @@
 # agents
 
-**One CLI for every AI coding agent.** Version manager, config sync, package manager, and automation daemon for Claude Code, Codex, Gemini CLI, Cursor, and OpenCode.
+**One CLI for every AI coding agent.** Version manager, config sync, package manager, and automation daemon for Claude, Codex, Gemini CLI, Cursor, and OpenCode.
 
 [![npm](https://img.shields.io/npm/v/@companion/agents-cli)](https://www.npmjs.com/package/@companion/agents-cli) [![license](https://img.shields.io/npm/l/@companion/agents-cli)](LICENSE) [![node](https://img.shields.io/node/v/@companion/agents-cli)](package.json)
 
@@ -267,7 +267,7 @@ The agent cannot access `~/.ssh`, `~/.aws`, `~/.gitconfig`, API keys in env vars
 
 | Agent | Commands | MCP | Hooks | Skills | Memory | Jobs |
 |-------|----------|-----|-------|--------|-------------|------|
-| Claude Code | yes | yes | yes | yes | yes | yes |
+| Claude | yes | yes | yes | yes | yes | yes |
 | Codex | yes | yes | -- | yes | yes | yes |
 | Gemini CLI | yes | yes | yes | yes | yes | yes |
 | Cursor | yes | yes | -- | yes | yes | -- |
