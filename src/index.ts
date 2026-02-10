@@ -1388,9 +1388,11 @@ program
             const versionsList = agentVersionSelections.get(agentId) || [];
             if (versionsList.length > 0) {
               // Version-managed: register MCP into each selected version's HOME
+              // Use the actual binary to bypass the shim (shim uses $HOME/.agents which breaks with HOME override)
               for (const ver of versionsList) {
                 const home = getVersionHomePath(agentId, ver);
-                const result = await registerMcp(agentId, item.name, config.command, config.scope, config.transport || 'stdio', { home });
+                const binary = getBinaryPath(agentId, ver);
+                const result = await registerMcp(agentId, item.name, config.command, config.scope, config.transport || 'stdio', { home, binary });
                 if (result.success) {
                   installed.mcps++;
                 } else {
@@ -1551,78 +1553,6 @@ program
         process.exit(0);
       }
       spinner.fail('Failed to sync');
-      console.error(chalk.red((err as Error).message));
-      process.exit(1);
-    }
-  });
-
-// =============================================================================
-// SYNC COMMAND
-// =============================================================================
-
-program
-  .command('sync [spec]')
-  .description('Sync central resources into version homes (e.g. agents sync claude@2.1.37)')
-  .action(async (spec: string | undefined) => {
-    try {
-      let targets: Array<{ agent: AgentId; version: string }> = [];
-
-      if (spec) {
-        const parsed = parseAgentSpec(spec);
-        if (!parsed) {
-          console.log(chalk.red(`Unknown agent: ${spec}`));
-          process.exit(1);
-        }
-
-        if (parsed.version === 'latest') {
-          // Sync all installed versions
-          const versions = listInstalledVersions(parsed.agent);
-          if (versions.length === 0) {
-            console.log(chalk.yellow(`No installed versions of ${AGENTS[parsed.agent].name}`));
-            return;
-          }
-          targets = versions.map((v) => ({ agent: parsed.agent, version: v }));
-        } else {
-          if (!isVersionInstalled(parsed.agent, parsed.version)) {
-            console.log(chalk.red(`${AGENTS[parsed.agent].name}@${parsed.version} not installed`));
-            process.exit(1);
-          }
-          targets = [{ agent: parsed.agent, version: parsed.version }];
-        }
-      } else {
-        // Sync all installed versions of all agents
-        for (const agentId of ALL_AGENT_IDS) {
-          const versions = listInstalledVersions(agentId);
-          for (const v of versions) {
-            targets.push({ agent: agentId, version: v });
-          }
-        }
-        if (targets.length === 0) {
-          console.log(chalk.yellow('No version-managed agents found.'));
-          return;
-        }
-      }
-
-      for (const { agent, version } of targets) {
-        const spinner = ora(`Syncing ${AGENTS[agent].name}@${version}...`).start();
-        const result = syncResourcesToVersion(agent, version);
-        const parts: string[] = [];
-        if (result.commands) parts.push('commands');
-        if (result.skills) parts.push('skills');
-        if (result.hooks) parts.push('hooks');
-        if (result.memory.length > 0) parts.push(`${result.memory.length} memory files`);
-
-        if (parts.length > 0) {
-          spinner.succeed(`${AGENTS[agent].name}@${version}: ${parts.join(', ')}`);
-        } else {
-          spinner.info(`${AGENTS[agent].name}@${version}: nothing to sync`);
-        }
-      }
-    } catch (err) {
-      if (isPromptCancelled(err)) {
-        console.log(chalk.yellow('\nCancelled'));
-        process.exit(0);
-      }
       console.error(chalk.red((err as Error).message));
       process.exit(1);
     }

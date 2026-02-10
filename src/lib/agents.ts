@@ -201,22 +201,24 @@ export async function registerMcp(
   command: string,
   scope: 'user' | 'project' = 'user',
   transport: string = 'stdio',
-  options?: { home?: string }
+  options?: { home?: string; binary?: string }
 ): Promise<{ success: boolean; error?: string }> {
   const agent = AGENTS[agentId];
   if (!agent.capabilities.mcp) {
     return { success: false, error: 'Agent does not support MCP' };
   }
-  if (!(await isCliInstalled(agentId))) {
+  if (!options?.binary && !(await isCliInstalled(agentId))) {
     return { success: false, error: 'CLI not installed' };
   }
 
   try {
+    // Use explicit binary path when provided (bypasses shim for version-managed agents)
+    const bin = options?.binary || agent.cliCommand;
     let cmd: string;
     if (agentId === 'claude') {
-      cmd = `${agent.cliCommand} mcp add --transport ${transport} --scope ${scope} "${name}" -- ${command}`;
+      cmd = `${bin} mcp add --transport ${transport} --scope ${scope} "${name}" -- ${command}`;
     } else {
-      cmd = `${agent.cliCommand} mcp add "${name}" -- ${command}`;
+      cmd = `${bin} mcp add "${name}" -- ${command}`;
     }
     // When home is specified, override HOME so MCP config writes to the version's config dir
     const env = options?.home ? { ...process.env, HOME: options.home } : undefined;
