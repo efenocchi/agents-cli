@@ -90,10 +90,12 @@ export function discoverInstructionsFromRepo(repoPath: string): DiscoveredInstru
 
   for (const agentId of ALL_AGENT_IDS) {
     const agent = AGENTS[agentId];
+    // AGENTS.md is the canonical central memory file - don't claim it per-agent.
+    // It gets installed centrally to ~/.agents/memory/ and shims symlink it per-agent.
     const possibleNames = [
       `${agentId}.md`,
       agent.instructionsFile,
-    ];
+    ].filter(name => name !== 'AGENTS.md');
 
     for (const filename of possibleNames) {
       const sourcePath = path.join(memoryDir, filename);
@@ -122,7 +124,7 @@ export function resolveInstructionsSource(repoPath: string, agentId: AgentId): s
   const possibleNames = [
     `${agentId}.md`,
     agent.instructionsFile,
-  ];
+  ].filter(name => name !== 'AGENTS.md');
 
   for (const filename of possibleNames) {
     const sourcePath = path.join(memoryDir, filename);

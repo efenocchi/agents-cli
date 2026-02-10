@@ -30,7 +30,6 @@ import {
   HOOKS_CAPABLE_AGENTS,
   getAllCliStates,
   isCliInstalled,
-  getCliVersion,
   isMcpRegistered,
   registerMcp,
   unregisterMcp,
@@ -780,8 +779,40 @@ program
       const allDiscoveredJobs = discoverJobsFromRepo(localPath);
       const allDiscoveredDrives = discoverDrivesFromRepo(localPath);
 
+      // Auto-install/upgrade CLI versions
+      if (!options.skipClis && manifest?.agents) {
+        const cliAgents = (manifest.defaults?.agents || Object.keys(manifest.agents)) as AgentId[];
+        for (const agentId of cliAgents) {
+          if (agentFilter && agentId !== agentFilter) continue;
+          const agent = AGENTS[agentId];
+          if (!agent) continue;
+
+          const cliSpinner = ora(`Checking ${agent.name}...`).start();
+          const versions = listInstalledVersions(agentId);
+          const targetVersion = manifest.agents[agentId] || 'latest';
+
+          const result = await installVersion(agentId, targetVersion, (msg) => { cliSpinner.text = msg; });
+          if (result.success) {
+            const isNew = versions.length === 0;
+            const isUpgrade = !isNew && result.installedVersion !== versions[versions.length - 1];
+            if (isNew) {
+              cliSpinner.succeed(`Installed ${agent.name}@${result.installedVersion}`);
+              createShim(agentId);
+            } else if (isUpgrade) {
+              cliSpinner.succeed(`Upgraded ${agent.name} to ${result.installedVersion}`);
+              createShim(agentId);
+            } else {
+              cliSpinner.succeed(`${agent.name}@${result.installedVersion} (up to date)`);
+            }
+            setGlobalDefault(agentId, result.installedVersion);
+          } else {
+            cliSpinner.warn(`${agent.name}: ${result.error}`);
+          }
+        }
+      }
+
       // Determine which agents should share central resources
-      const cliStates = await getAllCliStates();
+      let cliStates = await getAllCliStates();
       let selectedAgents: AgentId[];
 
       const formatAgentLabel = (agentId: AgentId): string => {
@@ -821,15 +852,26 @@ program
         }
       } else {
         const installedAgents = ALL_AGENT_IDS.filter((id) => cliStates[id]?.installed || id === 'cursor');
+        const defaultAgents = (manifest?.defaults?.agents || ALL_AGENT_IDS) as AgentId[];
+        const allDefaulted = installedAgents.every((id) => defaultAgents.includes(id));
 
-        selectedAgents = await checkbox({
+        const checkboxResult = await checkbox<string>({
           message: 'Which agents should receive these resources?',
-          choices: installedAgents.map((id) => ({
-            name: formatAgentLabel(id),
-            value: id,
-            checked: (manifest?.defaults?.agents || ALL_AGENT_IDS).includes(id),
-          })),
+          choices: [
+            { name: chalk.bold('All'), value: 'all', checked: allDefaulted },
+            ...installedAgents.map((id) => ({
+              name: `  ${formatAgentLabel(id)}`,
+              value: id,
+              checked: !allDefaulted && defaultAgents.includes(id),
+            })),
+          ],
         });
+
+        if (checkboxResult.includes('all')) {
+          selectedAgents = [...installedAgents];
+        } else {
+          selectedAgents = checkboxResult as AgentId[];
+        }
       }
 
       // Filter agents to only installed ones (plus cursor which doesn't need CLI)
@@ -940,7 +982,8 @@ program
       if (!options.skipMcp && manifest?.mcp) {
         for (const [name, config] of Object.entries(manifest.mcp)) {
           if (config.transport === 'http' || !config.command) continue;
-          const mcpAgents = config.agents.filter((agentId) => selectedAgents.includes(agentId) && cliStates[agentId]?.installed);
+          const eligible = config.agents?.length ? config.agents : selectedAgents;
+          const mcpAgents = eligible.filter((agentId) => selectedAgents.includes(agentId) && cliStates[agentId]?.installed);
           if (mcpAgents.length === 0) continue;
 
           const registrationChecks = await Promise.all(
@@ -1393,37 +1436,6 @@ program
           driveSpinner.succeed(`Installed ${installed.drives} drives`);
         } else {
           driveSpinner.info('No drives to install');
-        }
-      }
-
-      // Sync CLI versions (user scope only)
-      if (isUserScope && !options.skipClis && manifest?.agents) {
-        const cliSpinner = ora('Checking CLI versions...').start();
-        const cliUpdates: string[] = [];
-
-        for (const [agentIdStr, targetVersion] of Object.entries(manifest.agents)) {
-          const agentId = agentIdStr as AgentId;
-          if (agentFilter && agentId !== agentFilter) continue;
-
-          const agent = AGENTS[agentId];
-          if (!agent || !targetVersion) continue;
-
-          const currentVersion = await getCliVersion(agentId);
-
-          if (currentVersion === targetVersion) continue;
-          if (targetVersion === 'latest' && currentVersion) continue;
-
-          cliUpdates.push(`${agent.name}: ${currentVersion || 'not installed'} -> ${targetVersion}`);
-        }
-
-        if (cliUpdates.length > 0) {
-          cliSpinner.info('CLI version differences detected');
-          console.log(chalk.gray('  Run `agents add <agent>@latest` to update'));
-          for (const update of cliUpdates) {
-            console.log(chalk.gray(`    ${update}`));
-          }
-        } else {
-          cliSpinner.succeed('CLI versions match');
         }
       }
 
@@ -2607,7 +2619,8 @@ mcpCmd
         }
 
         console.log(`\n  ${chalk.cyan(mcpName)}:`);
-        for (const agentId of config.agents) {
+        const mcpTargetAgents = config.agents?.length ? config.agents : MCP_CAPABLE_AGENTS;
+        for (const agentId of mcpTargetAgents) {
           if (!cliStates[agentId]?.installed) continue;
 
           const result = await registerMcp(agentId, mcpName, config.command, config.scope, config.transport || 'stdio');
