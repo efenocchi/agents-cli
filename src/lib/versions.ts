@@ -3,8 +3,9 @@ import * as path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import type { AgentId } from './types.js';
-import { getVersionsDir, getShimsDir, ensureAgentsDir, readMeta, writeMeta } from './state.js';
+import { getVersionsDir, getShimsDir, ensureAgentsDir, readMeta, writeMeta, getCommandsDir, getSkillsDir, getHooksDir, getMemoryDir } from './state.js';
 import { AGENTS } from './agents.js';
+import { markdownToToml } from './convert.js';
 
 const execAsync = promisify(exec);
 
@@ -321,4 +322,108 @@ export async function getInstalledVersion(agent: AgentId, version: string): Prom
   } catch {
     return version;
   }
+}
+
+export interface SyncResult {
+  commands: boolean;
+  skills: boolean;
+  hooks: boolean;
+  memory: string[];
+}
+
+/**
+ * Sync central resources (~/.agents/) into a specific version's config directory.
+ * Creates symlinks from central storage into {versionHome}/.{agent}/.
+ *
+ * For Gemini: commands are converted from markdown to TOML and copied instead of symlinked.
+ */
+export function syncResourcesToVersion(agent: AgentId, version: string): SyncResult {
+  const agentConfig = AGENTS[agent];
+  const versionHome = getVersionHomePath(agent, version);
+  const agentDir = path.join(versionHome, `.${agent}`);
+  fs.mkdirSync(agentDir, { recursive: true });
+
+  const result: SyncResult = { commands: false, skills: false, hooks: false, memory: [] };
+
+  // Helper: remove a path (symlink or real) if it exists
+  const removePath = (p: string) => {
+    try {
+      const stat = fs.lstatSync(p);
+      if (stat.isSymbolicLink() || stat.isFile()) {
+        fs.unlinkSync(p);
+      } else if (stat.isDirectory()) {
+        fs.rmSync(p, { recursive: true, force: true });
+      }
+    } catch {}
+  };
+
+  // Symlink commands
+  const centralCommands = getCommandsDir();
+  const commandsTarget = path.join(agentDir, agentConfig.commandsSubdir);
+  if (fs.existsSync(centralCommands)) {
+    removePath(commandsTarget);
+
+    if (agentConfig.format === 'toml') {
+      // Gemini: convert markdown commands to TOML and copy
+      fs.mkdirSync(commandsTarget, { recursive: true });
+      const files = fs.readdirSync(centralCommands).filter((f) => f.endsWith('.md'));
+      for (const file of files) {
+        const name = file.replace(/\.md$/, '');
+        const content = fs.readFileSync(path.join(centralCommands, file), 'utf-8');
+        const tomlContent = markdownToToml(name, content);
+        fs.writeFileSync(path.join(commandsTarget, `${name}.toml`), tomlContent);
+      }
+      result.commands = files.length > 0;
+    } else {
+      // Other agents: symlink the entire directory
+      try {
+        fs.symlinkSync(centralCommands, commandsTarget);
+        result.commands = true;
+      } catch {}
+    }
+  }
+
+  // Symlink skills
+  const centralSkills = getSkillsDir();
+  const skillsTarget = path.join(agentDir, 'skills');
+  if (fs.existsSync(centralSkills)) {
+    removePath(skillsTarget);
+    try {
+      fs.symlinkSync(centralSkills, skillsTarget);
+      result.skills = true;
+    } catch {}
+  }
+
+  // Symlink hooks (if agent supports them)
+  if (agentConfig.supportsHooks) {
+    const centralHooks = getHooksDir();
+    const hooksTarget = path.join(agentDir, 'hooks');
+    if (fs.existsSync(centralHooks)) {
+      removePath(hooksTarget);
+      try {
+        fs.symlinkSync(centralHooks, hooksTarget);
+        result.hooks = true;
+      } catch {}
+    }
+  }
+
+  // Symlink memory files
+  const centralMemory = getMemoryDir();
+  if (fs.existsSync(centralMemory)) {
+    const memoryFiles = fs.readdirSync(centralMemory).filter((f) => f.endsWith('.md'));
+    for (const file of memoryFiles) {
+      const sourcePath = path.join(centralMemory, file);
+      // AGENTS.md gets renamed to the agent's instructionsFile name
+      const targetName = file === 'AGENTS.md' ? agentConfig.instructionsFile : file;
+      const targetPath = path.join(agentDir, targetName);
+
+      removePath(targetPath);
+      try {
+        fs.symlinkSync(sourcePath, targetPath);
+        result.memory.push(targetName);
+      } catch {}
+    }
+  }
+
+  return result;
 }
