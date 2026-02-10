@@ -200,7 +200,8 @@ export async function registerMcp(
   name: string,
   command: string,
   scope: 'user' | 'project' = 'user',
-  transport: string = 'stdio'
+  transport: string = 'stdio',
+  options?: { home?: string }
 ): Promise<{ success: boolean; error?: string }> {
   const agent = AGENTS[agentId];
   if (!agent.capabilities.mcp) {
@@ -217,7 +218,9 @@ export async function registerMcp(
     } else {
       cmd = `${agent.cliCommand} mcp add "${name}" -- ${command}`;
     }
-    await execAsync(cmd);
+    // When home is specified, override HOME so MCP config writes to the version's config dir
+    const env = options?.home ? { ...process.env, HOME: options.home } : undefined;
+    await execAsync(cmd, env ? { env } : undefined);
     return { success: true };
   } catch (err) {
     return { success: false, error: (err as Error).message };
