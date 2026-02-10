@@ -231,18 +231,21 @@ export async function registerMcp(
 
 export async function unregisterMcp(
   agentId: AgentId,
-  name: string
+  name: string,
+  options?: { home?: string; binary?: string }
 ): Promise<{ success: boolean; error?: string }> {
   const agent = AGENTS[agentId];
   if (!agent.capabilities.mcp) {
     return { success: false, error: 'Agent does not support MCP' };
   }
-  if (!(await isCliInstalled(agentId))) {
+  if (!options?.binary && !(await isCliInstalled(agentId))) {
     return { success: false, error: 'CLI not installed' };
   }
 
   try {
-    await execAsync(`${agent.cliCommand} mcp remove "${name}"`);
+    const bin = options?.binary || agent.cliCommand;
+    const env = options?.home ? { ...process.env, HOME: options.home } : undefined;
+    await execAsync(`${bin} mcp remove "${name}"`, env ? { env } : undefined);
     return { success: true };
   } catch (err) {
     return { success: false, error: (err as Error).message };
@@ -463,6 +466,24 @@ function getUserMcpConfigPath(agentId: AgentId): string {
 }
 
 /**
+ * Get MCP config path for a specific HOME directory (used for version-managed agents).
+ */
+export function getMcpConfigPathForHome(agentId: AgentId, home: string): string {
+  switch (agentId) {
+    case 'claude':
+      return path.join(home, '.claude.json');
+    case 'codex':
+      return path.join(home, '.codex', 'config.toml');
+    case 'opencode':
+      return path.join(home, '.opencode', 'opencode.jsonc');
+    case 'cursor':
+      return path.join(home, '.cursor', 'mcp.json');
+    default:
+      return path.join(home, `.${agentId}`, 'settings.json');
+  }
+}
+
+/**
  * Get project-scoped MCP config path for an agent.
  */
 function getProjectMcpConfigPath(agentId: AgentId, cwd: string = process.cwd()): string {
@@ -486,7 +507,7 @@ function getProjectMcpConfigPath(agentId: AgentId, cwd: string = process.cwd()):
 /**
  * Parse MCP config based on agent type.
  */
-function parseMcpConfig(agentId: AgentId, configPath: string): Record<string, McpConfigEntry> {
+export function parseMcpConfig(agentId: AgentId, configPath: string): Record<string, McpConfigEntry> {
   switch (agentId) {
     case 'codex':
       return parseMcpFromTomlConfig(configPath);
