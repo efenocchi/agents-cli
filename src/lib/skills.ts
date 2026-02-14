@@ -533,20 +533,27 @@ export function installSkillCentrally(
   sourcePath: string,
   skillName: string
 ): { success: boolean; error?: string; warnings?: string[] } {
-  // Validate skill metadata before installation
+  // Validate skill metadata (warnings only, don't block installation)
   const metadata = parseSkillMetadata(sourcePath);
   const validation = validateSkillMetadata(metadata, skillName);
+  const allWarnings = [...validation.warnings];
 
+  // Convert validation errors to warnings instead of blocking
   if (!validation.valid) {
-    return {
-      success: false,
-      error: `Invalid skill: ${validation.errors.join(', ')}`,
-      warnings: validation.warnings,
-    };
+    allWarnings.push(...validation.errors.map(e => `Validation: ${e}`));
   }
 
   ensureCentralSkillsDir();
   const centralPath = path.join(getSkillsDir(), skillName);
+
+  // Resolve to absolute paths for comparison
+  const resolvedSource = path.resolve(sourcePath);
+  const resolvedCentral = path.resolve(centralPath);
+
+  // If source is already the central path, nothing to copy
+  if (resolvedSource === resolvedCentral) {
+    return { success: true, warnings: allWarnings.length > 0 ? allWarnings : undefined };
+  }
 
   // Remove existing if present
   if (fs.existsSync(centralPath)) {
@@ -559,7 +566,7 @@ export function installSkillCentrally(
 
   try {
     fs.cpSync(sourcePath, centralPath, { recursive: true });
-    return { success: true, warnings: validation.warnings };
+    return { success: true, warnings: allWarnings.length > 0 ? allWarnings : undefined };
   } catch (err) {
     return { success: false, error: `Failed to copy skill: ${(err as Error).message}` };
   }
