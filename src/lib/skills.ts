@@ -5,6 +5,7 @@ import * as yaml from 'yaml';
 import type { AgentId, SkillMetadata, InstalledSkill } from './types.js';
 import { AGENTS, SKILLS_CAPABLE_AGENTS, ensureSkillsDir } from './agents.js';
 import { getAgentsDir } from './state.js';
+import { getEffectiveHome } from './versions.js';
 
 const HOME = os.homedir();
 
@@ -20,7 +21,8 @@ export function ensureCentralSkillsDir(): void {
 }
 
 export function getAgentSkillsDir(agentId: AgentId): string {
-  return AGENTS[agentId].skillsDir;
+  const home = getEffectiveHome(agentId);
+  return path.join(home, `.${agentId}`, 'skills');
 }
 
 export function getProjectSkillsDir(agentId: AgentId, cwd: string = process.cwd()): string {

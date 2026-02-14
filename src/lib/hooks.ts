@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { AGENTS, ALL_AGENT_IDS } from './agents.js';
 import { getHooksDir as getCentralHooksDir } from './state.js';
+import { getEffectiveHome } from './versions.js';
 import type { AgentId, InstalledHook } from './types.js';
 
 export type HookEntry = { name: string; scriptPath: string; dataFile?: string };
@@ -28,7 +29,8 @@ function isExecutable(mode: number): boolean {
 
 function getHooksDir(agentId: AgentId): string {
   const agent = AGENTS[agentId];
-  return path.join(agent.configDir, agent.hooksDir);
+  const home = getEffectiveHome(agentId);
+  return path.join(home, `.${agentId}`, agent.hooksDir);
 }
 
 function getProjectHooksDir(agentId: AgentId, cwd: string): string {

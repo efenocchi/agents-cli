@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { AGENTS, ALL_AGENT_IDS } from './agents.js';
 import { getMemoryDir } from './state.js';
+import { getEffectiveHome } from './versions.js';
 import type { AgentId } from './types.js';
 
 export type InstructionsScope = 'user' | 'project';
@@ -25,41 +26,11 @@ function normalizeContent(content: string): string {
 }
 
 /**
- * Get the real HOME directory, seeing through shim HOME overlays.
- * Shim HOME follows the pattern: ~/.agents/versions/{agent}/{version}/home
- * The env var AGENTS_REAL_HOME is set by newer shims, but we also detect by path pattern.
- */
-function getRealHome(): string | null {
-  const realHome = process.env.AGENTS_REAL_HOME;
-  if (realHome) return realHome;
-  // Detect shim HOME by path pattern: {realHome}/.agents/versions/{agent}/{version}/home
-  const home = os.homedir();
-  const shimSuffix = /\/\.agents\/versions\/[^/]+\/[^/]+\/home$/;
-  if (shimSuffix.test(home)) {
-    return home.replace(shimSuffix, '');
-  }
-  return null;
-}
-
-/**
- * Get the user-scope config dir for an agent, checking both shim HOME and real HOME.
+ * Get the user-scope config dir for an agent (version-aware).
  */
 function getUserConfigDir(agentId: AgentId): string {
-  const agent = AGENTS[agentId];
-  const shimPath = path.join(agent.configDir, agent.instructionsFile);
-  if (fs.existsSync(shimPath)) {
-    return agent.configDir;
-  }
-  // Check real HOME if we're inside a shim
-  const realHome = getRealHome();
-  if (realHome && realHome !== os.homedir()) {
-    const realConfigDir = path.join(realHome, `.${agentId}`);
-    const realPath = path.join(realConfigDir, agent.instructionsFile);
-    if (fs.existsSync(realPath)) {
-      return realConfigDir;
-    }
-  }
-  return agent.configDir;
+  const home = getEffectiveHome(agentId);
+  return path.join(home, `.${agentId}`);
 }
 
 export function getInstructionsPath(agentId: AgentId, scope: InstructionsScope, cwd: string = process.cwd()): string {
@@ -158,10 +129,11 @@ export function installInstructions(
   method: 'symlink' | 'copy' = 'copy'
 ): { path: string; method: 'symlink' | 'copy'; error?: string } {
   const agent = AGENTS[agentId];
-  const targetPath = path.join(agent.configDir, agent.instructionsFile);
+  const configDir = getUserConfigDir(agentId);
+  const targetPath = path.join(configDir, agent.instructionsFile);
 
-  if (!fs.existsSync(agent.configDir)) {
-    fs.mkdirSync(agent.configDir, { recursive: true });
+  if (!fs.existsSync(configDir)) {
+    fs.mkdirSync(configDir, { recursive: true });
   }
 
   if (fs.existsSync(targetPath)) {
@@ -188,7 +160,8 @@ export function installInstructions(
 
 export function uninstallInstructions(agentId: AgentId): boolean {
   const agent = AGENTS[agentId];
-  const targetPath = path.join(agent.configDir, agent.instructionsFile);
+  const configDir = getUserConfigDir(agentId);
+  const targetPath = path.join(configDir, agent.instructionsFile);
 
   if (fs.existsSync(targetPath)) {
     fs.unlinkSync(targetPath);
@@ -262,11 +235,12 @@ export function promoteInstructionsToUser(
     return { success: false, error: `Project instructions not found at ${projectPath}` };
   }
 
-  if (!fs.existsSync(agent.configDir)) {
-    fs.mkdirSync(agent.configDir, { recursive: true });
+  const configDir = getUserConfigDir(agentId);
+  if (!fs.existsSync(configDir)) {
+    fs.mkdirSync(configDir, { recursive: true });
   }
 
-  const targetPath = path.join(agent.configDir, agent.instructionsFile);
+  const targetPath = path.join(configDir, agent.instructionsFile);
 
   try {
     fs.copyFileSync(projectPath, targetPath);
