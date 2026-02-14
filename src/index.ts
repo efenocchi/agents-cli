@@ -1996,23 +1996,27 @@ commandsCmd
     const spinner = ora('Fetching commands...').start();
 
     try {
-      // Detect if source is a local path or git repo
-      const isLocalPath = source.startsWith('./') || source.startsWith('/') ||
-                          source.startsWith('../') ||
-                          (fs.existsSync(source) && fs.statSync(source).isDirectory());
+      // Detect if source is a git repo (gh:, git:, ssh:, https://, http://)
+      const isGitRepo = source.startsWith('gh:') || source.startsWith('git:') ||
+                        source.startsWith('ssh:') || source.startsWith('https://') ||
+                        source.startsWith('http://');
 
       let localPath: string;
-      if (isLocalPath) {
-        localPath = path.resolve(source);
+      if (isGitRepo) {
+        const result = await cloneRepo(source);
+        localPath = result.localPath;
+        spinner.succeed('Repository cloned');
+      } else {
+        // It's a local path - expand ~ to home directory
+        localPath = source.startsWith('~')
+          ? path.join(os.homedir(), source.slice(1))
+          : path.resolve(source);
+
         if (!fs.existsSync(localPath)) {
           spinner.fail(`Path not found: ${localPath}`);
           return;
         }
         spinner.succeed('Using local path');
-      } else {
-        const result = await cloneRepo(source);
-        localPath = result.localPath;
-        spinner.succeed('Repository cloned');
       }
 
       const commands = discoverCommands(localPath);
@@ -2227,23 +2231,27 @@ hooksCmd
     const spinner = ora('Fetching hooks...').start();
 
     try {
-      // Detect if source is a local path or git repo
-      const isLocalPath = source.startsWith('./') || source.startsWith('/') ||
-                          source.startsWith('../') ||
-                          (fs.existsSync(source) && fs.statSync(source).isDirectory());
+      // Detect if source is a git repo (gh:, git:, ssh:, https://, http://)
+      const isGitRepo = source.startsWith('gh:') || source.startsWith('git:') ||
+                        source.startsWith('ssh:') || source.startsWith('https://') ||
+                        source.startsWith('http://');
 
       let localPath: string;
-      if (isLocalPath) {
-        localPath = path.resolve(source);
+      if (isGitRepo) {
+        const result = await cloneRepo(source);
+        localPath = result.localPath;
+        spinner.succeed('Repository cloned');
+      } else {
+        // It's a local path - expand ~ to home directory
+        localPath = source.startsWith('~')
+          ? path.join(os.homedir(), source.slice(1))
+          : path.resolve(source);
+
         if (!fs.existsSync(localPath)) {
           spinner.fail(`Path not found: ${localPath}`);
           return;
         }
         spinner.succeed('Using local path');
-      } else {
-        const result = await cloneRepo(source);
-        localPath = result.localPath;
-        spinner.succeed('Repository cloned');
       }
 
       const hooks = discoverHooksFromRepo(localPath);
@@ -2493,26 +2501,53 @@ skillsCmd
     const spinner = ora('Fetching skills...').start();
 
     try {
-      // Detect if source is a local path or git repo
-      const isLocalPath = source.startsWith('./') || source.startsWith('/') ||
-                          source.startsWith('../') ||
-                          (fs.existsSync(source) && fs.statSync(source).isDirectory());
+      // Detect if source is a git repo (gh:, git:, ssh:, https://, http://)
+      const isGitRepo = source.startsWith('gh:') || source.startsWith('git:') ||
+                        source.startsWith('ssh:') || source.startsWith('https://') ||
+                        source.startsWith('http://');
 
       let localPath: string;
-      if (isLocalPath) {
-        localPath = path.resolve(source);
+      let skills: ReturnType<typeof discoverSkillsFromRepo>;
+
+      if (isGitRepo) {
+        const result = await cloneRepo(source);
+        localPath = result.localPath;
+        skills = discoverSkillsFromRepo(localPath);
+        spinner.succeed('Repository cloned');
+      } else {
+        // It's a local path - expand ~ to home directory
+        localPath = source.startsWith('~')
+          ? path.join(os.homedir(), source.slice(1))
+          : path.resolve(source);
+
         if (!fs.existsSync(localPath)) {
           spinner.fail(`Path not found: ${localPath}`);
           return;
         }
-        spinner.succeed('Using local path');
-      } else {
-        const result = await cloneRepo(source);
-        localPath = result.localPath;
-        spinner.succeed('Repository cloned');
+
+        // Check if this is a direct skill directory (contains SKILL.md)
+        const skillMdPath = path.join(localPath, 'SKILL.md');
+        if (fs.existsSync(skillMdPath)) {
+          // Direct skill directory - create a single-item skills array
+          const skillName = path.basename(localPath);
+          const { parseSkillMetadata, validateSkillMetadata, countSkillRules } = await import('./lib/skills.js');
+          const metadata = parseSkillMetadata(localPath);
+          const validation = validateSkillMetadata(metadata, skillName);
+          skills = [{
+            name: skillName,
+            path: localPath,
+            metadata: metadata || { name: skillName, description: '' },
+            ruleCount: countSkillRules(localPath),
+            validation,
+          }];
+          spinner.succeed('Using skill directory');
+        } else {
+          // Directory containing skills - discover them
+          skills = discoverSkillsFromRepo(localPath);
+          spinner.succeed('Using local path');
+        }
       }
 
-      const skills = discoverSkillsFromRepo(localPath);
       console.log(chalk.bold(`\nFound ${skills.length} skill(s):`));
 
       if (skills.length === 0) {
@@ -2799,23 +2834,27 @@ memoryCmd
     const spinner = ora('Fetching memory files...').start();
 
     try {
-      // Detect if source is a local path or git repo
-      const isLocalPath = source.startsWith('./') || source.startsWith('/') ||
-                          source.startsWith('../') ||
-                          (fs.existsSync(source) && fs.statSync(source).isDirectory());
+      // Detect if source is a git repo (gh:, git:, ssh:, https://, http://)
+      const isGitRepo = source.startsWith('gh:') || source.startsWith('git:') ||
+                        source.startsWith('ssh:') || source.startsWith('https://') ||
+                        source.startsWith('http://');
 
       let localPath: string;
-      if (isLocalPath) {
-        localPath = path.resolve(source);
+      if (isGitRepo) {
+        const result = await cloneRepo(source);
+        localPath = result.localPath;
+        spinner.succeed('Repository cloned');
+      } else {
+        // It's a local path - expand ~ to home directory
+        localPath = source.startsWith('~')
+          ? path.join(os.homedir(), source.slice(1))
+          : path.resolve(source);
+
         if (!fs.existsSync(localPath)) {
           spinner.fail(`Path not found: ${localPath}`);
           return;
         }
         spinner.succeed('Using local path');
-      } else {
-        const result = await cloneRepo(source);
-        localPath = result.localPath;
-        spinner.succeed('Repository cloned');
       }
 
       // Discover memory files from repo
