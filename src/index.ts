@@ -69,6 +69,9 @@ import {
   ensureAgentsDir,
   getRepoLocalPath,
   getMemoryDir,
+  getSkillsDir,
+  getCommandsDir,
+  getHooksDir,
   getRepo,
   setRepo,
   removeRepo,
@@ -161,6 +164,7 @@ import {
   syncResourcesToVersion,
   resolveVersion,
   getEffectiveHome,
+  promptAgentVersionSelection,
 } from './lib/versions.js';
 import {
   createShim,
@@ -1750,6 +1754,90 @@ program
         }
       }
 
+      // Export central resources to repo
+      console.log();
+      let resourcesExported = 0;
+
+      const centralSkills = getSkillsDir();
+      const centralCommands = getCommandsDir();
+      const centralHooks = getHooksDir();
+      const centralMemory = getMemoryDir();
+
+      // Export skills to shared/skills/
+      if (fs.existsSync(centralSkills)) {
+        const skillNames = fs.readdirSync(centralSkills).filter((f) =>
+          fs.statSync(path.join(centralSkills, f)).isDirectory()
+        );
+        if (skillNames.length > 0) {
+          const targetDir = path.join(localPath, 'shared', 'skills');
+          fs.mkdirSync(targetDir, { recursive: true });
+          for (const name of skillNames) {
+            const src = path.join(centralSkills, name);
+            const dst = path.join(targetDir, name);
+            fs.cpSync(src, dst, { recursive: true });
+            console.log(`  ${chalk.green('+')} Skill: ${name}`);
+            resourcesExported++;
+          }
+        }
+      }
+
+      // Export commands to shared/commands/
+      if (fs.existsSync(centralCommands)) {
+        const cmdFiles = fs.readdirSync(centralCommands).filter((f) => f.endsWith('.md'));
+        if (cmdFiles.length > 0) {
+          const targetDir = path.join(localPath, 'shared', 'commands');
+          fs.mkdirSync(targetDir, { recursive: true });
+          for (const file of cmdFiles) {
+            const src = path.join(centralCommands, file);
+            const dst = path.join(targetDir, file);
+            fs.copyFileSync(src, dst);
+            console.log(`  ${chalk.green('+')} Command: ${file.replace('.md', '')}`);
+            resourcesExported++;
+          }
+        }
+      }
+
+      // Export hooks to shared/hooks/
+      if (fs.existsSync(centralHooks)) {
+        const hookFiles = fs.readdirSync(centralHooks);
+        if (hookFiles.length > 0) {
+          const targetDir = path.join(localPath, 'shared', 'hooks');
+          fs.mkdirSync(targetDir, { recursive: true });
+          for (const file of hookFiles) {
+            const src = path.join(centralHooks, file);
+            const dst = path.join(targetDir, file);
+            const stat = fs.statSync(src);
+            if (stat.isDirectory()) {
+              fs.cpSync(src, dst, { recursive: true });
+            } else {
+              fs.copyFileSync(src, dst);
+            }
+            console.log(`  ${chalk.green('+')} Hook: ${file}`);
+            resourcesExported++;
+          }
+        }
+      }
+
+      // Export memory files to memory/
+      if (fs.existsSync(centralMemory)) {
+        const memoryFiles = fs.readdirSync(centralMemory).filter((f) => f.endsWith('.md'));
+        if (memoryFiles.length > 0) {
+          const targetDir = path.join(localPath, 'memory');
+          fs.mkdirSync(targetDir, { recursive: true });
+          for (const file of memoryFiles) {
+            const src = path.join(centralMemory, file);
+            const dst = path.join(targetDir, file);
+            fs.copyFileSync(src, dst);
+            console.log(`  ${chalk.green('+')} Memory: ${file}`);
+            resourcesExported++;
+          }
+        }
+      }
+
+      if (resourcesExported > 0) {
+        console.log(chalk.gray(`\n  Exported ${resourcesExported} resources`));
+      }
+
       writeManifest(localPath, manifest);
       console.log(chalk.bold(`\nUpdated ${MANIFEST_FILENAME}`));
 
@@ -1903,39 +1991,111 @@ commandsCmd
   .command('add <source>')
   .description('Install commands from a repo or local path')
   .option('-a, --agents <list>', 'Comma-separated agents to install to')
+  .option('-y, --yes', 'Skip prompts and use defaults')
   .action(async (source: string, options) => {
     const spinner = ora('Fetching commands...').start();
 
     try {
-      const { localPath } = await cloneRepo(source);
+      // Detect if source is a local path or git repo
+      const isLocalPath = source.startsWith('./') || source.startsWith('/') ||
+                          source.startsWith('../') ||
+                          (fs.existsSync(source) && fs.statSync(source).isDirectory());
+
+      let localPath: string;
+      if (isLocalPath) {
+        localPath = path.resolve(source);
+        if (!fs.existsSync(localPath)) {
+          spinner.fail(`Path not found: ${localPath}`);
+          return;
+        }
+        spinner.succeed('Using local path');
+      } else {
+        const result = await cloneRepo(source);
+        localPath = result.localPath;
+        spinner.succeed('Repository cloned');
+      }
+
       const commands = discoverCommands(localPath);
-      spinner.succeed(`Found ${commands.length} commands`);
+      console.log(chalk.bold(`\nFound ${commands.length} command(s):`));
 
-      const agents = options.agents
-        ? (options.agents.split(',') as AgentId[])
-        : ALL_AGENT_IDS;
+      if (commands.length === 0) {
+        console.log(chalk.yellow('No commands found'));
+        return;
+      }
 
-      const cliStates = await getAllCliStates();
       for (const command of commands) {
         console.log(`\n  ${chalk.cyan(command.name)}: ${command.description}`);
+      }
 
-        for (const agentId of agents) {
-          if (!cliStates[agentId]?.installed && agentId !== 'cursor') continue;
+      // Get agent and version selection
+      let selectedAgents: AgentId[];
+      let versionSelections: Map<AgentId, string[]>;
 
-          const sourcePath = resolveCommandSource(localPath, command.name, agentId);
-          if (sourcePath) {
-            const result = installCommand(sourcePath, agentId, command.name, 'symlink');
-            if (result.error) {
-              console.log(`    ${chalk.yellow('!')} ${AGENTS[agentId].name}: ${result.error}`);
-            } else {
-              console.log(`    ${chalk.green('+')} ${AGENTS[agentId].name}`);
-            }
+      if (options.agents) {
+        selectedAgents = options.agents.split(',') as AgentId[];
+        versionSelections = new Map();
+        for (const agentId of selectedAgents) {
+          const versions = listInstalledVersions(agentId);
+          if (versions.length > 0) {
+            const defaultVer = getGlobalDefault(agentId);
+            versionSelections.set(agentId, defaultVer ? [defaultVer] : [versions[versions.length - 1]]);
+          }
+        }
+      } else {
+        const result = await promptAgentVersionSelection(ALL_AGENT_IDS, { skipPrompts: options.yes });
+        selectedAgents = result.selectedAgents;
+        versionSelections = result.versionSelections;
+      }
+
+      if (selectedAgents.length === 0) {
+        console.log(chalk.yellow('\nNo agents selected.'));
+        return;
+      }
+
+      // Install commands to central location
+      const installSpinner = ora('Installing commands to central storage...').start();
+      let installed = 0;
+
+      for (const command of commands) {
+        // Find source path (prefer shared, then agent-specific)
+        const sourcePath = resolveCommandSource(localPath, command.name, selectedAgents[0] || 'claude');
+        if (sourcePath) {
+          const result = installCommandCentrally(sourcePath, command.name);
+          if (result.error) {
+            installSpinner.stop();
+            console.log(chalk.yellow(`\n  Warning: ${command.name}: ${result.error}`));
+            installSpinner.start();
+          } else {
+            installed++;
           }
         }
       }
 
+      installSpinner.succeed(`Installed ${installed} commands to ~/.agents/commands/`);
+
+      // Sync to selected versions
+      const syncSpinner = ora('Syncing to agent versions...').start();
+      let synced = 0;
+
+      for (const [agentId, versions] of versionSelections) {
+        for (const version of versions) {
+          syncResourcesToVersion(agentId, version);
+          synced++;
+        }
+      }
+
+      if (synced > 0) {
+        syncSpinner.succeed(`Synced to ${synced} agent version(s)`);
+      } else {
+        syncSpinner.info('No version-managed agents to sync');
+      }
+
       console.log(chalk.green('\nCommands installed.'));
     } catch (err) {
+      if (isPromptCancelled(err)) {
+        console.log(chalk.gray('\nCancelled'));
+        return;
+      }
       spinner.fail('Failed to add commands');
       console.error(chalk.red((err as Error).message));
       process.exit(1);
@@ -2061,12 +2221,31 @@ hooksCmd
 hooksCmd
   .command('add <source>')
   .description('Install hooks from a repo or local path')
-  .option('-a, --agent <agents>', 'Target agents (comma-separated)', 'claude,gemini')
+  .option('-a, --agent <agents>', 'Target agents (comma-separated)')
+  .option('-y, --yes', 'Skip prompts and use defaults')
   .action(async (source: string, options) => {
     const spinner = ora('Fetching hooks...').start();
 
     try {
-      const { localPath } = await cloneRepo(source);
+      // Detect if source is a local path or git repo
+      const isLocalPath = source.startsWith('./') || source.startsWith('/') ||
+                          source.startsWith('../') ||
+                          (fs.existsSync(source) && fs.statSync(source).isDirectory());
+
+      let localPath: string;
+      if (isLocalPath) {
+        localPath = path.resolve(source);
+        if (!fs.existsSync(localPath)) {
+          spinner.fail(`Path not found: ${localPath}`);
+          return;
+        }
+        spinner.succeed('Using local path');
+      } else {
+        const result = await cloneRepo(source);
+        localPath = result.localPath;
+        spinner.succeed('Repository cloned');
+      }
+
       const hooks = discoverHooksFromRepo(localPath);
       const hookNames = new Set<string>();
       for (const name of hooks.shared) {
@@ -2077,44 +2256,84 @@ hooksCmd
           hookNames.add(name);
         }
       }
-      spinner.succeed(`Found ${hookNames.size} hooks`);
+      console.log(chalk.bold(`\nFound ${hookNames.size} hook(s):`));
 
-      const agents = options.agent
-        ? (options.agent.split(',') as AgentId[])
-        : (['claude', 'gemini'] as AgentId[]);
-
-      const result = await installHooks(localPath, agents, { scope: 'user' });
-      const installedByHook = new Map<string, AgentId[]>();
-      for (const item of result.installed) {
-        const [name, agentId] = item.split(':') as [string, AgentId];
-        const list = installedByHook.get(name) || [];
-        list.push(agentId);
-        installedByHook.set(name, list);
+      if (hookNames.size === 0) {
+        console.log(chalk.yellow('No hooks found'));
+        return;
       }
 
-      const orderedHooks = Array.from(installedByHook.keys()).sort((a, b) => a.localeCompare(b));
-      for (const name of orderedHooks) {
-        console.log(`\n  ${chalk.cyan(name)}`);
-        const agentIds = installedByHook.get(name) || [];
-        agentIds.sort();
-        for (const agentId of agentIds) {
-          console.log(`    ${AGENTS[agentId].name}`);
+      for (const name of hookNames) {
+        console.log(`  ${chalk.cyan(name)}`);
+      }
+
+      // Get agent and version selection
+      let selectedAgents: AgentId[];
+      let versionSelections: Map<AgentId, string[]>;
+
+      const hooksCapableAgents = Array.from(HOOKS_CAPABLE_AGENTS) as AgentId[];
+
+      if (options.agent) {
+        selectedAgents = options.agent.split(',') as AgentId[];
+        versionSelections = new Map();
+        for (const agentId of selectedAgents) {
+          const versions = listInstalledVersions(agentId);
+          if (versions.length > 0) {
+            const defaultVer = getGlobalDefault(agentId);
+            versionSelections.set(agentId, defaultVer ? [defaultVer] : [versions[versions.length - 1]]);
+          }
         }
+      } else {
+        const result = await promptAgentVersionSelection(hooksCapableAgents, { skipPrompts: options.yes });
+        selectedAgents = result.selectedAgents;
+        versionSelections = result.versionSelections;
       }
 
-      if (result.errors.length > 0) {
+      if (selectedAgents.length === 0) {
+        console.log(chalk.yellow('\nNo agents selected.'));
+        return;
+      }
+
+      // Install hooks to central location
+      const installSpinner = ora('Installing hooks to central storage...').start();
+      const centralResult = await installHooksCentrally(localPath);
+
+      if (centralResult.installed.length > 0) {
+        installSpinner.succeed(`Installed ${centralResult.installed.length} hooks to ~/.agents/hooks/`);
+      } else {
+        installSpinner.info('No hooks to install');
+      }
+
+      if (centralResult.errors.length > 0) {
         console.log(chalk.red('\nErrors:'));
-        for (const error of result.errors) {
+        for (const error of centralResult.errors) {
           console.log(chalk.red(`  ${error}`));
         }
       }
 
-      if (result.installed.length === 0) {
-        console.log(chalk.yellow('\nNo hooks installed.'));
-      } else {
-        console.log(chalk.green('\nHooks installed.'));
+      // Sync to selected versions
+      const syncSpinner = ora('Syncing to agent versions...').start();
+      let synced = 0;
+
+      for (const [agentId, versions] of versionSelections) {
+        for (const version of versions) {
+          syncResourcesToVersion(agentId, version);
+          synced++;
+        }
       }
+
+      if (synced > 0) {
+        syncSpinner.succeed(`Synced to ${synced} agent version(s)`);
+      } else {
+        syncSpinner.info('No version-managed agents to sync');
+      }
+
+      console.log(chalk.green('\nHooks installed.'));
     } catch (err) {
+      if (isPromptCancelled(err)) {
+        console.log(chalk.gray('\nCancelled'));
+        return;
+      }
       spinner.fail('Failed to add hooks');
       console.error(chalk.red((err as Error).message));
       process.exit(1);
@@ -2269,13 +2488,32 @@ skillsCmd
   .command('add <source>')
   .description('Install skills from a repo or local path')
   .option('-a, --agents <list>', 'Comma-separated agents to install to')
+  .option('-y, --yes', 'Skip prompts and use defaults')
   .action(async (source: string, options) => {
     const spinner = ora('Fetching skills...').start();
 
     try {
-      const { localPath } = await cloneRepo(source);
+      // Detect if source is a local path or git repo
+      const isLocalPath = source.startsWith('./') || source.startsWith('/') ||
+                          source.startsWith('../') ||
+                          (fs.existsSync(source) && fs.statSync(source).isDirectory());
+
+      let localPath: string;
+      if (isLocalPath) {
+        localPath = path.resolve(source);
+        if (!fs.existsSync(localPath)) {
+          spinner.fail(`Path not found: ${localPath}`);
+          return;
+        }
+        spinner.succeed('Using local path');
+      } else {
+        const result = await cloneRepo(source);
+        localPath = result.localPath;
+        spinner.succeed('Repository cloned');
+      }
+
       const skills = discoverSkillsFromRepo(localPath);
-      spinner.succeed(`Found ${skills.length} skills`);
+      console.log(chalk.bold(`\nFound ${skills.length} skill(s):`));
 
       if (skills.length === 0) {
         console.log(chalk.yellow('No skills found (looking for SKILL.md files)'));
@@ -2289,38 +2527,72 @@ skillsCmd
         }
       }
 
-      const cliStates = await getAllCliStates();
-      const agents = options.agents
-        ? (options.agents.split(',') as AgentId[])
-        : await checkbox({
-            message: 'Select agents to install skills to:',
-            choices: SKILLS_CAPABLE_AGENTS.filter((id) => cliStates[id]?.installed || id === 'cursor').map((id) => ({
-              name: AGENTS[id].name,
-              value: id,
-              checked: true,
-            })),
-          });
+      // Get agent and version selection
+      let selectedAgents: AgentId[];
+      let versionSelections: Map<AgentId, string[]>;
 
-      if (agents.length === 0) {
+      if (options.agents) {
+        // Use specified agents with default versions
+        selectedAgents = options.agents.split(',') as AgentId[];
+        versionSelections = new Map();
+        for (const agentId of selectedAgents) {
+          const versions = listInstalledVersions(agentId);
+          if (versions.length > 0) {
+            const defaultVer = getGlobalDefault(agentId);
+            versionSelections.set(agentId, defaultVer ? [defaultVer] : [versions[versions.length - 1]]);
+          }
+        }
+      } else {
+        const result = await promptAgentVersionSelection(SKILLS_CAPABLE_AGENTS, { skipPrompts: options.yes });
+        selectedAgents = result.selectedAgents;
+        versionSelections = result.versionSelections;
+      }
+
+      if (selectedAgents.length === 0) {
         console.log(chalk.yellow('\nNo agents selected.'));
         return;
       }
 
-      const installSpinner = ora('Installing skills...').start();
+      // Install skills to central location
+      const installSpinner = ora('Installing skills to central storage...').start();
       let installed = 0;
 
       for (const skill of skills) {
-        const result = installSkill(skill.path, skill.name, agents);
+        const result = installSkillCentrally(skill.path, skill.name);
         if (result.success) {
           installed++;
         } else {
+          installSpinner.stop();
           console.log(chalk.red(`\n  Failed to install ${skill.name}: ${result.error}`));
+          installSpinner.start();
         }
       }
 
-      installSpinner.succeed(`Installed ${installed} skills to ${agents.length} agents`);
+      installSpinner.succeed(`Installed ${installed} skills to ~/.agents/skills/`);
+
+      // Sync to selected versions
+      const syncSpinner = ora('Syncing to agent versions...').start();
+      let synced = 0;
+
+      for (const [agentId, versions] of versionSelections) {
+        for (const version of versions) {
+          syncResourcesToVersion(agentId, version);
+          synced++;
+        }
+      }
+
+      if (synced > 0) {
+        syncSpinner.succeed(`Synced to ${synced} agent version(s)`);
+      } else {
+        syncSpinner.info('No version-managed agents to sync');
+      }
+
       console.log(chalk.green('\nSkills installed.'));
     } catch (err) {
+      if (isPromptCancelled(err)) {
+        console.log(chalk.gray('\nCancelled'));
+        return;
+      }
       spinner.fail('Failed to add skills');
       console.error(chalk.red((err as Error).message));
       process.exit(1);
@@ -2516,6 +2788,109 @@ memoryCmd
       console.log(`    ${chalk.gray('Project:')} ${projectStatus}`);
       if (showPaths && projectInstr?.exists) console.log(chalk.gray(`        ${projectInstr.path}`));
       console.log();
+    }
+  });
+
+memoryCmd
+  .command('add <source>')
+  .description('Install memory files from a repo or local path')
+  .option('-y, --yes', 'Skip prompts and use defaults')
+  .action(async (source: string, options) => {
+    const spinner = ora('Fetching memory files...').start();
+
+    try {
+      // Detect if source is a local path or git repo
+      const isLocalPath = source.startsWith('./') || source.startsWith('/') ||
+                          source.startsWith('../') ||
+                          (fs.existsSync(source) && fs.statSync(source).isDirectory());
+
+      let localPath: string;
+      if (isLocalPath) {
+        localPath = path.resolve(source);
+        if (!fs.existsSync(localPath)) {
+          spinner.fail(`Path not found: ${localPath}`);
+          return;
+        }
+        spinner.succeed('Using local path');
+      } else {
+        const result = await cloneRepo(source);
+        localPath = result.localPath;
+        spinner.succeed('Repository cloned');
+      }
+
+      // Discover memory files from repo
+      const agentInstructions = discoverInstructionsFromRepo(localPath);
+      const memoryFiles = discoverMemoryFilesFromRepo(localPath);
+
+      const totalFiles = agentInstructions.length + memoryFiles.length;
+      console.log(chalk.bold(`\nFound ${totalFiles} memory file(s):`));
+
+      if (totalFiles === 0) {
+        console.log(chalk.yellow('No memory files found'));
+        return;
+      }
+
+      // Show agent-specific instructions
+      for (const instr of agentInstructions) {
+        console.log(`  ${chalk.cyan(AGENTS[instr.agentId].instructionsFile)} (${AGENTS[instr.agentId].name})`);
+      }
+      // Show shared memory files
+      for (const file of memoryFiles) {
+        console.log(`  ${chalk.cyan(file)} (shared)`);
+      }
+
+      // Get agent and version selection
+      const result = await promptAgentVersionSelection(ALL_AGENT_IDS, { skipPrompts: options.yes });
+      const { selectedAgents, versionSelections } = result;
+
+      if (selectedAgents.length === 0) {
+        console.log(chalk.yellow('\nNo agents selected.'));
+        return;
+      }
+
+      // Install memory files to central location
+      const installSpinner = ora('Installing memory files to central storage...').start();
+
+      // Use installInstructionsCentrally which handles both agent-specific and shared files
+      const centralResult = installInstructionsCentrally(localPath);
+      const installed = centralResult.installed.length;
+
+      if (centralResult.errors.length > 0) {
+        installSpinner.stop();
+        for (const error of centralResult.errors) {
+          console.log(chalk.yellow(`\n  Warning: ${error}`));
+        }
+        installSpinner.start();
+      }
+
+      installSpinner.succeed(`Installed ${installed} memory files to ~/.agents/memory/`);
+
+      // Sync to selected versions
+      const syncSpinner = ora('Syncing to agent versions...').start();
+      let synced = 0;
+
+      for (const [agentId, versions] of versionSelections) {
+        for (const version of versions) {
+          syncResourcesToVersion(agentId, version);
+          synced++;
+        }
+      }
+
+      if (synced > 0) {
+        syncSpinner.succeed(`Synced to ${synced} agent version(s)`);
+      } else {
+        syncSpinner.info('No version-managed agents to sync');
+      }
+
+      console.log(chalk.green('\nMemory files installed.'));
+    } catch (err) {
+      if (isPromptCancelled(err)) {
+        console.log(chalk.gray('\nCancelled'));
+        return;
+      }
+      spinner.fail('Failed to add memory files');
+      console.error(chalk.red((err as Error).message));
+      process.exit(1);
     }
   });
 

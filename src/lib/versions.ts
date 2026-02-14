@@ -3,9 +3,11 @@ import * as path from 'path';
 import * as os from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import chalk from 'chalk';
+import { checkbox } from '@inquirer/prompts';
 import type { AgentId } from './types.js';
 import { getVersionsDir, getShimsDir, ensureAgentsDir, readMeta, writeMeta, getCommandsDir, getSkillsDir, getHooksDir, getMemoryDir } from './state.js';
-import { AGENTS } from './agents.js';
+import { AGENTS, getAccountEmail } from './agents.js';
 import { markdownToToml } from './convert.js';
 import { createVersionedAlias, removeVersionedAlias, switchConfigSymlink } from './shims.js';
 
@@ -450,4 +452,112 @@ export function getEffectiveHome(agentId: AgentId): string {
     return getVersionHomePath(agentId, resolved);
   }
   return os.homedir();
+}
+
+export interface VersionSelectionResult {
+  selectedAgents: AgentId[];
+  versionSelections: Map<AgentId, string[]>;
+}
+
+/**
+ * Prompt user to select agents and versions for resource installation.
+ * Returns selected agents and their version selections.
+ */
+export async function promptAgentVersionSelection(
+  availableAgents: AgentId[],
+  options: { skipPrompts?: boolean } = {}
+): Promise<VersionSelectionResult> {
+  const versionSelections = new Map<AgentId, string[]>();
+
+  // Filter to installed agents
+  const installedAgents = availableAgents.filter((id) => {
+    const versions = listInstalledVersions(id);
+    return versions.length > 0 || id === 'cursor';
+  });
+
+  if (installedAgents.length === 0) {
+    return { selectedAgents: [], versionSelections };
+  }
+
+  const formatAgentLabel = (agentId: AgentId): string => {
+    const versions = listInstalledVersions(agentId);
+    const defaultVer = getGlobalDefault(agentId);
+    if (versions.length === 0) return `${AGENTS[agentId].name}  ${chalk.gray('(not installed)')}`;
+    if (defaultVer) return `${AGENTS[agentId].name}  ${chalk.gray(`(active: ${defaultVer})`)}`;
+    return `${AGENTS[agentId].name}  ${chalk.gray(`(${versions[0]})`)}`;
+  };
+
+  let selectedAgents: AgentId[];
+
+  if (options.skipPrompts) {
+    // Auto-select all installed agents with default versions
+    selectedAgents = [...installedAgents];
+    for (const agentId of selectedAgents) {
+      const versions = listInstalledVersions(agentId);
+      if (versions.length > 0) {
+        const defaultVer = getGlobalDefault(agentId);
+        versionSelections.set(agentId, defaultVer ? [defaultVer] : [versions[versions.length - 1]]);
+      }
+    }
+  } else {
+    // Prompt for agent selection
+    const checkboxResult = await checkbox<string>({
+      message: 'Which agents should receive these resources?',
+      choices: [
+        { name: chalk.bold('All'), value: 'all', checked: true },
+        ...installedAgents.map((id) => ({
+          name: `  ${formatAgentLabel(id)}`,
+          value: id,
+          checked: false,
+        })),
+      ],
+    });
+
+    if (checkboxResult.includes('all')) {
+      selectedAgents = [...installedAgents];
+    } else {
+      selectedAgents = checkboxResult as AgentId[];
+    }
+
+    // Version selection per agent
+    for (const agentId of selectedAgents) {
+      const versions = listInstalledVersions(agentId);
+      if (versions.length === 0) continue;
+      if (versions.length === 1) {
+        versionSelections.set(agentId, [versions[0]]);
+        continue;
+      }
+
+      const defaultVer = getGlobalDefault(agentId);
+      const versionEmails = await Promise.all(
+        versions.map((v) =>
+          getAccountEmail(agentId, getVersionHomePath(agentId, v)).then((email) => ({ v, email }))
+        )
+      );
+      const versionEmailMap = new Map(versionEmails.map((e) => [e.v, e.email]));
+
+      const maxLabelLen = Math.max(...versions.map((v) => (v === defaultVer ? `${v} (default)` : v).length));
+      const versionResult = await checkbox<string>({
+        message: `Which versions of ${AGENTS[agentId].name} should receive these resources?`,
+        choices: [
+          { name: chalk.bold('All versions'), value: 'all', checked: false },
+          ...versions.map((v) => {
+            const base = v === defaultVer ? `${v} (default)` : v;
+            let label = base.padEnd(maxLabelLen);
+            const email = versionEmailMap.get(v);
+            if (email) label += chalk.cyan(`  ${email}`);
+            return { name: label, value: v, checked: v === defaultVer };
+          }),
+        ],
+      });
+
+      if (versionResult.includes('all')) {
+        versionSelections.set(agentId, [...versions]);
+      } else {
+        versionSelections.set(agentId, versionResult);
+      }
+    }
+  }
+
+  return { selectedAgents, versionSelections };
 }
