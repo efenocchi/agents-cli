@@ -6,6 +6,7 @@ import * as os from 'os';
 import * as TOML from 'smol-toml';
 import type { AgentConfig, AgentId } from './types.js';
 import { getVersionsDir, getShimsDir } from './state.js';
+import { resolveVersion } from './versions.js';
 
 export interface CliState {
   installed: boolean;
@@ -146,6 +147,21 @@ export async function getCliState(agentId: AgentId): Promise<CliState> {
   const agent = AGENTS[agentId];
   const agentVersionsDir = path.join(getVersionsDir(), agentId);
   if (fs.existsSync(agentVersionsDir)) {
+    // Use resolved version (project manifest -> global default)
+    const resolvedVer = resolveVersion(agentId, process.cwd());
+    if (resolvedVer) {
+      const binaryPath = path.join(agentVersionsDir, resolvedVer, 'node_modules', '.bin', agent.cliCommand);
+      if (fs.existsSync(binaryPath)) {
+        const shimPath = path.join(getShimsDir(), agent.cliCommand);
+        return {
+          installed: true,
+          version: resolvedVer,
+          path: fs.existsSync(shimPath) ? shimPath : binaryPath,
+        };
+      }
+    }
+
+    // Fallback: if no default set or resolved version not installed, return first available
     const entries = fs.readdirSync(agentVersionsDir, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.isDirectory()) {
@@ -573,10 +589,12 @@ export function parseMcpConfig(agentId: AgentId, configPath: string): Record<str
 
 /**
  * List installed MCP servers with scope information.
+ * Pass options.home to read from a version-managed agent's home directory.
  */
 export function listInstalledMcpsWithScope(
   agentId: AgentId,
-  cwd: string = process.cwd()
+  cwd: string = process.cwd(),
+  options?: { home?: string }
 ): InstalledMcp[] {
   const results: InstalledMcp[] = [];
 
@@ -588,8 +606,10 @@ export function listInstalledMcpsWithScope(
     return config.command || (config.args ? config.args.join(' ') : undefined);
   };
 
-  // User-scoped MCPs
-  const userConfigPath = getUserMcpConfigPath(agentId);
+  // User-scoped MCPs (version-aware when home is provided)
+  const userConfigPath = options?.home
+    ? getMcpConfigPathForHome(agentId, options.home)
+    : getUserMcpConfigPath(agentId);
   const userMcps = parseMcpConfig(agentId, userConfigPath);
   for (const [name, config] of Object.entries(userMcps)) {
     results.push({
@@ -618,11 +638,13 @@ export function listInstalledMcpsWithScope(
 
 /**
  * Copy a project-scoped MCP to user scope.
+ * Pass options.home to write to a version-managed agent's home directory.
  */
 export async function promoteMcpToUser(
   agentId: AgentId,
   mcpName: string,
-  cwd: string = process.cwd()
+  cwd: string = process.cwd(),
+  options?: { home?: string; binary?: string }
 ): Promise<{ success: boolean; error?: string }> {
   const projectConfigPath = getProjectMcpConfigPath(agentId, cwd);
   const projectMcps = parseMcpConfig(agentId, projectConfigPath);
@@ -638,5 +660,8 @@ export async function promoteMcpToUser(
     return { success: false, error: 'Cannot determine MCP command' };
   }
 
-  return registerMcp(agentId, mcpName, command, 'user');
+  return registerMcp(agentId, mcpName, command, 'user', 'stdio', {
+    home: options?.home,
+    binary: options?.binary,
+  });
 }
