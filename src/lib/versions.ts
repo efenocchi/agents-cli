@@ -1,11 +1,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import type { AgentId } from './types.js';
 import { getVersionsDir, getShimsDir, ensureAgentsDir, readMeta, writeMeta, getCommandsDir, getSkillsDir, getHooksDir, getMemoryDir } from './state.js';
 import { AGENTS } from './agents.js';
 import { markdownToToml } from './convert.js';
+import { createVersionedAlias, removeVersionedAlias, switchConfigSymlink } from './shims.js';
 
 const execAsync = promisify(exec);
 
@@ -178,9 +180,15 @@ export async function installVersion(
     }
 
     // Set as default if first install
-    if (!getGlobalDefault(agent)) {
+    const isFirstInstall = !getGlobalDefault(agent);
+    if (isFirstInstall) {
       setGlobalDefault(agent, installedVersion);
+      // Set up config symlink (e.g., ~/.claude -> version's config)
+      switchConfigSymlink(agent, installedVersion);
     }
+
+    // Create versioned alias (e.g., claude@2.0.65)
+    createVersionedAlias(agent, installedVersion);
 
     return { success: true, installedVersion };
   } catch (err) {
@@ -203,6 +211,9 @@ export function removeVersion(agent: AgentId, version: string): boolean {
   }
 
   fs.rmSync(versionDir, { recursive: true, force: true });
+
+  // Remove versioned alias (e.g., claude@2.0.65)
+  removeVersionedAlias(agent, version);
 
   // Update default if it was removed
   if (getGlobalDefault(agent) === version) {
@@ -426,4 +437,17 @@ export function syncResourcesToVersion(agent: AgentId, version: string): SyncRes
   }
 
   return result;
+}
+
+/**
+ * Get the effective HOME directory for an agent.
+ * If version-managed with a resolved version, returns the version's home directory.
+ * Otherwise returns the real HOME.
+ */
+export function getEffectiveHome(agentId: AgentId): string {
+  const resolved = resolveVersion(agentId, process.cwd());
+  if (resolved && isVersionInstalled(agentId, resolved)) {
+    return getVersionHomePath(agentId, resolved);
+  }
+  return os.homedir();
 }

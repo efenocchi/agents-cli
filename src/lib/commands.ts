@@ -4,6 +4,7 @@ import * as yaml from 'yaml';
 import { AGENTS, ensureCommandsDir } from './agents.js';
 import { markdownToToml } from './convert.js';
 import { getCommandsDir } from './state.js';
+import { getEffectiveHome } from './versions.js';
 import type { AgentId, CommandInstallation } from './types.js';
 
 export type CommandScope = 'user' | 'project';
@@ -215,8 +216,12 @@ export function installCommand(
   const agent = AGENTS[agentId];
   ensureCommandsDir(agentId);
 
+  const home = getEffectiveHome(agentId);
+  const commandsDir = path.join(home, `.${agentId}`, agent.commandsSubdir);
+  fs.mkdirSync(commandsDir, { recursive: true });
+
   const ext = agent.format === 'toml' ? '.toml' : '.md';
-  const targetPath = path.join(agent.commandsDir, `${commandName}${ext}`);
+  const targetPath = path.join(commandsDir, `${commandName}${ext}`);
 
   if (fs.existsSync(targetPath)) {
     fs.unlinkSync(targetPath);
@@ -243,8 +248,10 @@ export function installCommand(
 
 export function uninstallCommand(agentId: AgentId, commandName: string): boolean {
   const agent = AGENTS[agentId];
+  const home = getEffectiveHome(agentId);
+  const commandsDir = path.join(home, `.${agentId}`, agent.commandsSubdir);
   const ext = agent.format === 'toml' ? '.toml' : '.md';
-  const targetPath = path.join(agent.commandsDir, `${commandName}${ext}`);
+  const targetPath = path.join(commandsDir, `${commandName}${ext}`);
 
   if (fs.existsSync(targetPath)) {
     fs.unlinkSync(targetPath);
@@ -255,13 +262,15 @@ export function uninstallCommand(agentId: AgentId, commandName: string): boolean
 
 export function listInstalledCommands(agentId: AgentId): string[] {
   const agent = AGENTS[agentId];
-  if (!fs.existsSync(agent.commandsDir)) {
+  const home = getEffectiveHome(agentId);
+  const commandsDir = path.join(home, `.${agentId}`, agent.commandsSubdir);
+  if (!fs.existsSync(commandsDir)) {
     return [];
   }
 
   const ext = agent.format === 'toml' ? '.toml' : '.md';
   return fs
-    .readdirSync(agent.commandsDir)
+    .readdirSync(commandsDir)
     .filter((f) => f.endsWith(ext))
     .map((f) => f.replace(ext, ''));
 }
@@ -271,8 +280,10 @@ export function listInstalledCommands(agentId: AgentId): string[] {
  */
 export function commandExists(agentId: AgentId, commandName: string): boolean {
   const agent = AGENTS[agentId];
+  const home = getEffectiveHome(agentId);
+  const commandsDir = path.join(home, `.${agentId}`, agent.commandsSubdir);
   const ext = agent.format === 'toml' ? '.toml' : '.md';
-  const targetPath = path.join(agent.commandsDir, `${commandName}${ext}`);
+  const targetPath = path.join(commandsDir, `${commandName}${ext}`);
   return fs.existsSync(targetPath);
 }
 
@@ -293,8 +304,10 @@ export function commandContentMatches(
   sourcePath: string
 ): boolean {
   const agent = AGENTS[agentId];
+  const home = getEffectiveHome(agentId);
+  const commandsDir = path.join(home, `.${agentId}`, agent.commandsSubdir);
   const ext = agent.format === 'toml' ? '.toml' : '.md';
-  const installedPath = path.join(agent.commandsDir, `${commandName}${ext}`);
+  const installedPath = path.join(commandsDir, `${commandName}${ext}`);
 
   if (!fs.existsSync(installedPath) || !fs.existsSync(sourcePath)) {
     return false;
@@ -355,10 +368,12 @@ export function listInstalledCommandsWithScope(
   const ext = agent.format === 'toml' ? '.toml' : '.md';
   const results: InstalledCommand[] = [];
 
-  // User-scoped commands
-  const userCommands = listCommandsFromDir(agent.commandsDir, agent.format);
+  // User-scoped commands (version-aware)
+  const home = getEffectiveHome(agentId);
+  const userCommandsDir = path.join(home, `.${agentId}`, agent.commandsSubdir);
+  const userCommands = listCommandsFromDir(userCommandsDir, agent.format);
   for (const name of userCommands) {
-    const commandPath = path.join(agent.commandsDir, `${name}${ext}`);
+    const commandPath = path.join(userCommandsDir, `${name}${ext}`);
     results.push({
       name,
       scope: 'user',
@@ -413,8 +428,10 @@ export function promoteCommandToUser(
     return { success: false, error: `Project command '${commandName}' not found` };
   }
 
-  ensureCommandsDir(agentId);
-  const targetPath = path.join(agent.commandsDir, `${commandName}${ext}`);
+  const home = getEffectiveHome(agentId);
+  const commandsDir = path.join(home, `.${agentId}`, agent.commandsSubdir);
+  fs.mkdirSync(commandsDir, { recursive: true });
+  const targetPath = path.join(commandsDir, `${commandName}${ext}`);
 
   try {
     fs.copyFileSync(sourcePath, targetPath);

@@ -121,7 +121,7 @@ import {
   instructionsExists,
   instructionsContentMatches,
   getInstructionsContent,
-} from './lib/instructions.js';
+} from './lib/memory.js';
 import type { AgentId, Manifest, RegistryType } from './lib/types.js';
 import { DEFAULT_REGISTRIES } from './lib/types.js';
 import {
@@ -147,6 +147,7 @@ import {
   getVersionHomePath,
   syncResourcesToVersion,
   resolveVersion,
+  getEffectiveHome,
 } from './lib/versions.js';
 import {
   createShim,
@@ -155,6 +156,7 @@ import {
   isShimsInPath,
   getPathSetupInstructions,
   getShimsDir,
+  switchConfigSymlink,
 } from './lib/shims.js';
 
 const program = new Command();
@@ -507,7 +509,7 @@ program
 
     const installedMcpAgents = mcpAgentsToShow.filter((agentId) => cliStates[agentId]?.installed);
     for (const agentId of installedMcpAgents) {
-      for (const mcp of listInstalledMcpsWithScope(agentId, cwd)) {
+      for (const mcp of listInstalledMcpsWithScope(agentId, cwd, { home: getEffectiveHome(agentId) })) {
         const seen = mcp.scope === 'user' ? seenUserMcps : seenProjectMcps;
         const list = mcp.scope === 'user' ? userMcps : projectMcps;
         const existing = seen.get(mcp.name);
@@ -1497,7 +1499,7 @@ program
               }
             }
           } else {
-            const installedList = listInstalledMcpsWithScope(agentId);
+            const installedList = listInstalledMcpsWithScope(agentId, process.cwd(), { home: getEffectiveHome(agentId) });
             for (const mcp of installedList.filter(m => m.scope === 'user')) {
               if (!manifestMcpNames.has(mcp.name)) {
                 await unregisterMcp(agentId, mcp.name);
@@ -1701,7 +1703,7 @@ program
       for (const agentId of MCP_CAPABLE_AGENTS) {
         if (!cliStates[agentId]?.installed) continue;
 
-        const mcps = listInstalledMcpsWithScope(agentId);
+        const mcps = listInstalledMcpsWithScope(agentId, process.cwd(), { home: getEffectiveHome(agentId) });
         for (const mcp of mcps) {
           if (mcp.scope !== 'user') continue; // Only export user-scoped MCPs
 
@@ -2689,7 +2691,7 @@ mcpCmd
       }
       return {
         agent,
-        mcps: listInstalledMcpsWithScope(agentId, cwd).filter(
+        mcps: listInstalledMcpsWithScope(agentId, cwd, { home: getEffectiveHome(agentId) }).filter(
           (m) => options.scope === 'all' || m.scope === options.scope
         ),
       };
@@ -2883,7 +2885,7 @@ mcpCmd
     for (const agentId of agents) {
       if (!cliStates[agentId]?.installed) continue;
 
-      const result = await promoteMcpToUser(agentId, name, cwd);
+      const result = await promoteMcpToUser(agentId, name, cwd, { home: getEffectiveHome(agentId) });
       if (result.success) {
         console.log(`  ${chalk.green('+')} ${AGENTS[agentId].name}`);
         pushed++;
@@ -3134,6 +3136,15 @@ program
     } else {
       // Set global default
       setGlobalDefault(agent, selectedVersion);
+
+      // Switch config symlink (e.g., ~/.claude -> version's config)
+      const symlinkResult = switchConfigSymlink(agent, selectedVersion);
+      if (!symlinkResult.success) {
+        console.log(chalk.yellow(`Warning: Could not update config symlink: ${symlinkResult.error}`));
+      } else if (symlinkResult.migrated) {
+        console.log(chalk.gray(`Migrated existing ${agentConfig.configDir} to version ${selectedVersion}`));
+      }
+
       const useEmail = await getAccountEmail(agent, getVersionHomePath(agent, selectedVersion));
       const useEmailStr = useEmail ? chalk.cyan(` (${useEmail})`) : '';
       console.log(chalk.green(`Set ${agentConfig.name}@${selectedVersion} as global default`) + useEmailStr);
@@ -3228,8 +3239,14 @@ program
         hasVersionManaged = true;
         console.log(`  ${chalk.bold(agent.name)}`);
 
-        const maxVerLabel = Math.max(...versions.map((v) => (v === globalDefault ? `${v} (default)` : v).length));
-        for (const version of versions) {
+        // Sort versions with default first, then by semver descending
+        const sortedVersions = [...versions].sort((a, b) => {
+          if (a === globalDefault) return -1;
+          if (b === globalDefault) return 1;
+          return compareVersions(b, a); // descending for non-default
+        });
+        const maxVerLabel = Math.max(...sortedVersions.map((v) => (v === globalDefault ? `${v} (default)` : v).length));
+        for (const version of sortedVersions) {
           const isDefault = version === globalDefault;
           const base = isDefault ? `${version} (default)` : version;
           const padded = base.padEnd(maxVerLabel);
@@ -4468,5 +4485,59 @@ function compareVersions(a: string, b: string): number {
   }
   return 0;
 }
+
+/**
+ * Calculate Levenshtein edit distance between two strings.
+ */
+function levenshtein(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  const dp: number[][] = Array(m + 1)
+    .fill(null)
+    .map(() => Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] =
+        a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1]
+          : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
+// Auto-correct typos with edit distance 1
+program.on('command:*', (operands) => {
+  const unknown = operands[0];
+  const allCommands = program.commands.map((c) => c.name());
+
+  // Find closest match
+  let closest: string | null = null;
+  let minDist = Infinity;
+  for (const cmd of allCommands) {
+    const dist = levenshtein(unknown, cmd);
+    if (dist < minDist) {
+      minDist = dist;
+      closest = cmd;
+    }
+  }
+
+  // If edit distance is 1, auto-correct silently
+  if (minDist === 1 && closest) {
+    const args = process.argv.slice(2);
+    args[0] = closest;
+    program.parse(['node', 'agents', ...args]);
+    return;
+  }
+
+  // Otherwise, show error with suggestion
+  console.error(`error: unknown command '${unknown}'`);
+  if (closest && minDist <= 3) {
+    console.error(`(Did you mean ${closest}?)`);
+  }
+  process.exit(1);
+});
 
 program.parse();
