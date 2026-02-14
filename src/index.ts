@@ -28,6 +28,18 @@ function isPromptCancelled(err: unknown): boolean {
     err.message.includes('User force closed')
   );
 }
+
+function formatPath(fullPath: string, cwd?: string): string {
+  const home = os.homedir();
+  if (fullPath.startsWith(home)) {
+    return '~' + fullPath.slice(home.length);
+  }
+  const currentDir = cwd || process.cwd();
+  if (fullPath.startsWith(currentDir + '/')) {
+    return fullPath.slice(currentDir.length + 1);
+  }
+  return fullPath;
+}
 import {
   AGENTS,
   ALL_AGENT_IDS,
@@ -456,17 +468,6 @@ program
       return chalk.blue(name);
     }
 
-    function formatPath(fullPath: string): string {
-      const home = os.homedir();
-      if (fullPath.startsWith(home)) {
-        return '~' + fullPath.slice(home.length);
-      }
-      if (fullPath.startsWith(cwd + '/')) {
-        return fullPath.slice(cwd.length + 1);
-      }
-      return fullPath;
-    }
-
     // Collect deduplicated resources
     interface StatusResource {
       name: string;
@@ -601,7 +602,7 @@ program
         if (showAgents && r.agents?.length) {
           display += chalk.gray(` [${r.agents.join(', ')}]`);
         }
-        const pathStr = r.path ? chalk.gray(formatPath(r.path)) : '';
+        const pathStr = r.path ? chalk.gray(formatPath(r.path, cwd)) : '';
         console.log(`    ${display.padEnd(30)} ${pathStr}`);
       }
     }
@@ -1860,8 +1861,6 @@ commandsCmd
     } else {
       agents = ALL_AGENT_IDS;
     }
-    const showPaths = !!agentInput;
-
     // Collect all data while spinner is active
     const agentCommands = agents.map((agentId) => ({
       agent: AGENTS[agentId],
@@ -1885,18 +1884,14 @@ commandsCmd
         if (userCommands.length > 0 && (options.scope === 'all' || options.scope === 'user')) {
           console.log(`    ${chalk.gray('User:')}`);
           for (const cmd of userCommands) {
-            const desc = cmd.description ? ` - ${chalk.gray(cmd.description)}` : '';
-            console.log(`      ${chalk.cyan(cmd.name)}${desc}`);
-            if (showPaths) console.log(chalk.gray(`        ${cmd.path}`));
+            console.log(`      ${chalk.cyan(cmd.name.padEnd(20))} ${chalk.gray(formatPath(cmd.path, cwd))}`);
           }
         }
 
         if (projectCommands.length > 0 && (options.scope === 'all' || options.scope === 'project')) {
           console.log(`    ${chalk.gray('Project:')}`);
           for (const cmd of projectCommands) {
-            const desc = cmd.description ? ` - ${chalk.gray(cmd.description)}` : '';
-            console.log(`      ${chalk.yellow(cmd.name)}${desc}`);
-            if (showPaths) console.log(chalk.gray(`        ${cmd.path}`));
+            console.log(`      ${chalk.yellow(cmd.name.padEnd(20))} ${chalk.gray(formatPath(cmd.path, cwd))}`);
           }
         }
       }
