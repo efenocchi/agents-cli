@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import type { AgentId } from './types.js';
 import { getShimsDir, getVersionsDir, ensureAgentsDir } from './state.js';
 export { getShimsDir };
@@ -182,8 +183,8 @@ export function versionedAliasExists(agent: AgentId, version: string): boolean {
  */
 function getAgentConfigPath(agent: AgentId): string {
   const agentConfig = AGENTS[agent];
-  const home = process.env.AGENTS_REAL_HOME || require('os').homedir();
-  return agentConfig.configDir.replace(require('os').homedir(), home);
+  const home = process.env.AGENTS_REAL_HOME || os.homedir();
+  return agentConfig.configDir.replace(os.homedir(), home);
 }
 
 /**
