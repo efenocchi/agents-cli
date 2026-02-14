@@ -4,6 +4,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -455,6 +456,17 @@ program
       return chalk.blue(name);
     }
 
+    function formatPath(fullPath: string): string {
+      const home = os.homedir();
+      if (fullPath.startsWith(home)) {
+        return '~' + fullPath.slice(home.length);
+      }
+      if (fullPath.startsWith(cwd + '/')) {
+        return fullPath.slice(cwd.length + 1);
+      }
+      return fullPath;
+    }
+
     // Collect deduplicated resources
     interface StatusResource {
       name: string;
@@ -463,6 +475,7 @@ program
       agents?: AgentId[];
       ruleCount?: number;
       version?: string;
+      path?: string;
     }
 
     // Commands
@@ -478,7 +491,7 @@ program
         if (!seen.has(cmd.name)) {
           seen.add(cmd.name);
           const sync = getCommandSync(cmd.name, agentId);
-          list.push({ name: cmd.name, syncStatus: sync.status, repoName: sync.repo });
+          list.push({ name: cmd.name, syncStatus: sync.status, repoName: sync.repo, path: cmd.path });
         }
       }
     }
@@ -496,7 +509,7 @@ program
         if (!seen.has(skill.name)) {
           seen.add(skill.name);
           const sync = getSkillSync(skill.name, agentId);
-          list.push({ name: skill.name, syncStatus: sync.status, repoName: sync.repo, ruleCount: skill.ruleCount });
+          list.push({ name: skill.name, syncStatus: sync.status, repoName: sync.repo, ruleCount: skill.ruleCount, path: skill.path });
         }
       }
     }
@@ -543,7 +556,7 @@ program
         if (!seen.has(key)) {
           seen.add(key);
           const sync = getInstructionsSync(agentId);
-          list.push({ name: key, syncStatus: sync.status, repoName: sync.repo });
+          list.push({ name: key, syncStatus: sync.status, repoName: sync.repo, path: instr.path });
         }
       }
     }
@@ -568,6 +581,7 @@ program
             syncStatus: sync.status,
             repoName: sync.repo,
             agents: [agentId],
+            path: hook.path,
           };
           seen.set(hook.name, resource);
           list.push(resource);
@@ -578,20 +592,18 @@ program
     spinner.stop();
 
     // Render helpers
-    function renderList(resources: StatusResource[], showAgents = false): string {
-      if (resources.length === 0) return chalk.gray('none');
-      return resources
-        .map((r) => {
-          let display = r.version
-            ? colorName(`${r.name}@${r.version}`, r.syncStatus)
-            : colorName(r.name, r.syncStatus);
-          if (r.ruleCount !== undefined) display += chalk.gray(` (${r.ruleCount} rules)`);
-          if (showAgents && r.agents && r.agents.length > 0) {
-            display += chalk.gray(` [${r.agents.join(', ')}]`);
-          }
-          return display;
-        })
-        .join(', ');
+    function renderListWithPaths(resources: StatusResource[], showAgents = false): void {
+      for (const r of resources) {
+        let display = r.version
+          ? colorName(`${r.name}@${r.version}`, r.syncStatus)
+          : colorName(r.name, r.syncStatus);
+        if (r.ruleCount !== undefined) display += chalk.gray(` (${r.ruleCount} rules)`);
+        if (showAgents && r.agents?.length) {
+          display += chalk.gray(` [${r.agents.join(', ')}]`);
+        }
+        const pathStr = r.path ? chalk.gray(formatPath(r.path)) : '';
+        console.log(`    ${display.padEnd(30)} ${pathStr}`);
+      }
     }
 
     function renderSection(
@@ -605,10 +617,12 @@ program
         console.log(`  ${chalk.gray('none')}`);
       } else {
         if (user.length > 0) {
-          console.log(`  ${chalk.gray('User:')}    ${renderList(user, showAgents)}`);
+          console.log(`  ${chalk.gray('User:')}`);
+          renderListWithPaths(user, showAgents);
         }
         if (project.length > 0) {
-          console.log(`  ${chalk.gray('Project:')} ${renderList(project, showAgents)}`);
+          console.log(`  ${chalk.gray('Project:')}`);
+          renderListWithPaths(project, showAgents);
         }
       }
     }
