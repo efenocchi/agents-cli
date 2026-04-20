@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Runs after npm install -g @companion/agents-cli
+// Runs after npm install -g @phnx-labs/agents-cli
 // Sets up PATH for version switching
 
 import * as fs from 'fs';
