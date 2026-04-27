@@ -16,7 +16,7 @@ let mgr: AgentManager;
 
 beforeEach(async () => {
   tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'sup-test-'));
-  mgr = new AgentManager(50, 10, tmpBase);
+  mgr = new AgentManager(50, tmpBase);
   await mgr.listAll();
 });
 
