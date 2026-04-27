@@ -21,16 +21,42 @@ import type { AgentId } from '../types.js';
 
 let lastMemoryWarnAt = 0;
 
+// On macOS, os.freemem() returns only the truly-free pool and ignores the
+// large inactive+purgeable cache the kernel will reclaim under pressure, so
+// it always looks alarmingly low on a healthy Mac. Parse vm_stat to get the
+// real "available" figure: free + inactive + purgeable + speculative.
+function availableMemoryBytes(): number {
+  if (process.platform !== 'darwin') return os.freemem();
+  try {
+    const out = execSync('vm_stat', { encoding: 'utf8', timeout: 1000 });
+    const pageSizeMatch = out.match(/page size of (\d+) bytes/);
+    const pageSize = pageSizeMatch ? Number(pageSizeMatch[1]) : 4096;
+    const grab = (label: string): number => {
+      const m = out.match(new RegExp(`${label}:\\s+(\\d+)\\.`));
+      return m ? Number(m[1]) : 0;
+    };
+    const pages =
+      grab('Pages free') +
+      grab('Pages inactive') +
+      grab('Pages purgeable') +
+      grab('Pages speculative');
+    if (pages <= 0) return os.freemem();
+    return pages * pageSize;
+  } catch {
+    return os.freemem();
+  }
+}
+
 function warnIfMemoryLow(runningCount: number): void {
   const total = os.totalmem();
-  const free = os.freemem();
   if (total <= 0) return;
-  const freeRatio = free / total;
+  const available = availableMemoryBytes();
+  const freeRatio = available / total;
   if (freeRatio >= 0.15) return;
   const now = Date.now();
   if (now - lastMemoryWarnAt < 60_000) return;
   lastMemoryWarnAt = now;
-  const freeGb = (free / 1024 ** 3).toFixed(1);
+  const freeGb = (available / 1024 ** 3).toFixed(1);
   const totalGb = (total / 1024 ** 3).toFixed(1);
   process.stderr.write(
     `Heads up: only ${freeGb}GB of ${totalGb}GB free with ${runningCount} teammates already running. ` +
