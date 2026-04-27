@@ -17,7 +17,7 @@ let mgr: AgentManager;
 beforeEach(async () => {
   tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'oracle-test-'));
   // Use the ctor's agentsDir override so this test never touches ~/.agents.
-  mgr = new AgentManager(50, 10, tmpBase);
+  mgr = new AgentManager(50, tmpBase);
   // Force init to finish before we start poking the internal state.
   await mgr.listAll();
 });

@@ -19,6 +19,25 @@ import { debug } from './debug.js';
 import { buildReasoningFlags } from '../models.js';
 import type { AgentId } from '../types.js';
 
+let lastMemoryWarnAt = 0;
+
+function warnIfMemoryLow(runningCount: number): void {
+  const total = os.totalmem();
+  const free = os.freemem();
+  if (total <= 0) return;
+  const freeRatio = free / total;
+  if (freeRatio >= 0.15) return;
+  const now = Date.now();
+  if (now - lastMemoryWarnAt < 60_000) return;
+  lastMemoryWarnAt = now;
+  const freeGb = (free / 1024 ** 3).toFixed(1);
+  const totalGb = (total / 1024 ** 3).toFixed(1);
+  process.stderr.write(
+    `Heads up: only ${freeGb}GB of ${totalGb}GB free with ${runningCount} teammates already running. ` +
+      `Spawning more may slow your machine.\n`
+  );
+}
+
 /**
  * Compute the Lowest Common Ancestor (LCA) of multiple file paths.
  * Returns the deepest common directory shared by all paths.
@@ -912,7 +931,6 @@ export type CompletionHook = (agent: AgentProcess) => Promise<void>;
  export class AgentManager {
   private agents: Map<string, AgentProcess> = new Map();
   private maxAgents: number;
-  private maxConcurrent: number;
   private agentsDir: string = '';
   private filterByCwd: string | null;
   private cleanupAgeDays: number;
@@ -928,7 +946,6 @@ export type CompletionHook = (agent: AgentProcess) => Promise<void>;
 
   constructor(
     maxAgents: number = 50,
-    maxConcurrent: number = 10,
     agentsDir: string | null = null,
     defaultMode: Mode | null = null,
     filterByCwd: string | null = null,
@@ -936,7 +953,6 @@ export type CompletionHook = (agent: AgentProcess) => Promise<void>;
     agentConfigs: Record<AgentType, AgentConfig> | null = null
   ) {
     this.maxAgents = maxAgents;
-    this.maxConcurrent = maxConcurrent;
     this.constructorAgentsDir = agentsDir;
     this.filterByCwd = filterByCwd;
     this.cleanupAgeDays = cleanupAgeDays;
@@ -1230,11 +1246,7 @@ export type CompletionHook = (agent: AgentProcess) => Promise<void>;
    */
   private async launchProcess(agent: AgentProcess): Promise<void> {
     const running = await this.listRunning();
-    if (running.length >= this.maxConcurrent) {
-      throw new Error(
-        `Maximum concurrent agents (${this.maxConcurrent}) reached. Wait for an agent to complete or stop one first.`
-      );
-    }
+    warnIfMemoryLow(running.length);
 
     const effort = agent.effort ?? 'medium';
     // Falls back to the pinned model in agentConfigs; null means "let the

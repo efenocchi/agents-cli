@@ -159,7 +159,7 @@ function compareVersions(a: string, b: string): number {
 /** Fetch and display changelog entries between two versions from unpkg. */
 async function showWhatsNew(fromVersion: string, toVersion: string): Promise<void> {
   try {
-    const response = await fetch(`https://unpkg.com/@phnx-labs/agents-cli@${toVersion}/CHANGELOG.md`);
+    const response = await fetch(`https://unpkg.com/@companion/agents-cli@${toVersion}/CHANGELOG.md`);
     if (!response.ok) return;
 
     const changelog = await response.text();
@@ -291,7 +291,7 @@ async function promptUpgrade(latestVersion: string): Promise<void> {
 
 /** Fire-and-forget: refresh the registry cache in background. Never blocks the command. */
 function refreshUpdateCacheInBackground(): void {
-  fetch('https://registry.npmjs.org/@phnx-labs/agents-cli/latest', {
+  fetch('https://registry.npmjs.org/@companion/agents-cli/latest', {
     signal: AbortSignal.timeout(2000),
   })
     .then((response) => (response.ok ? response.json() : null))
@@ -414,7 +414,7 @@ program
     .action(async () => {
       const spinner = ora('Checking for updates...').start();
       try {
-        const response = await fetch('https://registry.npmjs.org/@phnx-labs/agents-cli/latest', {
+        const response = await fetch('https://registry.npmjs.org/@companion/agents-cli/latest', {
           signal: AbortSignal.timeout(5000),
         });
         if (!response.ok) {

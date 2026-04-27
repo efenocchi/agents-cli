@@ -32,9 +32,9 @@ describe('LANDING_HTML required content (EXAMPLE-365 spec)', () => {
     expect(LANDING_HTML).toContain('One config repo, every harness');
   });
 
-  it('install one-liner uses the new @phnx-labs scope', () => {
-    expect(LANDING_HTML).toContain('@phnx-labs/agents-cli');
-    expect(LANDING_HTML).not.toContain('@companion/agents-cli');
+  it('install one-liner uses the canonical @companion scope', () => {
+    expect(LANDING_HTML).toContain('@companion/agents-cli');
+    expect(LANDING_HTML).not.toContain('@phnx-labs/agents-cli');
     expect(LANDING_HTML).not.toContain('madebyphoenix');
   });
 
