@@ -159,7 +159,7 @@ ul li code { background: #141414; border: 1px solid #222; padding: 1px 6px; bord
   <a href="/">home</a>
   <a href="/changelog">changelog</a>
   <a href="https://github.com/phnx-labs/agents-cli">github</a>
-  <a href="https://www.npmjs.com/package/@phnx-labs/agents-cli">npm</a>
+  <a href="https://www.npmjs.com/package/@swarmify/agents-cli">npm</a>
 </nav>
 
 <h1>agents</h1>
@@ -177,7 +177,7 @@ ul li code { background: #141414; border: 1px solid #222; padding: 1px 6px; bord
   <span class="cmd">curl -fsSL agents-cli.sh | sh</span>
   <button data-copy="curl -fsSL agents-cli.sh | sh">copy</button>
 </div>
-<p class="muted">Or <code>npm install -g @phnx-labs/agents-cli</code> — also available as <code>ag</code>.</p>
+<p class="muted">Or <code>npm install -g @swarmify/agents-cli</code> — also available as <code>ag</code>.</p>
 
 <h2>Chain agents in a pipeline</h2>
 <pre><span class="dim">$</span> agents run claude <span class="dim">"Find auth vulnerabilities in src/"</span> \\
@@ -227,10 +227,10 @@ codex  0.116.0</pre>
 <span class="dim">$</span> curl -fsSL agents-cli.sh | sh
 
 <span class="dim">#</span> via bun
-<span class="dim">$</span> bun install -g @phnx-labs/agents-cli
+<span class="dim">$</span> bun install -g @swarmify/agents-cli
 
 <span class="dim">#</span> via npm
-<span class="dim">$</span> npm install -g @phnx-labs/agents-cli</pre>
+<span class="dim">$</span> npm install -g @swarmify/agents-cli</pre>
 
 <div class="stack-note">Part of the <strong>open stack for AI coding agents</strong>. Cloud runner coming.</div>
 

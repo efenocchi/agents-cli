@@ -18,7 +18,25 @@ const SESSIONS_DIR = path.join(HOME, '.agents', 'sessions');
 const DB_PATH = path.join(SESSIONS_DIR, 'sessions.db');
 
 /** Current schema version; bumped when migrations are added. */
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
+
+/**
+ * Canonicalize a file path for use as a scan_ledger key. The same physical
+ * session file is reachable via multiple aliases — `~/.claude/projects/x.jsonl`
+ * (when `~/.claude` is a symlink to a versioned home) and
+ * `~/.agents/versions/claude/<v>/home/.claude/projects/x.jsonl`. Keying the
+ * ledger by the raw path means switching between these aliases (e.g. via
+ * `agents use`) misses the cache and forces a full re-parse. Realpath collapses
+ * all aliases to one stable key.
+ */
+function canonicalLedgerKey(filePath: string): string {
+  if (!filePath) return filePath;
+  try {
+    return fs.realpathSync(filePath);
+  } catch {
+    return filePath;
+  }
+}
 
 // BM25 column weights for session_text: label > topic > project > content.
 // Higher weights make matches in that column rank higher.
@@ -170,6 +188,13 @@ function migrateSchema(db: Database.Database, fromVersion: number): void {
     }
     db.exec(`DELETE FROM scan_ledger;`);
   }
+  if (fromVersion < 5) {
+    // v4 → v5: ledger is now keyed by realpath instead of the as-discovered
+    // path, so symlink/version-relative aliases for the same physical file
+    // collapse to one row. Old aliased rows are dropped — next scan will
+    // repopulate under canonical keys.
+    db.exec(`DELETE FROM scan_ledger;`);
+  }
 }
 
 /** Open (or return the cached) sessions database, applying migrations as needed. */
@@ -231,7 +256,7 @@ export function getScanStampByPath(filePath: string): ScanStamp | null {
   const db = getDB();
   const row = db
     .prepare(`SELECT file_mtime_ms, file_size FROM scan_ledger WHERE file_path = ? LIMIT 1`)
-    .get(filePath) as { file_mtime_ms: number; file_size: number } | undefined;
+    .get(canonicalLedgerKey(filePath)) as { file_mtime_ms: number; file_size: number } | undefined;
   return row ? { fileMtimeMs: row.file_mtime_ms, fileSize: row.file_size } : null;
 }
 
@@ -244,10 +269,24 @@ export function getScanStampsForPaths(filePaths: string[]): Map<string, ScanStam
   if (filePaths.length === 0) return result;
   const db = getDB();
 
+  // Multiple input paths can resolve to the same canonical key (e.g. the same
+  // session JSONL reachable via `~/.claude/...` and `~/.agents/versions/...`).
+  // We query DB by canonical key, then fan results back out to every original
+  // alias so callers can `.get(filePath)` with the path they passed in.
+  const canonicalToOriginals = new Map<string, string[]>();
+  for (const fp of filePaths) {
+    const canonical = canonicalLedgerKey(fp);
+    const aliases = canonicalToOriginals.get(canonical);
+    if (aliases) aliases.push(fp);
+    else canonicalToOriginals.set(canonical, [fp]);
+  }
+
+  const canonicalKeys = [...canonicalToOriginals.keys()];
+
   // SQLite parameter limit is typically 999 / 32766 — chunk defensively.
   const CHUNK = 500;
-  for (let i = 0; i < filePaths.length; i += CHUNK) {
-    const chunk = filePaths.slice(i, i + CHUNK);
+  for (let i = 0; i < canonicalKeys.length; i += CHUNK) {
+    const chunk = canonicalKeys.slice(i, i + CHUNK);
     const placeholders = chunk.map(() => '?').join(',');
     const rows = db
       .prepare(`
@@ -258,7 +297,10 @@ export function getScanStampsForPaths(filePaths: string[]): Map<string, ScanStam
       .all(...chunk) as Array<{ file_path: string; file_mtime_ms: number; file_size: number }>;
 
     for (const row of rows) {
-      result.set(row.file_path, { fileMtimeMs: row.file_mtime_ms, fileSize: row.file_size });
+      const stamp = { fileMtimeMs: row.file_mtime_ms, fileSize: row.file_size };
+      for (const original of canonicalToOriginals.get(row.file_path) || []) {
+        result.set(original, stamp);
+      }
     }
   }
   return result;
@@ -282,7 +324,7 @@ export function recordScans(entries: Array<{ filePath: string; scan: ScanStamp }
   const now = Date.now();
   const txn = db.transaction((items: typeof entries) => {
     for (const { filePath, scan } of items) {
-      stmt.run(filePath, scan.fileMtimeMs, scan.fileSize, now);
+      stmt.run(canonicalLedgerKey(filePath), scan.fileMtimeMs, scan.fileSize, now);
     }
   });
   txn(entries);
@@ -430,7 +472,7 @@ export function upsertSessionsBatch(
         content ?? '',
       );
       if (scan && meta.filePath) {
-        ledger.run(meta.filePath, scan.fileMtimeMs, scan.fileSize, now);
+        ledger.run(canonicalLedgerKey(meta.filePath), scan.fileMtimeMs, scan.fileSize, now);
       }
     }
   });
