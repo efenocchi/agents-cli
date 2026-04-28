@@ -12,9 +12,16 @@ import * as path from 'path';
 import * as yaml from 'yaml';
 import { AGENTS, COMMANDS_CAPABLE_AGENTS, ensureCommandsDir } from './agents.js';
 import { markdownToToml } from './convert.js';
-import { getCommandsDir, getProjectAgentsDir } from './state.js';
+import { getCommandsDir, getEnabledExtraRepos, getProjectAgentsDir, getSkillsDir } from './state.js';
 import { getEffectiveHome, getVersionHomePath, listInstalledVersions } from './versions.js';
 import type { AgentId, CommandInstallation } from './types.js';
+import {
+  commandSkillMatches,
+  installCommandSkillToVersion,
+  listCommandSkillsInVersion,
+  removeCommandSkillFromVersion,
+  shouldInstallCommandAsSkill,
+} from './command-skills.js';
 
 /** Scope of a command: user-global or project-local. */
 export type CommandScope = 'user' | 'project';
@@ -234,6 +241,12 @@ export function getVersionCommandsDir(agent: AgentId, version: string): string {
  * List command names (without extension) installed in a specific version home.
  */
 export function listCommandsInVersionHome(agent: AgentId, version: string): string[] {
+  const versionHome = getVersionHomePath(agent, version);
+  const agentDir = path.join(versionHome, `.${agent}`);
+  if (shouldInstallCommandAsSkill(agent, version)) {
+    return listCommandSkillsInVersion(agentDir);
+  }
+
   const dir = getVersionCommandsDir(agent, version);
   if (!fs.existsSync(dir)) return [];
   const ext = AGENTS[agent].format === 'toml' ? '.toml' : '.md';
@@ -250,6 +263,12 @@ export function listCommandsInVersionHome(agent: AgentId, version: string): stri
 function versionCommandMatches(agent: AgentId, version: string, commandName: string): boolean {
   const sourcePath = path.join(getCommandsDir(), `${commandName}.md`);
   if (!fs.existsSync(sourcePath)) return false;
+
+  const versionHome = getVersionHomePath(agent, version);
+  const agentDir = path.join(versionHome, `.${agent}`);
+  if (shouldInstallCommandAsSkill(agent, version)) {
+    return commandSkillMatches(agentDir, commandName, sourcePath);
+  }
 
   const agentConfig = AGENTS[agent];
   const ext = agentConfig.format === 'toml' ? '.toml' : '.md';
@@ -323,6 +342,20 @@ export function installCommandToVersion(
     return { success: false, error: `Command '${commandName}' not found in central` };
   }
 
+  const versionHome = getVersionHomePath(agent, version);
+  const agentDir = path.join(versionHome, `.${agent}`);
+  if (shouldInstallCommandAsSkill(agent, version)) {
+    return installCommandSkillToVersion(
+      agentDir,
+      commandName,
+      sourcePath,
+      [
+        getSkillsDir(),
+        ...getEnabledExtraRepos().map((repo) => path.join(repo.dir, 'skills')),
+      ]
+    );
+  }
+
   const agentConfig = AGENTS[agent];
   const commandsDir = getVersionCommandsDir(agent, version);
   fs.mkdirSync(commandsDir, { recursive: true });
@@ -357,6 +390,12 @@ export function removeCommandFromVersion(
   version: string,
   commandName: string
 ): { success: boolean; error?: string } {
+  const versionHome = getVersionHomePath(agent, version);
+  const agentDir = path.join(versionHome, `.${agent}`);
+  if (shouldInstallCommandAsSkill(agent, version)) {
+    return removeCommandSkillFromVersion(agentDir, commandName);
+  }
+
   const ext = AGENTS[agent].format === 'toml' ? '.toml' : '.md';
   const targetPath = path.join(getVersionCommandsDir(agent, version), `${commandName}${ext}`);
   if (!fs.existsSync(targetPath) && !fs.lstatSync(targetPath, { throwIfNoEntry: false })) {

@@ -15,7 +15,7 @@ import * as TOML from 'smol-toml';
 import { execFileSync } from 'child_process';
 import * as os from 'os';
 import type { AgentId } from './types.js';
-import { getMcpDir, getProjectAgentsDir } from './state.js';
+import { getMcpDir, getProjectAgentsDir, getVersionsDir } from './state.js';
 import { MCP_CAPABLE_AGENTS, AGENTS } from './agents.js';
 
 /**
@@ -322,10 +322,8 @@ export function installMcpServers(
   const errors: string[] = [];
 
   // Get binary path for CLI-based agents
-  const homeDir = os.homedir();
-  const agentsDir = path.join(homeDir, '.agents');
   const cliCommand = AGENTS[agentId].cliCommand;
-  const binaryPath = path.join(agentsDir, 'versions', agentId, version, 'node_modules', '.bin', cliCommand);
+  const binaryPath = path.join(getVersionsDir(), agentId, version, 'node_modules', '.bin', cliCommand);
 
   for (const server of servers) {
     try {

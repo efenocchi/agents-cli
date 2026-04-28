@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { generateShimScript, SHIM_SCHEMA_VERSION } from '../shims.js';
+import { generateShimScript, generateVersionedAliasScript, SHIM_SCHEMA_VERSION, VERSIONED_ALIAS_SCHEMA_VERSION } from '../shims.js';
 
 describe('SHIM_SCHEMA_VERSION', () => {
   it('is 5', () => {
@@ -26,6 +26,15 @@ describe('generateShimScript — config-dir env vars', () => {
     const script = generateShimScript('opencode');
     expect(script).not.toContain('export CLAUDE_CONFIG_DIR=');
     expect(script).not.toContain('export CODEX_HOME=');
+  });
+});
+
+describe('generateVersionedAliasScript', () => {
+  it('uses ~/.agents-system for direct alias binary and config paths', () => {
+    const script = generateVersionedAliasScript('codex', '0.125.0');
+    expect(VERSIONED_ALIAS_SCHEMA_VERSION).toBe(4);
+    expect(script).toContain('$HOME/.agents-system/versions/codex/0.125.0');
+    expect(script).not.toContain('$HOME/.agents/versions/codex/0.125.0');
   });
 });
 

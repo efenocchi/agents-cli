@@ -42,8 +42,8 @@ describe('version resource sync path handling', () => {
   it('intersects explicit resource selections with discovered resources before syncing', async () => {
     const home = makeTempHome();
 
-    fs.mkdirSync(path.join(home, '.agents', 'commands'), { recursive: true });
-    fs.writeFileSync(path.join(home, '.agents', 'commands', 'safe.md'), 'safe command', 'utf-8');
+    fs.mkdirSync(path.join(home, '.agents-system', 'commands'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.agents-system', 'commands', 'safe.md'), 'safe command', 'utf-8');
 
     const result = runVersionSync(
       home,
@@ -51,14 +51,50 @@ describe('version resource sync path handling', () => {
     ) as { commands: boolean };
 
     expect(result.commands).toBe(true);
-    expect(fs.existsSync(path.join(home, '.agents', 'versions', 'codex', '0.1.0', 'home', '.codex', 'prompts', 'safe.md'))).toBe(true);
-    expect(fs.existsSync(path.join(home, '.agents', 'versions', 'codex', '0.1.0', 'home', '.codex', 'escape.md'))).toBe(false);
+    expect(fs.existsSync(path.join(home, '.agents-system', 'versions', 'codex', '0.1.0', 'home', '.codex', 'prompts', 'safe.md'))).toBe(true);
+    expect(fs.existsSync(path.join(home, '.agents-system', 'versions', 'codex', '0.1.0', 'home', '.codex', 'escape.md'))).toBe(false);
+  });
+
+  it('keeps prompts for Codex 0.116.x and converts commands to generated skills for Codex 0.117.0+', async () => {
+    const home = makeTempHome();
+
+    fs.mkdirSync(path.join(home, '.agents-system', 'commands'), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, '.agents-system', 'commands', 'recap.md'),
+      ['---', 'description: Summarize the current session', '---', '', 'Recap the conversation so far.'].join('\n'),
+      'utf-8'
+    );
+
+    const legacyResult = runVersionSync(
+      home,
+      "syncResourcesToVersion('codex', '0.116.0', { commands: ['recap'] }, { cwd: home })"
+    ) as { commands: boolean };
+    const legacyVersionHome = path.join(home, '.agents-system', 'versions', 'codex', '0.116.0', 'home', '.codex');
+
+    const result = runVersionSync(
+      home,
+      "syncResourcesToVersion('codex', '0.117.0', { commands: ['recap'] }, { cwd: home })"
+    ) as { commands: boolean };
+
+    const versionHome = path.join(home, '.agents-system', 'versions', 'codex', '0.117.0', 'home', '.codex');
+    const skillPath = path.join(versionHome, 'skills', 'recap', 'SKILL.md');
+    const skill = fs.readFileSync(skillPath, 'utf-8');
+
+    expect(legacyResult.commands).toBe(true);
+    expect(fs.existsSync(path.join(legacyVersionHome, 'prompts', 'recap.md'))).toBe(true);
+    expect(fs.existsSync(path.join(legacyVersionHome, 'skills', 'recap', 'SKILL.md'))).toBe(false);
+    expect(result.commands).toBe(true);
+    expect(fs.existsSync(path.join(versionHome, 'prompts', 'recap.md'))).toBe(false);
+    expect(skill).toContain('name: "recap"');
+    expect(skill).toContain('agents_command: "recap"');
+    expect(skill).toContain('When invoked with `$recap`');
+    expect(skill).toContain('Recap the conversation so far.');
   });
 
   it('does not follow symlinks inside copied skill resources', async () => {
     const home = makeTempHome();
 
-    const skillDir = path.join(home, '.agents', 'skills', 'leaky');
+    const skillDir = path.join(home, '.agents-system', 'skills', 'leaky');
     fs.mkdirSync(skillDir, { recursive: true });
     fs.writeFileSync(path.join(skillDir, 'SKILL.md'), 'skill body', 'utf-8');
     const secretPath = path.join(home, 'secret.txt');
@@ -70,7 +106,7 @@ describe('version resource sync path handling', () => {
       "syncResourcesToVersion('codex', '0.1.0', { skills: ['leaky'] }, { cwd: home })"
     ) as { skills: boolean };
 
-    const syncedSkillDir = path.join(home, '.agents', 'versions', 'codex', '0.1.0', 'home', '.codex', 'skills', 'leaky');
+    const syncedSkillDir = path.join(home, '.agents-system', 'versions', 'codex', '0.1.0', 'home', '.codex', 'skills', 'leaky');
     expect(result.skills).toBe(true);
     expect(fs.existsSync(path.join(syncedSkillDir, 'SKILL.md'))).toBe(true);
     expect(fs.existsSync(path.join(syncedSkillDir, 'secret-link'))).toBe(false);

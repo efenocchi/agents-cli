@@ -51,19 +51,19 @@ describe('getProjectVersion', () => {
     expect(getProjectVersion('claude', tmpDir)).toBeNull();
   });
 
-  it('ignores ~/.agents/agents.yaml (user file) when walking up', () => {
+  it('ignores ~/.agents-system/agents.yaml (user file) when walking up', () => {
     // Simulate the user agents.yaml path being encountered during the walk.
     // We cannot mutate os.homedir(), but we CAN verify that passing the
     // actual user file path returns null (no version extracted from it).
-    const userAgentsYaml = path.join(os.homedir(), '.agents', 'agents.yaml');
+    const userAgentsYaml = path.join(os.homedir(), '.agents-system', 'agents.yaml');
     // If the file actually exists on this machine, starting from its directory
     // must NOT return its contents as a project version.
     if (fs.existsSync(userAgentsYaml)) {
       const result = getProjectVersion('claude', path.dirname(userAgentsYaml));
-      // The function should skip ~/.agents/agents.yaml itself
+      // The function should skip ~/.agents-system/agents.yaml itself
       // so result is null (no sibling agents.yaml) or a version from a
       // higher-up project agents.yaml — either way it must not come from the
-      // user file at ~/.agents/agents.yaml.
+      // user file at ~/.agents-system/agents.yaml.
       // We just confirm no error is thrown and type is correct.
       expect(typeof result === 'string' || result === null).toBe(true);
     } else {
@@ -90,7 +90,7 @@ describe('getProjectVersion', () => {
 });
 
 // Scenario: the user uninstalls an agent version. Their conversation history,
-// which lives at ~/.agents/versions/<agent>/<version>/home/, must survive.
+// which lives at ~/.agents-system/versions/<agent>/<version>/home/, must survive.
 // Verified for every AgentId since removeVersion is parametrised on agent and
 // the layout is shared across all agents.
 describe('removeVersion preserves home/', () => {

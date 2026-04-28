@@ -135,7 +135,7 @@ Examples:
   # Codex Cloud
   agents cloud run "add auth tests" --provider codex --env env_abc123
 
-  # Default provider (set in ~/.agents/agents.yaml)
+  # Default provider (set in ~/.agents-system/agents.yaml)
   agents cloud run "refactor auth module" --repo user/repo
 `)
     .action(async (positionalPrompt: string | undefined, options: Record<string, unknown>) => {

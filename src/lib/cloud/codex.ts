@@ -19,8 +19,9 @@ import type {
   ProviderCapabilities,
 } from './types.js';
 import { resolveDispatchRepos } from './types.js';
+import { getShimsDir } from '../state.js';
 
-const SHIMS_DIR = path.join(os.homedir(), '.agents', 'shims');
+const SHIMS_DIR = getShimsDir();
 
 /** Map a Codex Cloud status string to the canonical CloudTaskStatus enum. */
 function mapStatus(s: string): CloudTaskStatus {
@@ -120,7 +121,7 @@ export class CodexCloudProvider implements CloudProvider {
   async dispatch(options: DispatchOptions): Promise<CloudTask> {
     const env = (options.providerOptions?.env as string | undefined) ?? this.defaultEnv;
     if (!env) {
-      throw new Error('Codex Cloud requires --env <id>. Set a default in ~/.agents/agents.yaml under cloud.providers.codex.env.');
+      throw new Error('Codex Cloud requires --env <id>. Set a default in ~/.agents-system/agents.yaml under cloud.providers.codex.env.');
     }
 
     // Codex envs bundle their own repo list — the repos a task can touch are
