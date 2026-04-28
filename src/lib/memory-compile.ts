@@ -1,8 +1,8 @@
 /**
- * Memory file compilation -- resolving @-imports into a single flat file.
+ * Rules file compilation -- resolving @-imports into a single flat file.
  *
  * Agents that do not natively resolve `@path/to/file` imports (Codex, Gemini)
- * need a pre-compiled memory file with all imports inlined. This module
+ * need a pre-compiled rules file with all imports inlined. This module
  * handles that expansion.
  */
 
@@ -20,8 +20,8 @@ import { getMemoryDir, getVersionsDir } from './state.js';
 const IMPORT_RE = /(^|\s)@(\S+)/g;
 const MAX_DEPTH = 5;
 const COMPILED_HEADER =
-  '<!-- Auto-compiled by agents-cli from ~/.agents/memory/AGENTS.md + imports.\n' +
-  '     Edit the source files under ~/.agents/memory/ — edits to this file will be overwritten on next sync. -->\n\n';
+  '<!-- Auto-compiled by agents-cli from ~/.agents/rules/AGENTS.md + imports.\n' +
+  '     Edit the source files under ~/.agents/rules/ — edits to this file will be overwritten on next sync. -->\n\n';
 
 /** Sidecar manifest recording source file hashes for staleness detection. */
 export interface CompileManifest {
@@ -64,7 +64,7 @@ function restoreCodeRegions(content: string, fences: string[], inlines: string[]
   return restored;
 }
 
-/** Result of resolving @-imports in a memory file. */
+/** Result of resolving @-imports in a rules file. */
 export interface ResolveResult {
   /** Fully-inlined content. */
   content: string;
@@ -112,7 +112,7 @@ export function resolveImports(content: string, baseDir: string): ResolveResult 
   return { content: result, sources };
 }
 
-/** True if the agent's native runtime resolves `@path` imports in its memory file. */
+/** True if the agent's native runtime resolves `@path` imports in its rules file. */
 export function supportsMemoryImports(agentId: AgentId): boolean {
   return !!AGENTS[agentId].capabilities.memoryImports;
 }
@@ -156,7 +156,7 @@ export function isMemoryStale(agentId: AgentId, version: string): boolean {
 }
 
 /**
- * Resolve the source `memory/AGENTS.md` (with all @-imports expanded) and
+ * Resolve the source `rules/AGENTS.md` (with all @-imports expanded) and
  * write the result into the version home, alongside a sidecar manifest that
  * records source file hashes for staleness detection.
  *

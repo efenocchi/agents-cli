@@ -174,10 +174,10 @@ export interface RepoInfo {
   lastSync: string;
 }
 
-/** Default upstream config repo used by `agents pull` / `agents fork`. */
-export const DEFAULT_SYSTEM_REPO = 'gh:phnx-labs/.agents';
-/** Previous default repo, kept for migration detection. */
-export const LEGACY_SYSTEM_REPO = 'gh:example-user/.agents';
+/** Canonical system repo cloned into ~/.agents/. */
+export const DEFAULT_SYSTEM_REPO = 'gh:muqsitnawaz/.agents';
+/** Previous system repo, kept for migration detection. */
+export const LEGACY_SYSTEM_REPO = 'gh:phnx-labs/.agents';
 
 /** Strip the `gh:` prefix and `.git` suffix to get a GitHub `owner/repo` slug. */
 export function systemRepoSlug(repo: string = DEFAULT_SYSTEM_REPO): string {
@@ -367,11 +367,13 @@ export interface InstalledSubagent {
 
 /**
  * Extra DotAgent repo registered alongside the primary ~/.agents/ repo.
- * Cloned into ~/.agents/.repos/<alias>/. Primary (~/.agents/) always wins
- * on name collisions; extras are searched in insertion order after primary.
+ * Managed clones default to ~/.agents/.repos/<alias>/, but user-owned repos
+ * may live anywhere on disk. Primary (~/.agents/) always wins on name
+ * collisions; extras are searched in insertion order after primary.
  */
 export interface ExtraRepoConfig {
   url: string;
+  path?: string;
   enabled: boolean;
 }
 
@@ -385,8 +387,9 @@ export interface Meta {
   // Git remote source URL (when ~/.agents/ is a git repo)
   source?: string;
   /**
-   * Extra DotAgent repos cloned into ~/.agents/.repos/<alias>/. Their skills,
-   * commands, hooks, etc. merge into the sync path after the primary repo's.
+   * Extra DotAgent repos merged after the primary ~/.agents/ system repo.
+   * Managed clones may live in ~/.agents/.repos/<alias>/, while user-owned
+   * repos can point at arbitrary paths.
    */
   extraRepos?: Record<string, ExtraRepoConfig>;
   /**

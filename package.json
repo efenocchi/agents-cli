@@ -40,8 +40,8 @@
     "postinstall": "node scripts/postinstall.js",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "node ./node_modules/vitest/vitest.mjs run",
+    "test:watch": "node ./node_modules/vitest/vitest.mjs"
   },
   "keywords": [
     "agents",

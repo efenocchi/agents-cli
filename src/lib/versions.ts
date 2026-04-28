@@ -41,6 +41,7 @@ import { safeJoin } from './paths.js';
 /** Promisified exec for running shell commands. */
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
+const RULES_DOC_FILENAME = 'README.md';
 
 // Strict shape for an agent version string. Anything outside this is rejected
 // at parse time so it can't reach an exec/shell boundary or get interpolated
@@ -155,14 +156,14 @@ export function getAvailableResources(cwd: string = process.cwd()): AvailableRes
   }
   result.hooks = Array.from(hookNames);
 
-  // Memory (*.md files, excluding symlinks)
+  // Rules (*.md files, excluding symlinks and README)
   const memoryNames = new Set<string>();
   for (const { base } of resourceBases) {
-    const memoryDir = path.join(base, 'memory');
+    const memoryDir = path.join(base, 'rules');
     if (!fs.existsSync(memoryDir)) continue;
     const names = fs.readdirSync(memoryDir)
       .filter(f => {
-        if (!f.endsWith('.md')) return false;
+        if (!f.endsWith('.md') || f === RULES_DOC_FILENAME) return false;
         const stat = fs.lstatSync(path.join(memoryDir, f));
         return !stat.isSymbolicLink();
       })
@@ -338,15 +339,15 @@ export function getActuallySyncedResources(agent: AgentId, version: string, opti
     }
   }
 
-  // Memory - check which memory files are actually in sync (content matches)
+  // Rules - check which instruction files are actually in sync (content matches)
   const memoryDir = getMemoryDir();
-  const projectMemoryDir = projectAgentsDir ? path.join(projectAgentsDir, 'memory') : null;
+  const projectMemoryDir = projectAgentsDir ? path.join(projectAgentsDir, 'rules') : null;
   const memoryFiles = new Set<string>();
   if (fs.existsSync(memoryDir)) {
-    fs.readdirSync(memoryDir).filter(f => f.endsWith('.md')).forEach(f => memoryFiles.add(f));
+    fs.readdirSync(memoryDir).filter(f => f.endsWith('.md') && f !== RULES_DOC_FILENAME).forEach(f => memoryFiles.add(f));
   }
   if (projectMemoryDir && fs.existsSync(projectMemoryDir)) {
-    fs.readdirSync(projectMemoryDir).filter(f => f.endsWith('.md')).forEach(f => memoryFiles.add(f));
+    fs.readdirSync(projectMemoryDir).filter(f => f.endsWith('.md') && f !== RULES_DOC_FILENAME).forEach(f => memoryFiles.add(f));
   }
   for (const file of memoryFiles) {
     const memName = file.replace(/\.md$/, '');
@@ -1357,10 +1358,10 @@ export function getResourceDiff(agent: AgentId, version: string): ResourceDiff {
     }
   }
 
-  // Memory: check individual file symlinks
+  // Rules: check individual file symlinks
   const centralMemory = getMemoryDir();
   if (fs.existsSync(centralMemory)) {
-    const memoryFiles = fs.readdirSync(centralMemory).filter(f => f.endsWith('.md'));
+    const memoryFiles = fs.readdirSync(centralMemory).filter(f => f.endsWith('.md') && f !== RULES_DOC_FILENAME);
     for (const file of memoryFiles) {
       const targetName = file === 'AGENTS.md' ? agentConfig.instructionsFile : file;
       const targetPath = path.join(agentDir, targetName);
@@ -1588,7 +1589,7 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
 
   if (memoryToSync.length > 0 && COMMANDS_CAPABLE_AGENTS.includes(agent)) {
     const centralMemory = getMemoryDir();
-    const projectMemoryDir = projectAgentsDir ? path.join(projectAgentsDir, 'memory') : null;
+    const projectMemoryDir = projectAgentsDir ? path.join(projectAgentsDir, 'rules') : null;
     const syncedMemory: string[] = [];
     const agentSupportsImports = !!agentConfig.capabilities.memoryImports;
 
@@ -1596,7 +1597,7 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
       const candidates: Array<string | null> = [
         projectMemoryDir ? safeJoin(projectMemoryDir, `${mem}.md`) : null,
         safeJoin(centralMemory, `${mem}.md`),
-        ...extraRepos.map((e) => safeJoin(path.join(e.dir, 'memory'), `${mem}.md`)),
+        ...extraRepos.map((e) => safeJoin(path.join(e.dir, 'rules'), `${mem}.md`)),
       ];
       const srcFile = candidates.find((p) => p && fs.existsSync(p) && !fs.lstatSync(p).isSymbolicLink()) || null;
       if (!srcFile) continue;

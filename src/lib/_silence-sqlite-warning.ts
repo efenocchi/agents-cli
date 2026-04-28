@@ -10,16 +10,42 @@
  */
 
 const originalEmit = process.emit.bind(process);
+const originalEmitWarning = process.emitWarning.bind(process);
+
+function isSqliteExperimentalWarning(arg: unknown): boolean {
+  const warning = arg as { name?: string; message?: string } | undefined;
+  return Boolean(
+    warning &&
+    warning.name === 'ExperimentalWarning' &&
+    typeof warning.message === 'string' &&
+    /sqlite/i.test(warning.message)
+  );
+}
 
 // Patching process.emit to swallow only the SQLite ExperimentalWarning is
 // narrower than --no-warnings or NODE_NO_WARNINGS, both of which would mute
 // every warning class (deprecations included).
 process.emit = function (event: string | symbol, ...args: unknown[]): boolean {
   if (event === 'warning') {
-    const arg = args[0] as { name?: string; message?: string } | undefined;
-    if (arg && arg.name === 'ExperimentalWarning' && typeof arg.message === 'string' && /sqlite/i.test(arg.message)) {
+    if (isSqliteExperimentalWarning(args[0])) {
       return false;
     }
   }
   return (originalEmit as (event: string | symbol, ...args: unknown[]) => boolean)(event, ...args);
 } as typeof process.emit;
+
+process.emitWarning = function (warning: string | Error, ...args: unknown[]): void {
+  if (isSqliteExperimentalWarning(warning)) {
+    return;
+  }
+
+  if (
+    typeof warning === 'string' &&
+    args[0] === 'ExperimentalWarning' &&
+    /sqlite/i.test(warning)
+  ) {
+    return;
+  }
+
+  return (originalEmitWarning as (warning: string | Error, ...args: unknown[]) => void)(warning, ...args);
+} as typeof process.emitWarning;
