@@ -56,7 +56,7 @@ function isJsonMode(opts: { json?: boolean }): boolean {
 /** Register the `agents cloud` command tree (run, list, status, logs, cancel, message, providers). */
 export function registerCloudCommands(program: Command): void {
   const cloud = program
-    .command('cloud')
+    .command('cloud', { hidden: true })
     .description('Dispatch and manage cloud agent tasks across providers (Rush Cloud, Codex Cloud, Factory).')
     .addHelpText('after', `
 Providers:

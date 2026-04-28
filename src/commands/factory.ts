@@ -333,7 +333,7 @@ async function postFactorySubmit(ref: string): Promise<{
 
 export function registerFactoryCommands(program: Command): void {
   const factory = program
-    .command('factory')
+    .command('factory', { hidden: true })
     .description('Software Factory — planner/worker DAG with a shared team Ledger.')
     .addHelpText('after', `
 Mental model:
