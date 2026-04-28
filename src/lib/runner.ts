@@ -57,6 +57,12 @@ export function buildJobCommand(config: JobConfig, resolvedPrompt: string): stri
 
     if (config.allow?.dirs) {
       for (const dir of config.allow.dirs) {
+        // Reject leading '-' so a routine YAML can't smuggle an argv flag like
+        // `--dangerously-skip-permissions` past the sandbox by hiding it as an
+        // allow.dirs entry.
+        if (dir.startsWith('-')) {
+          throw new Error(`allow.dirs entries must not start with '-': ${JSON.stringify(dir)}`);
+        }
         const resolved = dir.replace(/^~/, os.homedir());
         cmd.push('--add-dir', resolved);
       }

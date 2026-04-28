@@ -18,6 +18,17 @@
  *     bugs/<task_id>.md                   reviewer-filed bugs
  */
 
+/** Canonical artifact kinds we know how to serialize. Free-form `kind` still works. */
+export type ArtifactKind =
+  | 'diff'
+  | 'test-output'
+  | 'notes'
+  | 'session'
+  | 'bug'
+  | 'registry'
+  | 'narrative'
+  | string;
+
 /** Artifact kind -> file name within artifacts/<task_id>/. */
 export function artifactFilename(kind: ArtifactKind): string {
   switch (kind) {
@@ -35,17 +46,6 @@ export function kindFromFilename(filename: string): ArtifactKind {
   const dot = filename.lastIndexOf('.');
   return dot > 0 ? filename.slice(0, dot) : filename;
 }
-
-/** Canonical artifact kinds we know how to serialize. Free-form `kind` still works. */
-export type ArtifactKind =
-  | 'diff'
-  | 'test-output'
-  | 'notes'
-  | 'session'
-  | 'bug'
-  | 'registry'
-  | 'narrative'
-  | string;
 
 /** A single artifact stored in the ledger. */
 export interface LedgerArtifact {

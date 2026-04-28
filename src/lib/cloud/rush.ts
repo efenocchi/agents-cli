@@ -26,6 +26,35 @@ import { loadClaudeOauth } from '../usage.js';
 const PROXY_BASE = 'https://api.prix.dev';
 const USER_YAML = path.join(os.homedir(), '.rush', 'user.yaml');
 
+// Persistent consent record for uploading Claude OAuth blobs to Rush Cloud.
+// Created on first explicit consent (env var or flag); subsequent dispatches
+// see it and proceed without re-prompting.
+const RUSH_CONSENT_PATH = path.join(os.homedir(), '.agents', 'cloud', 'rush-consent.json');
+const RUSH_CONSENT_ENV = 'AGENTS_RUSH_UPLOAD_TOKENS';
+
+interface RushConsentFile {
+  granted_at: string;
+  granted_by: 'env' | 'flag' | 'manual';
+}
+
+function hasRushUploadConsent(opts?: DispatchOptions): boolean {
+  if (process.env[RUSH_CONSENT_ENV] === '1') return true;
+  const po = opts?.providerOptions as { uploadAccountTokens?: boolean } | undefined;
+  if (po?.uploadAccountTokens === true) return true;
+  return fs.existsSync(RUSH_CONSENT_PATH);
+}
+
+function recordRushUploadConsent(grantedBy: RushConsentFile['granted_by']): void {
+  try {
+    fs.mkdirSync(path.dirname(RUSH_CONSENT_PATH), { recursive: true });
+    const body: RushConsentFile = { granted_at: new Date().toISOString(), granted_by: grantedBy };
+    fs.writeFileSync(RUSH_CONSENT_PATH, JSON.stringify(body, null, 2), { mode: 0o600 });
+  } catch {
+    // Non-fatal: consent persistence is a UX optimization, not a security
+    // boundary. Worst case, the user is asked to consent again next dispatch.
+  }
+}
+
 interface UserYaml {
   session?: {
     email?: string;
@@ -344,11 +373,37 @@ export class RushCloudProvider implements CloudProvider {
       const errBody = await res.clone().text();
       const promptCode = parsePromptCode(errBody);
       if (promptCode === 'NEW_ACCOUNT' || promptCode === 'TOKEN_ROTATED') {
-        if (process.stdout.isTTY) {
-          process.stderr.write(
-            `[rush] cloud needs to sync your Claude tokens (${promptCode.toLowerCase()}). Uploading...\n`,
+        // Refuse to silently exfiltrate Claude OAuth credentials. The retry
+        // path below reads accessToken+refreshToken from every installed
+        // Claude version and POSTs them to api.prix.dev. That's an explicit
+        // data-flow decision the user has to opt into.
+        if (!hasRushUploadConsent(options)) {
+          throw new Error(
+            [
+              `Rush Cloud asked to sync your Claude credentials (reason: ${promptCode.toLowerCase()}).`,
+              `This would upload accessToken + refreshToken from every installed Claude version`,
+              `to ${PROXY_BASE} so Factory Floor pods can act as your Anthropic account.`,
+              ``,
+              `To consent, re-run with one of:`,
+              `  AGENTS_RUSH_UPLOAD_TOKENS=1 agents cloud run ...`,
+              `  agents cloud run --upload-account-tokens ...   # if your CLI exposes this flag`,
+              ``,
+              `Consent will be recorded at ${RUSH_CONSENT_PATH} so you won't be asked again.`,
+              `Remove that file to revoke.`,
+            ].join('\n'),
           );
         }
+
+        // Always-on stderr notice (no isTTY gate). Scripts and CI need to see
+        // this in their captured stderr / logs.
+        const grantedBy: RushConsentFile['granted_by'] =
+          process.env[RUSH_CONSENT_ENV] === '1' ? 'env'
+            : (options.providerOptions as { uploadAccountTokens?: boolean } | undefined)?.uploadAccountTokens === true ? 'flag'
+              : 'manual';
+        process.stderr.write(
+          `[rush] uploading Claude OAuth credentials to ${PROXY_BASE} (reason: ${promptCode.toLowerCase()}, consent: ${grantedBy})\n`,
+        );
+
         const accountTokens = await buildAccountTokensPayload(
           accountManifest.versions.map((v) => v.version),
         );
@@ -361,6 +416,12 @@ export class RushCloudProvider implements CloudProvider {
           accountTokens,
         });
         res = await api('POST', '/api/v1/cloud-runs', token, retryBody);
+
+        // Persist consent on first successful upload so we don't re-prompt
+        // every time tokens rotate.
+        if (res.ok && grantedBy !== 'manual') {
+          recordRushUploadConsent(grantedBy);
+        }
       }
     }
 
