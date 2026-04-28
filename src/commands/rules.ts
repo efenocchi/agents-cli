@@ -36,6 +36,7 @@ import {
 import {
   listInstalledVersions,
   getGlobalDefault,
+  resolveVersionAlias,
   syncResourcesToVersion,
   promptAgentVersionSelection,
   getVersionHomePath,
@@ -97,13 +98,13 @@ When to use:
       if (agentInput) {
         const parts = agentInput.split('@');
         const agentName = parts[0];
-        requestedVersion = parts[1] || null;
 
         agentId = resolveAgentName(agentName);
         if (!agentId) {
           console.log(chalk.red(formatAgentError(agentName)));
           process.exit(1);
         }
+        requestedVersion = resolveVersionAlias(agentId, parts[1]) ?? null;
       }
 
       const renderVersionRules = (
@@ -439,13 +440,13 @@ Examples:
       if (agentArg) {
         const parts = agentArg.split('@');
         const agentName = parts[0];
-        requestedVersion = parts[1] || null;
 
         agentId = resolveAgentName(agentName) || undefined;
         if (!agentId) {
           console.log(chalk.red(formatAgentError(agentName)));
           process.exit(1);
         }
+        requestedVersion = resolveVersionAlias(agentId, parts[1]) ?? null;
       } else {
         const choices = ALL_AGENT_IDS.filter((id) => instructionsExists(id, 'user', cwd) || instructionsExists(id, 'project', cwd));
         if (choices.length === 0) {
@@ -535,13 +536,13 @@ Examples:
       }
       const parts = agentArg.split('@');
       const agentName = parts[0];
-      const requestedVersion = parts[1] || null;
 
       const agentId = resolveAgentName(agentName);
       if (!agentId) {
         console.log(chalk.red(formatAgentError(agentName)));
         process.exit(1);
       }
+      const requestedVersion = resolveVersionAlias(agentId, parts[1]) ?? null;
 
       if (requestedVersion) {
         const installedVersions = listInstalledVersions(agentId);

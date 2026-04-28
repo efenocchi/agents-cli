@@ -391,10 +391,10 @@ export interface InstalledSubagent {
 }
 
 /**
- * Extra DotAgent repo registered alongside the primary ~/.agents-system/ repo.
- * Managed clones default to ~/.agents-system/.repos/<alias>/, but user-owned repos
- * may live anywhere on disk. Primary (~/.agents-system/) always wins on name
- * collisions; extras are searched in insertion order after primary.
+ * Extra DotAgent repo registered as user-level config alongside ~/.agents/.
+ * Managed clones default to ~/.agents-<alias>/ as peer dirs; user-owned repos
+ * may live anywhere on disk via the `path` field. ~/.agents/ wins on name
+ * collisions; extras are searched in insertion order after the user repo.
  */
 export interface ExtraRepoConfig {
   url: string;
@@ -415,9 +415,9 @@ export interface Meta {
   // Git remote source URL (when ~/.agents-system/ is a git repo)
   source?: string;
   /**
-   * Extra DotAgent repos merged after the primary ~/.agents-system/ system repo.
-   * Managed clones may live in ~/.agents-system/.repos/<alias>/, while user-owned
-   * repos can point at arbitrary paths.
+   * Extra DotAgent repos merged after ~/.agents/. Managed clones live as peer
+   * dirs at ~/.agents-<alias>/; user-owned repos can point at arbitrary paths
+   * via the `path` field.
    */
   extraRepos?: Record<string, ExtraRepoConfig>;
   /**

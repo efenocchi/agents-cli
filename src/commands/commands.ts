@@ -49,6 +49,7 @@ import {
 import {
   listInstalledVersions,
   getGlobalDefault,
+  resolveVersionAlias,
   syncResourcesToVersion,
   promptAgentVersionSelection,
   getVersionHomePath,
@@ -114,7 +115,7 @@ When to use:
           process.exit(1);
         }
         filterAgent = resolved;
-        filterVersion = parts[1] || undefined;
+        filterVersion = resolveVersionAlias(resolved, parts[1]);
       }
 
       const rows = buildCommandRows({ filterAgent, filterVersion });
@@ -440,7 +441,7 @@ on every sync. Sync is additive: to remove orphans, use 'agents commands prune'.
           console.log(chalk.red(formatAgentError(name, COMMANDS_CAPABLE_AGENTS)));
           process.exit(1);
         }
-        filter = { agent: agentId, version: version || undefined };
+        filter = { agent: agentId, version: resolveVersionAlias(agentId, version) };
       }
 
       const pairs = iterCommandsCapableVersions(filter);
@@ -520,7 +521,7 @@ Examples:
           console.log(chalk.red(formatAgentError(name, COMMANDS_CAPABLE_AGENTS)));
           process.exit(1);
         }
-        filter = { agent: agentId, version: version || undefined };
+        filter = { agent: agentId, version: resolveVersionAlias(agentId, version) };
       }
 
       const pairs = iterCommandsCapableVersions(filter);

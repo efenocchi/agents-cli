@@ -36,6 +36,7 @@ import {
   getVersionHomePath,
   resolveInstalledAgentTargets,
   resolveConfiguredAgentTargets,
+  resolveVersionAlias,
 } from '../lib/versions.js';
 import { getAgentsDir } from '../lib/state.js';
 import { isPromptCancelled, isInteractiveTerminal, requireInteractiveSelection } from './utils.js';
@@ -98,15 +99,19 @@ function parseMcpAgentTargets(value: string): {
       throw new Error(`No managed versions are installed for ${AGENTS[agentId].name}. Run: agents add ${agentId}@latest`);
     }
 
-    if (!installedVersions.includes(versionToken)) {
+    const resolvedVersion = versionToken === 'latest'
+      ? installedVersions[installedVersions.length - 1]
+      : versionToken;
+
+    if (!installedVersions.includes(resolvedVersion)) {
       throw new Error(
-        `Version ${versionToken} is not installed for ${AGENTS[agentId].name}. Installed versions: ${installedVersions.join(', ')}`
+        `Version ${resolvedVersion} is not installed for ${AGENTS[agentId].name}. Installed versions: ${installedVersions.join(', ')}`
       );
     }
 
     const versions = agentVersions[agentId] || [];
-    if (!versions.includes(versionToken)) {
-      versions.push(versionToken);
+    if (!versions.includes(resolvedVersion)) {
+      versions.push(resolvedVersion);
       agentVersions[agentId] = versions;
     }
   }
@@ -171,7 +176,7 @@ When to use:
           process.exit(1);
         }
         filterAgent = resolved;
-        filterVersion = parts[1] || undefined;
+        filterVersion = resolveVersionAlias(resolved, parts[1]);
       }
 
       const rows = buildMcpRows({ filterAgent, filterVersion });

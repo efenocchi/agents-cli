@@ -35,7 +35,8 @@ import {
   removeTeam,
   teamExists,
 } from '../lib/teams/registry.js';
-import { isVersionInstalled } from '../lib/versions.js';
+import { isVersionInstalled, resolveVersionAlias } from '../lib/versions.js';
+import type { AgentId } from '../lib/types.js';
 import { discoverSessions, parseTimeFilter, resolveSessionById } from '../lib/session/discover.js';
 import type { SessionMeta } from '../lib/session/types.js';
 import { buildPreview as buildSessionPreview } from './sessions-picker.js';
@@ -135,7 +136,8 @@ function parseTeammate(spec: string): { agent: AgentType; version: string | null
         `  Use the form 'claude' or 'claude@2.1.112' (see 'agents view' for installed versions).`
     );
   }
-  return { agent: name as AgentType, version: version || null };
+  const agent = name as AgentType;
+  return { agent, version: resolveVersionAlias(agent as AgentId, version) ?? null };
 }
 
 function shortId(id: string): string {
@@ -684,7 +686,10 @@ Name teammates with --name alice to refer to them as 'alice' instead of a UUID.
 
       // --- --agent: filter teams containing a matching teammate ---
       if (opts.agent) {
-        const [wantType, wantVersion] = opts.agent.split('@');
+        const [wantType, rawVersion] = opts.agent.split('@');
+        const wantVersion = VALID_AGENTS.includes(wantType as AgentType)
+          ? resolveVersionAlias(wantType as AgentId, rawVersion)
+          : rawVersion;
         merged = merged.filter((t) => {
           const teammates = byTeam.get(t.task_name) || [];
           return teammates.some(
