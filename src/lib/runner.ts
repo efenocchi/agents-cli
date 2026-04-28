@@ -134,7 +134,7 @@ export async function executeJob(config: JobConfig): Promise<RunResult> {
   fs.mkdirSync(runDir, { recursive: true });
 
   const stdoutPath = path.join(runDir, 'stdout.log');
-  const stdoutFd = fs.openSync(stdoutPath, 'w');
+  const stdoutFd = fs.openSync(stdoutPath, 'w', 0o600);
 
   let spawnEnv = useSandbox ? buildSpawnEnv(overlayHome!) : { ...process.env } as Record<string, string>;
   if (config.timezone) {
@@ -235,7 +235,7 @@ export async function executeJobDetached(config: JobConfig): Promise<RunMeta> {
   fs.mkdirSync(runDir, { recursive: true });
 
   const stdoutPath = path.join(runDir, 'stdout.log');
-  const stdoutFd = fs.openSync(stdoutPath, 'w');
+  const stdoutFd = fs.openSync(stdoutPath, 'w', 0o600);
 
   let spawnEnv = useSandbox ? buildSpawnEnv(overlayHome!) : { ...process.env } as Record<string, string>;
   if (config.timezone) {

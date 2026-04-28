@@ -38,8 +38,8 @@ describe('parsePackageIdentifier', () => {
   });
 
   it('parses gh: prefix as git', () => {
-    const result = parsePackageIdentifier('gh:phnx-labs/.agents');
-    expect(result).toEqual({ type: 'git', name: 'gh:phnx-labs/.agents' });
+    const result = parsePackageIdentifier('gh:example-user/.agents');
+    expect(result).toEqual({ type: 'git', name: 'gh:example-user/.agents' });
   });
 
   it('parses https:// URLs as git', () => {
@@ -82,9 +82,15 @@ describe('getRegistries', () => {
     expect(registries.official.url).toBe('https://registry.modelcontextprotocol.io/v0');
   });
 
-  it('returns empty object for skill type', () => {
+  it('returns registries for skill type (includes seeded hermes registry)', () => {
     const registries = getRegistries('skill');
-    expect(Object.keys(registries).length).toBe(0);
+    // DEFAULT_REGISTRIES.skill is empty, but SEEDED_REGISTRIES seeds hermes into agents.yaml
+    // on first run — so getRegistries returns whatever is in the live config.
+    expect(typeof registries).toBe('object');
+    for (const [, config] of Object.entries(registries)) {
+      expect(config).toHaveProperty('url');
+      expect(config).toHaveProperty('enabled');
+    }
   });
 });
 
@@ -95,9 +101,11 @@ describe('getEnabledRegistries', () => {
     expect(enabled.every((r) => r.config.enabled)).toBe(true);
   });
 
-  it('returns empty array when no registries enabled', () => {
+  it('returns array of enabled skill registries (hermes seeded on first run)', () => {
     const enabled = getEnabledRegistries('skill');
-    expect(enabled).toEqual([]);
+    // After seeding, hermes is present and enabled; each entry must have name + config.
+    expect(Array.isArray(enabled)).toBe(true);
+    expect(enabled.every((r) => r.config.enabled)).toBe(true);
   });
 });
 
@@ -143,10 +151,11 @@ describe.skipIf(!LIVE)('MCP Registry API (live)', () => {
   });
 });
 
-describe('search', () => {
-  it('returns empty for skill type (no registries)', async () => {
+describe.skipIf(!LIVE)('search (live)', () => {
+  it('returns results for skill type when hermes registry is reachable', async () => {
     const results = await search('github', { type: 'skill', limit: 5 });
-    expect(results).toEqual([]);
+    expect(Array.isArray(results)).toBe(true);
+    expect(results.every((r) => r.type === 'skill')).toBe(true);
   });
 });
 

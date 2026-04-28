@@ -145,9 +145,15 @@ Examples:
       let prompt = (options.prompt as string) || positionalPrompt;
       if (!prompt) die('Prompt is required. Pass it as an argument or with --prompt.');
 
-      // If prompt is a file path, read it
+      // If prompt is a file path, read it and tell the user
       if (fs.existsSync(prompt) && fs.statSync(prompt).isFile()) {
-        prompt = fs.readFileSync(prompt, 'utf-8').trim();
+        const filePath = prompt;
+        const stat = fs.statSync(filePath);
+        const sizeKB = (stat.size / 1024).toFixed(1);
+        prompt = fs.readFileSync(filePath, 'utf-8').trim();
+        if (process.stderr.isTTY) {
+          process.stderr.write(chalk.dim(`Reading prompt from ${filePath} (${sizeKB} KB)\n`));
+        }
       }
 
       const provider = resolveProvider(options.provider as string | undefined);

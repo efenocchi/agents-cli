@@ -625,7 +625,9 @@ async function readCodexMeta(
     id: sessionId,
     shortId: sessionId.slice(0, 8),
     agent: 'codex',
-    timestamp: scan.timestamp || new Date().toISOString(),
+    // Codex `session_meta` only carries the start time; use file mtime when
+    // it's newer so long-running sessions register as recently active.
+    timestamp: pickLatestCodexTimestamp(scan.timestamp, filePath),
     project: cwd ? path.basename(cwd) : undefined,
     cwd,
     filePath,
@@ -637,6 +639,27 @@ async function readCodexMeta(
     account,
   };
   return { meta, content: scan.contentText || '' };
+}
+
+/**
+ * Codex writes `session_meta` (with the start timestamp) on the first line of a
+ * rollout and never updates it. For long-running sessions that's stale by
+ * hours — `--since 2h` would drop a session still being actively written.
+ * Compare against the file's mtime and use whichever is newer.
+ */
+function pickLatestCodexTimestamp(metaTimestamp: string | undefined, filePath: string): string {
+  const fallback = new Date().toISOString();
+  let mtimeIso: string | null = null;
+  try {
+    mtimeIso = fs.statSync(filePath).mtime.toISOString();
+  } catch {
+    /* file vanished between scan and stat */
+  }
+
+  const candidates = [metaTimestamp, mtimeIso].filter((v): v is string => !!v);
+  if (candidates.length === 0) return fallback;
+
+  return candidates.reduce((best, cur) => (cur > best ? cur : best));
 }
 
 // ---------------------------------------------------------------------------

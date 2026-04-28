@@ -38,7 +38,7 @@ function writeArgLogger(dir: string): { binary: string; logPath: string } {
 }
 
 function runAgentsModule(expression: string): unknown {
-  const moduleUrl = pathToFileURL(path.resolve('src/lib/agents.ts')).href;
+  const moduleUrl = pathToFileURL(path.resolve('dist/lib/agents.js')).href;
   const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
     import { registerMcp, unregisterMcp } from ${JSON.stringify(moduleUrl)};
     const result = await ${expression};

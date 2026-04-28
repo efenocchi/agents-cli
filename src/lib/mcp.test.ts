@@ -59,7 +59,7 @@ describe('MCP sync execution', () => {
       'utf-8'
     );
 
-    const moduleUrl = pathToFileURL(path.resolve('src/lib/mcp.ts')).href;
+    const moduleUrl = pathToFileURL(path.resolve('dist/lib/mcp.js')).href;
     const versionHome = path.join(home, '.agents', 'versions', 'codex', version, 'home');
     const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
       import { installMcpServers } from ${JSON.stringify(moduleUrl)};

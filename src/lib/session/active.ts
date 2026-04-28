@@ -2,7 +2,7 @@
  * Active-session detection across every context an agent can run in:
  *
  *   - `terminal` — agents launched from VS Code / Cursor / Codium via the
- *     companion extension. Published to `~/.agents/companion/live-terminals.json`
+ *     agents-cli extension. Published to `~/.agents/runtime/live-terminals.json`
  *     with PID + session UUID per entry.
  *   - `teams`    — agents spawned by `agents teams add`, tracked in
  *     `~/.agents/teams/agents/<id>/meta.json` with a PID the manager polls.
@@ -55,7 +55,7 @@ export interface ActiveQueryOptions {
 }
 
 const HOME = os.homedir();
-const LIVE_TERMINALS_FILE = path.join(HOME, '.agents', 'companion', 'live-terminals.json');
+const LIVE_TERMINALS_FILE = path.join(HOME, '.agents', 'runtime', 'live-terminals.json');
 
 /**
  * A process is classified `running` if its session file was touched in the
@@ -92,7 +92,7 @@ interface LiveTerminalEntry {
   startedAtMs: number;
 }
 
-/** Read companion's live-terminals registry, dedupe by sessionId, keep only pid-alive entries. */
+/** Read the live-terminals registry, dedupe by sessionId, keep only pid-alive entries. */
 function readLiveTerminals(): LiveTerminalEntry[] {
   let raw: string;
   try {
@@ -367,7 +367,7 @@ const UI_HOSTS = new Set<string>([
 ]);
 
 /**
- * Agent processes not attributed to a team or the companion registry.
+ * Agent processes not attributed to a team or the runtime registry.
  * Classified by walking the ppid chain: any recognised UI ancestor (IDE
  * helper, terminal-app, or multiplexer) means `terminal`; nothing of the
  * sort means `headless` (daemon, launchd-spawned, orphan).

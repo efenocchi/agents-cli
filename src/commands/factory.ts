@@ -287,6 +287,7 @@ async function runForegroundSupervisor(team: string): Promise<void> {
 // resolves the Linear ref, picks the workflow by label, and dispatches a pod.
 // ---------------------------------------------------------------------------
 
+// Factory Floor cloud dispatch service (Rush infrastructure)
 const FACTORY_URL = process.env.FACTORY_FLOOR_URL ?? 'https://factory.example.com';
 
 function readRushToken(): string {

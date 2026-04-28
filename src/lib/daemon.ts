@@ -17,12 +17,53 @@ import { JobScheduler } from './scheduler.js';
 import { executeJobDetached, monitorRunningJobs } from './runner.js';
 
 const PID_FILE = 'daemon.pid';
+const LOCK_FILE = 'daemon.lock';
 const LOG_FILE = 'daemon.log';
-const PLIST_NAME = 'co.companion.agents-daemon';
+const PLIST_NAME = 'com.phnx-labs.agents-daemon';
 const SYSTEMD_UNIT = 'agents-daemon.service';
 
 function getPidPath(): string {
   return path.join(getAgentsDir(), PID_FILE);
+}
+
+function getLockPath(): string {
+  return path.join(getAgentsDir(), LOCK_FILE);
+}
+
+/**
+ * Acquire an exclusive start lock. Returns a release function on success,
+ * or null if another process already holds the lock. Uses O_EXCL to
+ * atomically create the file — no TOCTOU window.
+ */
+function acquireStartLock(): (() => void) | null {
+  const lockPath = getLockPath();
+  try {
+    const fd = fs.openSync(lockPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY);
+    fs.writeSync(fd, String(process.pid));
+    fs.closeSync(fd);
+    return () => {
+      try { fs.unlinkSync(lockPath); } catch { /* already removed */ }
+    };
+  } catch (err: any) {
+    if (err.code === 'EEXIST') {
+      // Lock file exists — check if the holder is still alive (stale lock recovery)
+      try {
+        const holderPid = parseInt(fs.readFileSync(lockPath, 'utf-8').trim(), 10);
+        if (!isNaN(holderPid)) {
+          try {
+            process.kill(holderPid, 0);
+            return null; // holder is alive, lock is valid
+          } catch {
+            // holder is dead, remove stale lock and retry once
+            fs.unlinkSync(lockPath);
+            return acquireStartLock();
+          }
+        }
+      } catch { /* can't read lock file — treat as held */ }
+      return null;
+    }
+    throw err;
+  }
 }
 
 function getLogPath(): string {
@@ -75,11 +116,23 @@ export function isDaemonRunning(): boolean {
   }
 }
 
-/** Append a timestamped log line to the daemon log file. */
+/** Redact values that look like tokens or credentials in a log message. */
+function redactSecrets(message: string): string {
+  let safe = message;
+  safe = safe.replace(/eyJ[A-Za-z0-9_-]{20,}/g, '[REDACTED_TOKEN]');
+  safe = safe.replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]');
+  safe = safe.replace(/(sk-[a-zA-Z0-9]{20,})/g, '[REDACTED_KEY]');
+  safe = safe.replace(/(ANTHROPIC_API_KEY|OPENAI_API_KEY|API_KEY|SECRET|TOKEN|PASSWORD)=\S+/gi, '$1=[REDACTED]');
+  return safe;
+}
+
+/** Append a timestamped log line to the daemon log file (owner-only permissions). */
 export function log(level: string, message: string): void {
   const timestamp = new Date().toISOString();
-  const line = `[${timestamp}] [${level.toUpperCase()}] ${message}\n`;
-  fs.appendFileSync(getLogPath(), line, 'utf-8');
+  const line = `[${timestamp}] [${level.toUpperCase()}] ${redactSecrets(message)}\n`;
+  const logPath = getLogPath();
+  fs.appendFileSync(logPath, line, 'utf-8');
+  try { fs.chmodSync(logPath, 0o600); } catch { /* best effort */ }
 }
 
 /** Main daemon loop: load jobs, schedule crons, monitor runs, and handle signals. */
@@ -198,6 +251,21 @@ export function startDaemon(): { pid: number | null; method: string } {
     return { pid, method: 'already-running' };
   }
 
+  const releaseLock = acquireStartLock();
+  if (!releaseLock) {
+    // Another process is already starting the daemon
+    const pid = waitForPid(3000);
+    return { pid, method: 'already-starting' };
+  }
+
+  try {
+    return startDaemonLocked();
+  } finally {
+    releaseLock();
+  }
+}
+
+function startDaemonLocked(): { pid: number | null; method: string } {
   const platform = os.platform();
 
   if (platform === 'darwin') {

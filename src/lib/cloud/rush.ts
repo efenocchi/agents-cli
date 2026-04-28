@@ -147,6 +147,26 @@ function sha256(input: string): string {
 }
 
 /**
+ * Strip tokens/credentials from a server error body before surfacing it.
+ * If the body is JSON with a `message` or `error` field, prefer that.
+ * Otherwise truncate and redact anything that looks like a bearer token or JWT.
+ */
+function sanitizeErrorBody(body: string): string {
+  const MAX_LEN = 300;
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>;
+    const msg = (parsed.message ?? parsed.error ?? parsed.detail) as string | undefined;
+    if (typeof msg === 'string') return msg.slice(0, MAX_LEN);
+  } catch { /* not JSON, fall through */ }
+  let safe = body.slice(0, MAX_LEN);
+  safe = safe.replace(/eyJ[A-Za-z0-9_-]{20,}/g, '[REDACTED_TOKEN]');
+  safe = safe.replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]');
+  safe = safe.replace(/"(access_token|refresh_token|credentials_json)"\s*:\s*"[^"]*"/g, '"$1":"[REDACTED]"');
+  if (body.length > MAX_LEN) safe += '...';
+  return safe;
+}
+
+/**
  * Pull `prompt_code` out of a JSON-encoded error body. Returns null when the
  * body isn't JSON or doesn't carry one — caller falls through to the generic
  * dispatch-failed path.
@@ -346,7 +366,7 @@ export class RushCloudProvider implements CloudProvider {
 
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`Dispatch failed (${res.status}): ${text}`);
+      throw new Error(`Dispatch failed (${res.status}): ${sanitizeErrorBody(text)}`);
     }
 
     const data = await res.json() as { execution_id: string };
