@@ -10,13 +10,24 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { getDriveDir } from './state.js';
 import { AGENTS } from './agents.js';
 import type { AgentId } from './types.js';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+
+// `remote` flows from disk into rsync/ssh argv. Use a strict regex so a
+// tampered ~/.agents/drive/config.json can't sneak shell metacharacters or
+// argv flags (leading -) past the boundary.
+const REMOTE_RE = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+$/;
+
+function assertValidRemote(remote: string): void {
+  if (!REMOTE_RE.test(remote)) {
+    throw new Error(`Invalid drive remote: ${JSON.stringify(remote)}. Expected: user@host`);
+  }
+}
 
 const AGENT: AgentId = 'claude';
 
@@ -41,9 +52,23 @@ export function readDriveConfig(): DriveConfig {
   const p = configPath();
   if (fs.existsSync(p)) {
     try {
-      return JSON.parse(fs.readFileSync(p, 'utf-8'));
-    } catch {
-      // Fall through to default
+      const parsed = JSON.parse(fs.readFileSync(p, 'utf-8')) as DriveConfig;
+      // Re-validate `remote` on every read. setRemote validates on write, but
+      // the file can be tampered with out-of-band (a malicious skill, a synced
+      // config from a hostile repo, etc.) and pull/push shell out with the value.
+      if (parsed.remote != null) {
+        assertValidRemote(parsed.remote);
+      }
+      return parsed;
+    } catch (err) {
+      // If the config is malformed or has a tainted remote, fail closed rather
+      // than silently fall back to defaults — a tainted remote that fell back
+      // to null would mask the attack.
+      if (err instanceof SyntaxError) {
+        // Bad JSON: fall through to defaults.
+      } else {
+        throw err;
+      }
     }
   }
   return { remote: null, attached: false, previousTargets: null, lastPull: null, lastPush: null };

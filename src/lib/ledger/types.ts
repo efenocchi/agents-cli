@@ -18,6 +18,24 @@
  *     bugs/<task_id>.md                   reviewer-filed bugs
  */
 
+/** Artifact kind -> file name within artifacts/<task_id>/. */
+export function artifactFilename(kind: ArtifactKind): string {
+  switch (kind) {
+    case 'diff': return 'diff.patch';
+    case 'test-output': return 'test-output.txt';
+    case 'notes': return 'notes.md';
+    default: return `${String(kind)}.txt`;
+  }
+}
+
+export function kindFromFilename(filename: string): ArtifactKind {
+  if (filename === 'diff.patch') return 'diff';
+  if (filename === 'test-output.txt') return 'test-output';
+  if (filename === 'notes.md') return 'notes';
+  const dot = filename.lastIndexOf('.');
+  return dot > 0 ? filename.slice(0, dot) : filename;
+}
+
 /** Canonical artifact kinds we know how to serialize. Free-form `kind` still works. */
 export type ArtifactKind =
   | 'diff'
