@@ -28,7 +28,7 @@ import {
   getUsageLookupKey,
 } from '../lib/usage.js';
 import { viewAction } from './view.js';
-import type { AgentId, RunStrategy } from '../lib/types.js';
+import type { AgentId } from '../lib/types.js';
 import { readManifest, writeManifest, createDefaultManifest } from '../lib/manifest.js';
 import {
   installVersion,
@@ -68,7 +68,6 @@ import {
 import { isInteractiveTerminal, isPromptCancelled, requireInteractiveSelection } from './utils.js';
 import { tryAutoPull } from '../lib/git.js';
 import { getAgentsDir } from '../lib/state.js';
-import { getConfiguredRunStrategy, setGlobalRunStrategy } from '../lib/rotate.js';
 
 /**
  * Helper to get actual installed version for an agent.
@@ -107,7 +106,6 @@ function buildAutomaticSelection(resources: AvailableResources): ResourceSelecti
 async function setDefaultVersion(
   agent: AgentId,
   installedVersion: string,
-  options: { promptStrategy?: boolean } = {},
 ): Promise<void> {
   setGlobalDefault(agent, installedVersion);
   createShim(agent);
@@ -121,44 +119,6 @@ async function setDefaultVersion(
   }
   switchHomeFileSymlinks(agent, installedVersion);
   warnIfShimShadowed(agent);
-  if (options.promptStrategy) {
-    await promptRunStrategy(agent);
-  }
-}
-
-async function promptRunStrategy(agent: AgentId): Promise<void> {
-  const current = getConfiguredRunStrategy(agent);
-  try {
-    const strategy = await select<RunStrategy>({
-      message: `How should agents run ${agent} choose a version?`,
-      default: current,
-      choices: [
-        {
-          name: 'Pinned',
-          value: 'pinned',
-          description: 'Use the workspace/global default version.',
-        },
-        {
-          name: 'Available',
-          value: 'available',
-          description: 'Use the default if it has usage available; otherwise switch accounts.',
-        },
-        {
-          name: 'Rotate',
-          value: 'rotate',
-          description: 'Route to the signed-in account with the most usage available.',
-        },
-      ],
-    });
-    setGlobalRunStrategy(agent, strategy);
-    console.log(chalk.green(`  Run strategy: ${strategy}`));
-  } catch (err) {
-    if (isPromptCancelled(err)) {
-      console.log(chalk.gray('  Run strategy unchanged'));
-      return;
-    }
-    throw err;
-  }
 }
 
 function warnIfShimShadowed(agent: AgentId): void {
@@ -346,7 +306,7 @@ Note: The first version you install is NOT set as default automatically. Run 'ag
                   });
 
                   if (setAsDefault) {
-                    await setDefaultVersion(agent, installedVersion, { promptStrategy: true });
+                    await setDefaultVersion(agent, installedVersion);
                   }
                 } catch (err) {
                   if (isPromptCancelled(err)) {
@@ -798,9 +758,6 @@ Important: This is the ONLY command that sets the default version. If you want a
           const useEmail = await getAccountEmail(agentId, getVersionHomePath(agentId, finalVersion));
           const useEmailStr = useEmail ? chalk.cyan(` (${useEmail})`) : '';
           console.log(chalk.green(`Set ${agentLabel(agentConfig.id)}@${finalVersion} as global default`) + useEmailStr);
-          if (!skipPrompts && previousDefault !== finalVersion) {
-            await promptRunStrategy(agentId);
-          }
         }
       } catch (err) {
         if (isPromptCancelled(err)) return;

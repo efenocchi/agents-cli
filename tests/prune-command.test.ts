@@ -29,8 +29,18 @@ describe('prune command', () => {
     const helpText = runCli(['prune', '--help']);
 
     expect(helpText).toContain('Usage: agents prune [options] [agent]');
+    expect(helpText).toContain('--dry-run');
+    expect(helpText).toContain('agents prune --dry-run');
     expect(helpText).toContain('agents prune claude');
     expect(helpText).toContain('agents commands prune');
     expect(helpText).not.toContain('Usage: agents [command] [options]');
+  });
+
+  it('shows dry-run support for view prune help', () => {
+    const helpText = runCli(['view', '--help']);
+
+    expect(helpText).toContain('--dry-run');
+    expect(helpText).toContain('agents view --prune --dry-run');
+    expect(helpText).toContain('With --prune --dry-run: preview only, no deletions');
   });
 });
