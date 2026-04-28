@@ -71,7 +71,7 @@ export async function runInit(program: Command, options: { force?: boolean } = {
   const alreadyConfigured = fs.existsSync(metaFile) || isGitRepo(agentsDir);
 
   if (alreadyConfigured && !options.force) {
-    console.log(chalk.yellow('~/.agents-system/ is already set up.'));
+    console.log(chalk.gray('~/.agents-system/ is already set up.'));
     console.log(chalk.gray('\nTo sync updates:      agents pull'));
     console.log(chalk.gray('To re-initialize:     agents init --force'));
     return;
