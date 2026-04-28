@@ -112,6 +112,7 @@ SyncManifest {
   rules:       { files: { [name]: FileEntry } }
   mcp:         { [name]: FileEntry }
   permissions: { groups: { [name]: FileEntry }, permissionSet: string | null }
+  subagents:   { [name]: DirEntry  }
 }
 
 FileEntry: { source: Fingerprint }
@@ -120,9 +121,25 @@ DirEntry:  { dirPath: string, files: Fingerprint[] }
 Fingerprint: { path, mtime, size, sha256 }
 ```
 
-Skills store a `DirEntry` (all files recursively) rather than a single
-fingerprint, because a skill is a directory — any file added, removed, or
-modified anywhere in the tree must trigger re-sync.
+`DirEntry` is used for skills and subagents — any file added, removed, or
+modified anywhere in the directory tree triggers re-sync.
+
+**Coverage across all user-defined resource types:**
+
+```
+Resource      In manifest   Notes
+──────────── ─────────────  ──────────────────────────────────────────────────
+commands      ✓ FileEntry   first-wins per name (project > user > system > extra)
+skills        ✓ DirEntry    first-wins per name, full recursive dir fingerprint
+hooks         ✓ FileEntry   first-wins per name
+rules         ✓ FileEntry   first-wins per name; @-imports via isMemoryStale()
+mcp           ✓ FileEntry   first-wins per name (project > user > system)
+permissions   ✓ FileEntry   first-wins per group name; env-var set captured
+subagents     ✓ DirEntry    user > system, first-wins (matches sync code path)
+promptcuts    — not tracked  hook reads ~/.agents/promptcuts.yaml directly;
+                             no per-version copy exists to go stale
+plugins       — not tracked  system-only (npm-installed); not user-authored
+```
 
 The `permissionSet` field captures the `AGENTS_PERMISSION_SET` env var at sync
 time. If the user switches permission sets between launches, the manifest becomes
@@ -214,7 +231,7 @@ trades correctness guarantees for speed.
 
 | File | Role |
 |------|------|
-| `src/lib/sync-manifest.ts` | Manifest types, load/save, `buildManifest`, `isSyncStale` |
+| `src/lib/sync-manifest.ts` | Manifest types, load/save, `buildManifest`, `isSyncStale`; covers all seven user-defined resource types |
 
 ### Modified files
 

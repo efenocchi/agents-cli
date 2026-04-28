@@ -180,7 +180,9 @@ Backed by a SQLite + FTS5 index at `~/.agents-system/sessions/sessions.db` with 
 
 ---
 
-## Run open models through Claude Code
+## Run open models through Claude Code (experimental)
+
+> **Note:** Profiles are experimental. Enable with `agents beta profiles enable`.
 
 ```bash
 # Kimi K2.5 responding inside Claude Code's UI, tools, and skills.
@@ -371,6 +373,18 @@ Claude Code, Codex CLI, and Gemini CLI each have their own config format, MCP se
 
 For version management, yes. `agents-cli` reads `agents.yaml` from the project root, walks up the directory tree, and routes to the correct binary per project. But it also manages agent-native resources (skills, MCP servers, commands, hooks, permissions) that language version managers don't touch.
 
+### How do I share my agent setup with my team?
+
+Add a `.agents/` directory at your project root with your skills, hooks, rules, and commands. Resources merge automatically: project > user (`~/.agents/`) > system (`~/.agents-system/`). Commit it with your repo and teammates get the same agent environment.
+
+### Do I need to write separate rules for each agent (CLAUDE.md, GEMINI.md, etc.)?
+
+No. Write one `AGENTS.md` — it's the canonical source. We automatically sync it to each agent's expected location (`CLAUDE.md` for Claude Code, `GEMINI.md` for Gemini CLI, `.cursorrules` for Cursor). Same content, zero duplication.
+
+### Do agents use API keys or subscriptions?
+
+Your choice. We hand off to the original CLI process — use your existing subscription or API key. This is intentional: subscription pricing is usually cheaper than API token pricing for individual users. Configure each agent however you want.
+
 ### Does it store my API keys or send telemetry?
 
 No. API keys come from your shell environment or each agent CLI's existing auth. No telemetry, no phone-home. User content lives in `~/.agents/`; operational state (versions, shims, sessions, caches) lives in `~/.agents-system/`.
@@ -388,6 +402,18 @@ The installer tries Bun first (faster), falls back to npm. Node 18+ required at 
 ### Can I use it in CI?
 
 Yes -- `agents run` is non-interactive by default. `--yes` auto-accepts prompts, `--json` for structured output. Pass explicit names and IDs instead of relying on interactive pickers.
+
+### What happens to my config when I switch versions?
+
+Each version has its own isolated config directory. Switching just repoints a symlink — your per-version config stays untouched. On first migration (if you had a real `~/.claude/` directory before using agents-cli), that gets backed up once to `~/.agents-system/backups/`.
+
+### Does session search use RAG or semantic search?
+
+No — it's a SQLite + FTS5 full-text index. Fast, flexible, and robust. Agents can query sessions programmatically. Most commands support `--json` output for scripting with jq.
+
+### How do I use custom or local models?
+
+Profiles (experimental — enable with `agents beta profiles enable`). Works with LiteLLM Proxy, Ollama, or any OpenAI-compatible endpoint. Drop a YAML in `~/.agents/profiles/` pointing to your endpoint.
 
 ### Can I add support for a new agent?
 

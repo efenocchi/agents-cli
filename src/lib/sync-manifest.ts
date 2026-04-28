@@ -44,6 +44,7 @@ import { resolveResource } from './resources.js';
 import { listMcpServerConfigs } from './mcp.js';
 import { isMemoryStale } from './memory-compile.js';
 import { getActivePermissionSetName } from './permissions.js';
+import { listInstalledSubagents } from './subagents.js';
 import { safeJoin } from './paths.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -87,6 +88,7 @@ export interface SyncManifest {
   rules:      RulesEntry;
   mcp:        Record<string, FileEntry>;
   permissions: PermEntry;
+  subagents:  Record<string, DirEntry>;  // key = subagent name; user > system, first-wins
 }
 
 // ─── Path helpers ─────────────────────────────────────────────────────────────
@@ -349,6 +351,13 @@ export function buildManifest(
     if (fp) permGroups[name] = { source: fp };
   }
 
+  // Subagents: user > system, first-wins per name (mirrors listInstalledSubagents())
+  const subagents: Record<string, DirEntry> = {};
+  for (const sub of listInstalledSubagents()) {
+    if (!available.subagents.includes(sub.name)) continue;
+    subagents[sub.name] = { dirPath: sub.path, files: fingerprintDir(sub.path) };
+  }
+
   return {
     v:       MANIFEST_VERSION,
     syncedAt: new Date().toISOString(),
@@ -361,6 +370,7 @@ export function buildManifest(
       groups:        permGroups,
       permissionSet: getActivePermissionSetName(),
     },
+    subagents,
   };
 }
 
@@ -440,6 +450,20 @@ export function isSyncStale(
   for (const [name, filePath] of Object.entries(currentGroups)) {
     const entry = manifest.permissions.groups[name];
     if (!entry || isFileStale(entry.source, filePath)) return true;
+  }
+
+  // ── Subagents ─────────────────────────────────────────────────────────────
+  const storedSubagents = manifest.subagents ?? {};
+  if (nameSetDiffers(Object.keys(storedSubagents), available.subagents)) return true;
+  if (available.subagents.length > 0) {
+    const allSubagents = listInstalledSubagents();
+    const subagentMap = new Map(allSubagents.map(s => [s.name, s]));
+    for (const name of available.subagents) {
+      const sub = subagentMap.get(name);
+      if (!sub) return true;
+      const entry = storedSubagents[name];
+      if (!entry || isDirStale(entry, sub.path)) return true;
+    }
   }
 
   return false;
