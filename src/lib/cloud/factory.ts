@@ -11,6 +11,7 @@ import type {
   CloudTaskStatus,
   CloudEvent,
   DispatchOptions,
+  ProviderCapabilities,
 } from './types.js';
 
 /**
@@ -28,8 +29,19 @@ export class FactoryCloudProvider implements CloudProvider {
   id = 'factory' as const;
   name = 'Factory (Droid)';
 
-  supports(_options: DispatchOptions): boolean {
-    return false;
+  capabilities(): ProviderCapabilities {
+    return {
+      available: false,
+      dispatch: false,
+      status: false,
+      list: false,
+      stream: false,
+      cancel: false,
+      message: false,
+      multiRepo: false,
+      skills: false,
+      images: false,
+    };
   }
 
   async dispatch(_options: DispatchOptions): Promise<CloudTask> {

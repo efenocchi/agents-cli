@@ -16,6 +16,7 @@ import type {
   CloudTaskStatus,
   CloudEvent,
   DispatchOptions,
+  ProviderCapabilities,
 } from './types.js';
 import { resolveDispatchRepos } from './types.js';
 import { parseSSE } from './stream.js';
@@ -324,8 +325,19 @@ export class RushCloudProvider implements CloudProvider {
   id = 'rush' as const;
   name = 'Rush Cloud';
 
-  supports(_options: DispatchOptions): boolean {
-    return fs.existsSync(USER_YAML);
+  capabilities(): ProviderCapabilities {
+    return {
+      available: fs.existsSync(USER_YAML),
+      dispatch: true,
+      status: true,
+      list: true,
+      stream: true,
+      cancel: true,
+      message: true,
+      multiRepo: true,
+      skills: false,
+      images: false,
+    };
   }
 
   async dispatch(options: DispatchOptions): Promise<CloudTask> {
@@ -359,7 +371,7 @@ export class RushCloudProvider implements CloudProvider {
     const body = buildDispatchBody({
       agent: options.agent,
       prompt: options.prompt,
-      mode: options.providerOptions?.mode,
+      mode: options.providerOptions?.mode as string | undefined,
       resolvedRepos,
       accountManifest,
     });
@@ -410,7 +422,7 @@ export class RushCloudProvider implements CloudProvider {
         const retryBody = buildDispatchBody({
           agent: options.agent,
           prompt: options.prompt,
-          mode: options.providerOptions?.mode,
+          mode: options.providerOptions?.mode as string | undefined,
           resolvedRepos,
           accountManifest,
           accountTokens,

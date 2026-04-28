@@ -421,7 +421,7 @@ Examples:
         const data = providers.map((p) => ({
           id: p.id,
           name: p.name,
-          available: p.supports({} as DispatchOptions),
+          available: p.capabilities().available,
           default: p.id === defaultId,
         }));
         process.stdout.write(JSON.stringify(data, null, 2) + '\n');
@@ -430,7 +430,7 @@ Examples:
 
       console.log(chalk.bold('Cloud Providers\n'));
       for (const p of providers) {
-        const available = p.supports({} as DispatchOptions);
+        const available = p.capabilities().available;
         const isDefault = p.id === defaultId;
         const status = available ? chalk.green('ready') : chalk.dim('not configured');
         const defaultTag = isDefault ? chalk.cyan(' (default)') : '';
