@@ -91,13 +91,32 @@ export interface HookConfig {
   dataFile?: string;
 }
 
+/**
+ * Predicate set for declaring when a hook should fire within its declared event.
+ * All predicates AND together. Empty/missing matches: hook always fires.
+ */
+export interface HookMatches {
+  prompt_contains?: string;          // substring of user prompt
+  prompt_matches?: string;           // regex applied to user prompt
+  tool_name?: string | string[];     // PreToolUse / PostToolUse only
+  tool_args_match?: string;          // regex on serialized tool args
+  git_dirty?: boolean;               // working tree has changes
+  cwd_includes?: string | string[];  // cwd contains any of these substrings
+  project_has?: string;              // project root contains this file
+}
+
 /** Hook entry as declared in a package manifest (agents.yaml). */
 export interface ManifestHook {
   script: string;
   events: string[];
   timeout?: number;
   matcher?: string;
+  /** @deprecated Use the agent capability table; field is ignored. */
   agents?: AgentId[];
+  /** Set to false in user hooks.yaml to disable a system-shipped hook. */
+  enabled?: boolean;
+  /** Optional pre-filter predicates evaluated before invoking the script. */
+  matches?: HookMatches;
 }
 
 /** Lightweight hook descriptor used in resource listings. */
