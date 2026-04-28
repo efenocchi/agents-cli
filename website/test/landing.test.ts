@@ -32,9 +32,9 @@ describe('LANDING_HTML required content (RUSH-365 spec)', () => {
     expect(LANDING_HTML).toContain('One config repo, every harness');
   });
 
-  it('install one-liner uses the canonical @swarmify scope', () => {
-    expect(LANDING_HTML).toContain('@swarmify/agents-cli');
-    expect(LANDING_HTML).not.toContain('@phnx-labs/agents-cli');
+  it('install one-liner uses the canonical @phnx-labs scope', () => {
+    expect(LANDING_HTML).toContain('@phnx-labs/agents-cli');
+    expect(LANDING_HTML).not.toContain('@swarmify/agents-cli');
     expect(LANDING_HTML).not.toContain('madebyphoenix');
   });
 

@@ -15,10 +15,10 @@ echo ""
 
 if command -v bun >/dev/null 2>&1; then
   echo "  \${DIM}installing with bun...\${NC}"
-  bun install -g @swarmify/agents-cli
+  bun install -g @phnx-labs/agents-cli
 elif command -v npm >/dev/null 2>&1; then
   echo "  \${DIM}installing with npm...\${NC}"
-  npm install -g @swarmify/agents-cli
+  npm install -g @phnx-labs/agents-cli
 else
   echo "  \${RED}error:\${NC} no package manager found"
   echo "  install bun (https://bun.sh) or node.js and retry"
