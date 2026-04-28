@@ -54,9 +54,9 @@ export function getAgentsDir(): string {
  * Optional user-owned resource repo (~/.agents/).
  *
  * This is intentionally not created by agents-cli. When present as a real
- * directory, it is merged after the primary system repo for resource discovery.
- * A symlink to ~/.agents-system is ignored so legacy compatibility shims do not
- * duplicate the primary repo.
+ * directory, it takes priority over the system repo for resource discovery
+ * (user overrides system). A symlink to ~/.agents-system is ignored so legacy
+ * compatibility shims do not duplicate the primary repo.
  */
 export function getOptionalUserAgentsDir(): string | null {
   if (!fs.existsSync(OPTIONAL_USER_AGENTS_DIR)) return null;
