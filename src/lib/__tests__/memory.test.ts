@@ -33,15 +33,15 @@ describe('rules repo discovery', () => {
   it('finds nested preset fragments and excludes rules README', () => {
     writeFile('rules/AGENTS.md', '@presets/proactive.md');
     writeFile('rules/README.md', '# docs');
-    writeFile('rules/presets/proactive.md', '@../rules/core.md');
-    writeFile('rules/rules/core.md', 'be precise');
+    writeFile('rules/presets/proactive.md', '@../default/core.md');
+    writeFile('rules/default/core.md', 'be precise');
 
     const discovered = discoverMemoryFilesFromRepo(tmpDir);
 
     expect(discovered).toEqual([
       'AGENTS.md',
+      'default/core.md',
       'presets/proactive.md',
-      'rules/core.md',
     ]);
   });
 });

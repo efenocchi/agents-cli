@@ -11,7 +11,7 @@
   <a href="https://github.com/phnx-labs/agents-cli"><img src="https://img.shields.io/badge/github-phnx--labs%2Fagents--cli-blue?style=flat-square" alt="github" /></a>
 </p>
 
-**The missing toolchain for CLI coding agents.** Pin versions per project. Share config across Claude Code, Codex, Gemini CLI, and Cursor. Stop setting up the same MCP server three times.
+**For power users who run dozens of agents daily.** Pin versions to escape regressions, share your agent environment with your team, and get your entire setup on any machine in one command.
 
 <p align="center">
   <a href="https://github.com/anthropics/claude-code" title="Claude Code"><img src="assets/harnesses/anthropic.svg" height="32" alt="Claude Code" /></a>
@@ -76,7 +76,7 @@ agents:
   codex: "0.116.0"
 ```
 
-Like `.nvmrc` for Node. A shim reads `agents.yaml` from the project root and routes `claude` / `codex` / `gemini` to the right version automatically. Each version gets its own isolated home -- switching backs up config and re-syncs resources.
+Think `requirements.txt` for CLI coding agents, on steroids. A shim reads `agents.yaml` from the project root and routes `claude` / `codex` / `gemini` to the right version automatically. Each version gets its own isolated home -- switching backs up config and re-syncs resources.
 
 ```bash
 agents add claude@2.0.65     # Install a specific version
@@ -176,7 +176,7 @@ agents sessions a1b2c3d4 --last 3 --include user
 
 Interactive picker when you're in a terminal. Structured output (`--json`, `--markdown`, filtered by role or turn count) when piped.
 
-Backed by a SQLite + FTS5 index at `~/.agents/sessions/sessions.db` with incremental scanning -- warm reads in ~100ms. External tools can consume `--json` output as a programmatic observability layer; see [docs/05-sessions.md](docs/05-sessions.md) for the schema and [docs/06-observability.md](docs/06-observability.md) for the consumption patterns.
+Backed by a SQLite + FTS5 index at `~/.agents-system/sessions/sessions.db` with incremental scanning -- warm reads in ~100ms. External tools can consume `--json` output as a programmatic observability layer; see [docs/05-sessions.md](docs/05-sessions.md) for the schema and [docs/06-observability.md](docs/06-observability.md) for the consumption patterns.
 
 ---
 
@@ -335,7 +335,7 @@ agents repo disable acme  # Stop merging without deleting
 agents repo remove acme   # Unregister and delete the clone
 ```
 
-Extras clone into `~/.agents/.repos/<alias>/` and ship the same layout as the primary (`skills/`, `commands/`, `hooks/`, `rules/`). Their contents merge into agent version homes after the primary's — so `~/.agents/` always wins on name collisions. `agents skills list` shows which repo each skill came from.
+Extras clone into `~/.agents-system/.repos/<alias>/` and ship the same layout as the primary (`skills/`, `commands/`, `hooks/`, `rules/`). Their contents merge into agent version homes after the primary's — so `~/.agents/` always wins on name collisions. `agents skills list` shows which repo each skill came from.
 
 ---
 
@@ -371,7 +371,7 @@ For version management, yes. `agents-cli` reads `agents.yaml` from the project r
 
 ### Does it store my API keys or send telemetry?
 
-No. API keys come from your shell environment or each agent CLI's existing auth. No telemetry, no phone-home. All state lives in `~/.agents/`.
+No. API keys come from your shell environment or each agent CLI's existing auth. No telemetry, no phone-home. User content lives in `~/.agents/`; operational state (versions, shims, sessions, caches) lives in `~/.agents-system/`.
 
 ### Which platforms?
 

@@ -4,18 +4,20 @@ How agents-cli syncs resources (commands, skills, hooks, memory, MCP, permission
 
 ## Resource Types
 
-| Resource | Central Location | Version Home Location | Sync Method |
+| Resource | Source layers (resolved project > user > system) | Version Home Location | Sync Method |
 |----------|-----------------|----------------------|-------------|
-| Commands | `~/.agents/commands/*.md` | `.{agent}/commands/` | Symlink (copy+convert for Gemini) |
-| Skills | `~/.agents/skills/{name}/` | `.{agent}/skills/` | Symlink |
-| Hooks | `~/.agents/hooks/*.sh` | `.{agent}/hooks/` | Symlink |
-| Rules | `~/.agents/rules/AGENTS.md` | `.{agent}/{instructionsFile}` | Symlink |
-| MCP | `~/.agents/mcp/*.yaml` | `.{agent}/settings.json` | Merge into JSON |
-| Permissions | `~/.agents/permissions/groups/*.yaml` | `.{agent}/settings.json` | Merge into JSON |
+| Commands | `<project>/.agents/commands/*.md` › `~/.agents/commands/*.md` › `~/.agents-system/commands/*.md` | `.{agent}/commands/` | Symlink (copy+convert for Gemini) |
+| Skills | `…/.agents/skills/{name}/` (same layering) | `.{agent}/skills/` | Symlink |
+| Hooks | `…/.agents/hooks/*.sh` (same layering) | `.{agent}/hooks/` | Symlink |
+| Rules | `…/.agents/rules/AGENTS.md` (same layering) | `.{agent}/{instructionsFile}` | Symlink |
+| MCP | `…/.agents/mcp/*.yaml` (same layering) | `.{agent}/settings.json` | Merge into JSON |
+| Permissions | `…/.agents/permissions/groups/*.yaml` (same layering) | `.{agent}/settings.json` | Merge into JSON |
+
+`resolveResource(kind, name)` returns the single winner; `listResources(kind)` returns the union with `source: 'project' \| 'user' \| 'system'`. Same name in a higher layer overrides lower layers; otherwise everything unions.
 
 ### Extra repos
 
-Users can register additional DotAgent repos via `agents repo add <source>`. Extras clone into `~/.agents/.repos/<alias>/` and ship the same layout (`skills/`, `commands/`, `hooks/`, `rules/`). During sync, each resource lookup searches project → primary (`~/.agents/`) → extras in insertion order, and the first hit wins — so primary always overrides extras on name collisions. Registrations live in `meta.extraRepos` in `~/.agents/agents.yaml`; `~/.agents/.gitignore` auto-excludes `.repos/` so extras never leak into a primary `agents push`.
+Users can register additional DotAgent repos via `agents repo add <source>`. Extras clone into `~/.agents-system/.repos/<alias>/` and ship the same layout (`skills/`, `commands/`, `hooks/`, `rules/`). They participate as an additional layer below the user repo and above the system repo. Registrations live in `meta.extraRepos` in `~/.agents/agents.yaml`.
 
 ## Memory File Mapping
 
