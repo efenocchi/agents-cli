@@ -9,7 +9,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import Database from 'better-sqlite3';
+import Database from '../sqlite.js';
 import type { CloudTask, CloudProviderId, CloudTaskStatus } from './types.js';
 
 const CLOUD_DIR = path.join(os.homedir(), '.agents', 'cloud');
@@ -35,10 +35,10 @@ CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_created ON tasks(created_at DESC);
 `;
 
-let _db: ReturnType<typeof Database> | null = null;
+let _db: Database.Database | null = null;
 
 /** Lazy-initialize the SQLite connection, creating the database and schema on first access. */
-function db(): ReturnType<typeof Database> {
+function db(): Database.Database {
   if (_db) return _db;
   fs.mkdirSync(CLOUD_DIR, { recursive: true });
   _db = new Database(DB_PATH);
