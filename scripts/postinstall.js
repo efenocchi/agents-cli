@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Runs after npm install -g @swarmify/agents-cli
+// Runs after npm install -g @phnx-labs/agents-cli
 // Sets up shims directory and prints PATH instructions.
 // Set AGENTS_INIT_SHELL=1 to opt in to automatic shell-rc mutation.
 
@@ -43,7 +43,7 @@ const exportLine = shellName === 'fish'
   ? `fish_add_path ${SHIMS_DIR}`
   : `export PATH="${SHIMS_DIR}:$PATH"`;
 
-// Opt-in: AGENTS_INIT_SHELL=1 npm install -g @swarmify/agents-cli
+// Opt-in: AGENTS_INIT_SHELL=1 npm install -g @phnx-labs/agents-cli
 if (process.env.AGENTS_INIT_SHELL === '1') {
   const rcFile = getShellRc();
   let alreadyConfigured = false;

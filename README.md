@@ -5,9 +5,9 @@
 <h1 align="center">agents</h1>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@swarmify/agents-cli"><img src="https://img.shields.io/npm/v/@swarmify/agents-cli.svg?style=flat-square" alt="npm version" /></a>
-  <a href="./LICENSE"><img src="https://img.shields.io/npm/l/@swarmify/agents-cli.svg?style=flat-square" alt="license" /></a>
-  <a href="https://www.npmjs.com/package/@swarmify/agents-cli"><img src="https://img.shields.io/npm/dm/@swarmify/agents-cli.svg?style=flat-square" alt="downloads" /></a>
+  <a href="https://www.npmjs.com/package/@phnx-labs/agents-cli"><img src="https://img.shields.io/npm/v/@phnx-labs/agents-cli.svg?style=flat-square" alt="npm version" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/npm/l/@phnx-labs/agents-cli.svg?style=flat-square" alt="license" /></a>
+  <a href="https://www.npmjs.com/package/@phnx-labs/agents-cli"><img src="https://img.shields.io/npm/dm/@phnx-labs/agents-cli.svg?style=flat-square" alt="downloads" /></a>
   <a href="https://github.com/phnx-labs/agents-cli"><img src="https://img.shields.io/badge/github-phnx--labs%2Fagents--cli-blue?style=flat-square" alt="github" /></a>
 </p>
 
@@ -32,9 +32,9 @@
 https://github.com/user-attachments/assets/cf0b2248-6672-4458-8027-b88525572f3e
 
 ```bash
-npm install -g @swarmify/agents-cli
+npm install -g @phnx-labs/agents-cli
 # or
-bun install -g @swarmify/agents-cli
+bun install -g @phnx-labs/agents-cli
 ```
 
 Source: [github.com/phnx-labs/agents-cli](https://github.com/phnx-labs/agents-cli)
