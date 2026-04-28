@@ -10,6 +10,7 @@ import { R2Ledger, r2ConfigFromEnv } from './r2.js';
 import type { LedgerStore } from './types.js';
 
 export type { LedgerStore, LedgerArtifact, LedgerTaskView, LedgerSearchHit, LedgerRegistry, ArtifactKind } from './types.js';
+export { artifactFilename, kindFromFilename } from './types.js';
 export { LocalDiskLedger } from './local.js';
 export { R2Ledger, r2ConfigFromEnv } from './r2.js';
 export type { R2LedgerConfig } from './r2.js';
@@ -30,9 +31,4 @@ export function resolveLedger(): LedgerStore {
   const r2 = r2ConfigFromEnv();
   cachedDefault = r2 ? new R2Ledger(r2) : new LocalDiskLedger();
   return cachedDefault;
-}
-
-/** Test hook: reset the cached default so tests can inject a fresh root. */
-export function resetLedgerCache(): void {
-  cachedDefault = null;
 }
