@@ -980,8 +980,8 @@ interface McpConfigEntry {
 
 /**
  * Extract version from npm package specification.
- * Examples: @phnx-labs/agents-mcp@latest -> latest
- *           @phnx-labs/agents-mcp@1.2.3 -> 1.2.3
+ * Examples: @companion/agents-mcp@latest -> latest
+ *           @companion/agents-mcp@1.2.3 -> 1.2.3
  *           some-package -> undefined
  */
 function extractNpmVersion(args: string[]): string | undefined {
