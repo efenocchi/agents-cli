@@ -414,11 +414,24 @@ export const VERSIONED_ALIAS_SCHEMA_VERSION = 3;
 /** Internal marker string used to embed the schema version in versioned alias scripts. */
 const VERSIONED_ALIAS_VERSION_MARKER = 'agents-versioned-alias-version:';
 
+// The version string is interpolated into a generated bash script and into
+// a filename. parseAgentSpec / parseVersion already validates this upstream,
+// but generators are also called from internal code paths (e.g., re-emit on
+// schema bump), so re-check here. Mirrors VERSION_RE in versions.ts.
+const ALIAS_VERSION_RE = /^[A-Za-z0-9._+-]{1,64}$/;
+
+function assertSafeVersion(version: string): void {
+  if (!ALIAS_VERSION_RE.test(version)) {
+    throw new Error(`Refusing to generate shim for unsafe version: ${JSON.stringify(version)}`);
+  }
+}
+
 /**
  * Generate a versioned alias script that directly execs a specific version.
  * e.g., claude@2.0.65 -> directly runs that version's binary
  */
 export function generateVersionedAliasScript(agent: AgentId, version: string): string {
+  assertSafeVersion(version);
   const agentConfig = AGENTS[agent];
   const configDirName = `.${agent}`;
   const managedEnv = agent === 'claude'
@@ -508,6 +521,7 @@ export function getVersionedAliasPath(agent: AgentId, version: string): string {
  * e.g., claude@2.0.65
  */
 export function createVersionedAlias(agent: AgentId, version: string): string {
+  assertSafeVersion(version);
   ensureAgentsDir();
   const shimsDir = getShimsDir();
   const agentConfig = AGENTS[agent];

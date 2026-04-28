@@ -88,7 +88,6 @@ Quick start:
   agents init                     First-time setup (interactive)
   agents view                     See what's installed
   agents run <agent> ["prompt"]   Run an agent (interactive without prompt, headless with)
-  agents cloud run <prompt>       Dispatch a task to the cloud (Rush, Codex, Factory)
   agents sessions                 Browse past sessions across all agents
 
 Agent versions:
@@ -113,7 +112,6 @@ Packages:
 
 Run agents:
   run <agent|profile> [prompt]    Run an agent. Omit prompt for interactive mode.
-  cloud                           Dispatch tasks to cloud providers (Rush, Codex, Factory)
   teams                           Coordinate multiple agents on shared work
   routines                        Run agents on a cron schedule (scheduler auto-starts)
   sessions                        Browse and replay past runs
