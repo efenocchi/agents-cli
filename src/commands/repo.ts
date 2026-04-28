@@ -5,10 +5,10 @@
  * additional DotAgent repos alongside the primary ~/.agents-system/ repo so
  * private, work, or team skills can ship separately from public ones.
  *
- * Managed extras live at ~/.agents-system/.repos/<alias>/, while user-owned repos
- * may live anywhere. All extras are registered in meta.extraRepos. Sync
- * functions merge their resources into agent version homes after the
- * primary's (primary-wins on name collisions).
+ * Extras are user-level config: managed clones live at ~/.agents-<alias>/ as
+ * peer dirs to ~/.agents/, and user-owned repos may live anywhere. All extras
+ * are registered in meta.extraRepos. Sync functions merge their resources into
+ * agent version homes after the user repo's (user-wins on name collisions).
  */
 import type { Command } from 'commander';
 import chalk from 'chalk';
@@ -37,7 +37,6 @@ function resolveRepoPath(target?: string): string {
 
 import {
   ensureAgentsDir,
-  getAgentsDir,
   getExtraRepoDir,
   getSystemAgentsDir,
   getUserAgentsDir,
@@ -61,27 +60,9 @@ function deriveAlias(source: string): string {
     const match = parsed.url.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
     base = match ? match[2] : parsed.url;
   }
-  // Strip leading dots (e.g. ".agents-work" -> "agents-work") so the alias
-  // is usable as a visible directory name under ~/.agents-system/.repos/.
-  return base.replace(/^\.+/, '') || 'repo';
-}
-
-/** Ensure the .repos/ path and its parent .gitignore entry are set up. */
-function ensureExtraReposDir(agentsDir: string): void {
-  ensureAgentsDir();
-  const gitignorePath = path.join(agentsDir, '.gitignore');
-  let current = '';
-  try {
-    current = fs.readFileSync(gitignorePath, 'utf-8');
-  } catch {
-    /* file doesn't exist yet — we'll create it */
-  }
-  const line = '/.repos/';
-  const lines = current.split('\n');
-  if (!lines.includes(line) && !lines.includes('.repos/') && !lines.includes('/.repos')) {
-    const next = (current.endsWith('\n') || current === '' ? current : current + '\n') + line + '\n';
-    fs.writeFileSync(gitignorePath, next, 'utf-8');
-  }
+  // Strip leading dots and any "agents-" prefix so the alias is short and
+  // becomes ~/.agents-<alias>/ on disk (e.g. ".agents-work" -> "work").
+  return base.replace(/^\.+/, '').replace(/^agents-/, '') || 'repo';
 }
 
 /** Get the last commit short hash for a repo, or null if unavailable. */
@@ -99,12 +80,12 @@ async function getShortCommit(repoDir: string): Promise<string | null> {
 export function registerRepoCommands(program: Command): void {
   const repoCmd = program
     .command('repo')
-    .description('Manage extra DotAgent repos alongside the primary ~/.agents-system/ (for private or team skills)')
+    .description('Manage extra DotAgent repos alongside ~/.agents/ (for private or team skills)')
     .addHelpText('after', `
-Managed extras live at ~/.agents-system/.repos/<alias>/. User-owned repos can also live
-anywhere and be registered by path. Their skills, commands, and hooks merge into
-agent version homes after the primary repo's — so the primary (~/.agents-system/) wins
-on name collisions.
+Managed extras live at ~/.agents-<alias>/ as peer dirs to ~/.agents/. User-owned
+repos can also live anywhere and be registered by path. Their skills, commands,
+and hooks merge into agent version homes after the user repo's — so ~/.agents/
+wins on name collisions.
 
 Examples:
   # Scaffold your own editable repo (default: ~/.agents/)
@@ -184,7 +165,7 @@ Examples:
 
   repoCmd
     .command('add <source>')
-    .description('Register an existing local repo or clone a remote repo into ~/.agents-system/.repos/<alias>/')
+    .description('Register an existing local repo or clone a remote repo into ~/.agents-<alias>/')
     .option('--as <alias>', 'Override the auto-derived alias (letters, digits, _ or -)')
     .action(async (source: string, options: { as?: string }) => {
       const meta = readMeta();
@@ -221,7 +202,7 @@ Examples:
         return;
       }
 
-      ensureExtraReposDir(getAgentsDir());
+      ensureAgentsDir();
       const targetDir = getExtraRepoDir(alias);
       if (fs.existsSync(targetDir)) {
         console.log(chalk.red(`Directory already exists: ${targetDir}`));
@@ -239,7 +220,7 @@ Examples:
         }
         const log = await simpleGit(targetDir).log({ maxCount: 1 });
         const commit = log.latest?.hash.slice(0, 8) || 'unknown';
-        spinner.succeed(`Cloned ${source} -> .repos/${alias} (${commit})`);
+        spinner.succeed(`Cloned ${source} -> ${targetDir} (${commit})`);
       } catch (err) {
         spinner.fail(`Clone failed: ${(err as Error).message}`);
         try {
@@ -251,7 +232,7 @@ Examples:
         return;
       }
 
-      extras[alias] = { url: parsed.url, enabled: true };
+      extras[alias] = { url: parsed.url, path: targetDir, enabled: true };
       updateMeta({ extraRepos: extras });
 
       console.log(chalk.gray(`\nRegistered as "${alias}". Skills and commands from this repo will be`));
@@ -307,8 +288,11 @@ Examples:
       }
 
       const dir = resolveExtraRepoDir(alias, extras[alias]);
+      // Managed clones live at the default ~/.agents-<alias>/ — those we own
+      // and should delete on remove. Anything else is user-owned, leave alone.
+      const isManagedClone = path.resolve(dir) === path.resolve(getExtraRepoDir(alias));
       try {
-        if (!extras[alias].path && fs.existsSync(dir)) {
+        if (isManagedClone && fs.existsSync(dir)) {
           fs.rmSync(dir, { recursive: true, force: true });
         }
       } catch (err) {

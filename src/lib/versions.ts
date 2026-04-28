@@ -1191,6 +1191,44 @@ export function resolveVersion(agent: AgentId, projectPath?: string): string | n
 }
 
 /**
+ * Normalize a user-supplied @version token across CLI subcommands.
+ *
+ *   undefined / "" / "default"  -> undefined  (caller falls back to project pin or global default)
+ *   "latest"                    -> highest installed version (process.exit if none installed)
+ *   "x.y.z" (installed)         -> "x.y.z"
+ *   "x.y.z" (not installed)     -> process.exit with installed-list hint
+ *
+ * Use this anywhere the user can type `agents <cmd> claude@<token>` to keep the
+ * vocabulary consistent. Subcommands with different semantics for `latest`
+ * (install/remove/use, where `latest` means npm-latest) keep their existing
+ * parsing.
+ */
+export function resolveVersionAlias(agent: AgentId, raw: string | undefined | null): string | undefined {
+  if (!raw || raw === 'default') return undefined;
+
+  if (raw === 'latest') {
+    const installed = listInstalledVersions(agent);
+    if (installed.length === 0) {
+      console.error(chalk.red(`No ${agent} versions installed.`));
+      console.error(chalk.gray(`Install one: agents versions install ${agent}`));
+      process.exit(1);
+    }
+    return installed[installed.length - 1];
+  }
+
+  if (!isVersionInstalled(agent, raw)) {
+    const installed = listInstalledVersions(agent);
+    console.error(chalk.red(`${agent}@${raw} is not installed.`));
+    if (installed.length > 0) {
+      console.error(chalk.gray(`Installed: ${installed.join(', ')}`));
+    }
+    console.error(chalk.gray(`Install it: agents versions install ${agent}@${raw}`));
+    process.exit(1);
+  }
+  return raw;
+}
+
+/**
  * Get version specified in a project-root agents.yaml (not the user ~/.agents-system/agents.yaml).
  */
 export function getProjectVersion(agent: AgentId, startPath: string): string | null {
@@ -1475,6 +1513,7 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
     const entries = fs.readdirSync(src, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.isSymbolicLink()) continue;
+      if (entry.name.startsWith('.')) continue;
       const srcPath = safeJoin(src, entry.name);
       const destPath = safeJoin(dest, entry.name);
       if (entry.isDirectory()) {

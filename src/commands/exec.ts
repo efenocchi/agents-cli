@@ -29,7 +29,7 @@ import {
   RUN_STRATEGIES,
   type RotateResult,
 } from '../lib/rotate.js';
-import { getGlobalDefault, isVersionInstalled, listInstalledVersions, resolveVersion } from '../lib/versions.js';
+import { getGlobalDefault, resolveVersion, resolveVersionAlias } from '../lib/versions.js';
 import {
   formatNewerDuplicateNotice,
   getNewerDuplicateVersions,
@@ -59,37 +59,6 @@ interface ExecCommandActionOptions {
 /** Type guard that narrows a string to a known AgentId. */
 function isValidAgent(agent: string): agent is AgentId {
   return VALID_AGENTS.includes(agent);
-}
-
-/**
- * Normalize a user-supplied @version token.
- *  - undefined / "" / "default" -> undefined (downstream picks project pin or global default)
- *  - "latest" -> highest installed version, or exit if none installed
- *  - "x.y.z" -> kept as-is when installed; exits with installed-list hint when not
- */
-function resolveVersionAlias(agent: AgentId, raw: string | undefined): string | undefined {
-  if (!raw || raw === 'default') return undefined;
-
-  if (raw === 'latest') {
-    const installed = listInstalledVersions(agent);
-    if (installed.length === 0) {
-      console.error(chalk.red(`No ${agent} versions installed.`));
-      console.error(chalk.gray(`Install one: agents versions install ${agent}`));
-      process.exit(1);
-    }
-    return installed[installed.length - 1];
-  }
-
-  if (!isVersionInstalled(agent, raw)) {
-    const installed = listInstalledVersions(agent);
-    console.error(chalk.red(`${agent}@${raw} is not installed.`));
-    if (installed.length > 0) {
-      console.error(chalk.gray(`Installed: ${installed.join(', ')}`));
-    }
-    console.error(chalk.gray(`Install it: agents versions install ${agent}@${raw}`));
-    process.exit(1);
-  }
-  return raw;
 }
 
 /** Build a one-line banner describing which version the rotation picked. */

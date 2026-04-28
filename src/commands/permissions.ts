@@ -42,6 +42,7 @@ import {
   getVersionHomePath,
   promptAgentVersionSelection,
   resolveAgentVersionTargets,
+  resolveVersionAlias,
 } from '../lib/versions.js';
 import { recordVersionResources } from '../lib/state.js';
 import {
@@ -163,13 +164,13 @@ When to use:
         // Parse agent@version syntax
         const parts = agentArg.split('@');
         const agentName = parts[0];
-        const requestedVersion = parts[1] || null;
 
         const agentId = resolveAgentName(agentName);
         if (!agentId) {
           console.log(chalk.red(formatAgentError(agentName, PERMISSIONS_CAPABLE_AGENTS)));
           process.exit(1);
         }
+        const requestedVersion = resolveVersionAlias(agentId, parts[1]) ?? null;
 
         if (!PERMISSIONS_CAPABLE_AGENTS.includes(agentId)) {
           console.log(chalk.yellow(`${AGENTS[agentId].name} does not support fine-grained permissions`));
