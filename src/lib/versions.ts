@@ -115,8 +115,8 @@ export function getAvailableResources(cwd: string = process.cwd()): AvailableRes
     resourceBases.push({ scope: 'user', base: optionalUserBase });
   }
   resourceBases.push({ scope: 'user', base: userBase });
-  // Extra DotAgent repos registered via `agents repo add`. Ordered after the
-  // primary so primary names win in the dedup Set below.
+  // Extra DotAgent repos registered via `agents repo add`. Ordered last so
+  // project/user/system names win on collision.
   for (const extra of getEnabledExtraRepos()) {
     resourceBases.push({ scope: 'user', base: extra.dir });
   }
@@ -299,8 +299,8 @@ export function getActuallySyncedResources(agent: AgentId, version: string, opti
       const versionSkillDir = path.join(skillsDir, skill);
       const sourceCandidates: Array<string | null> = [
         projectSkillsDir ? path.join(projectSkillsDir, skill) : null,
-        path.join(centralSkillsDir, skill),
         optionalUserAgentsDir ? path.join(optionalUserAgentsDir, 'skills', skill) : null,
+        path.join(centralSkillsDir, skill),
         ...extraRepos.map((e) => path.join(e.dir, 'skills', skill)),
       ];
       const sourceDir = sourceCandidates.find((p) => p && fs.existsSync(p)) || null;
@@ -330,9 +330,9 @@ export function getActuallySyncedResources(agent: AgentId, version: string, opti
       const optionalUserFile = optionalUserHooksDir ? path.join(optionalUserHooksDir, hook) : null;
       const versionFile = path.join(hooksDir, hook);
       const hasProject = projectFile ? fs.existsSync(projectFile) : false;
-      const hasCentral = fs.existsSync(centralFile);
       const hasOptionalUser = optionalUserFile ? fs.existsSync(optionalUserFile) : false;
-      const sourceFile = hasProject ? projectFile! : hasCentral ? centralFile : optionalUserFile!;
+      const hasCentral = fs.existsSync(centralFile);
+      const sourceFile = hasProject ? projectFile! : hasOptionalUser ? optionalUserFile! : centralFile;
       if (!hasProject && !hasCentral && !hasOptionalUser) {
         result.hooks.push(hook);
         continue;
@@ -373,9 +373,9 @@ export function getActuallySyncedResources(agent: AgentId, version: string, opti
     const centralFile = path.join(memoryDir, file);
     const optionalUserFile = optionalUserMemoryDir ? path.join(optionalUserMemoryDir, file) : null;
     const hasProject = projectFile ? fs.existsSync(projectFile) : false;
-    const hasCentral = fs.existsSync(centralFile);
     const hasOptionalUser = optionalUserFile ? fs.existsSync(optionalUserFile) : false;
-    const sourceFile = hasProject ? projectFile! : hasCentral ? centralFile : optionalUserFile!;
+    const hasCentral = fs.existsSync(centralFile);
+    const sourceFile = hasProject ? projectFile! : hasOptionalUser ? optionalUserFile! : centralFile;
     if (!hasProject && !hasCentral && !hasOptionalUser) {
       result.memory.push(memName);
       continue;
@@ -1438,8 +1438,8 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
   const cwd = options.cwd || process.cwd();
   const projectAgentsDir = options.projectDir || getProjectAgentsDir(cwd);
   const optionalUserAgentsDir = getOptionalUserAgentsDir();
-  // Extra DotAgent repos registered via `agents repo add`. Looked up after the
-  // primary repo so primary wins on name collisions.
+  // Extra DotAgent repos registered via `agents repo add`. Looked up last so
+  // project/user/system repos win on name collisions.
   const extraRepos = getEnabledExtraRepos();
   const available = getAvailableResources(cwd);
 
@@ -1502,8 +1502,8 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
     for (const cmd of commandsToSync) {
       const candidates: Array<string | null> = [
         projectCommandsDir ? safeJoin(projectCommandsDir, `${cmd}.md`) : null,
-        safeJoin(centralCommands, `${cmd}.md`),
         optionalUserCommandsDir ? safeJoin(optionalUserCommandsDir, `${cmd}.md`) : null,
+        safeJoin(centralCommands, `${cmd}.md`),
         ...extraRepos.map((e) => safeJoin(path.join(e.dir, 'commands'), `${cmd}.md`)),
       ];
       const srcFile = candidates.find((p) => p && fs.existsSync(p) && !fs.lstatSync(p).isSymbolicLink()) || null;
@@ -1512,8 +1512,8 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
       if (commandsAsSkills) {
         const skillSourceDirs = [
           projectAgentsDir ? path.join(projectAgentsDir, 'skills') : null,
-          getSkillsDir(),
           optionalUserAgentsDir ? path.join(optionalUserAgentsDir, 'skills') : null,
+          getSkillsDir(),
           ...extraRepos.map((e) => path.join(e.dir, 'skills')),
         ];
         const installed = installCommandSkillToVersion(agentDir, cmd, srcFile, skillSourceDirs);
@@ -1554,8 +1554,8 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
       for (const skill of skillsToSync) {
         const candidates: Array<string | null> = [
           projectSkills ? safeJoin(projectSkills, skill) : null,
-          safeJoin(centralSkills, skill),
           optionalUserSkills ? safeJoin(optionalUserSkills, skill) : null,
+          safeJoin(centralSkills, skill),
           ...extraRepos.map((e) => safeJoin(path.join(e.dir, 'skills'), skill)),
         ];
         const srcDir = candidates.find((p) => p && fs.existsSync(p) && fs.lstatSync(p).isDirectory()) || null;
@@ -1597,8 +1597,8 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
           // inside that repo. Hooks must come from the user's central
           // ~/.agents/hooks/ or an explicitly enabled extra repo.
           const candidates: Array<string | null> = [
-            safeJoin(centralHooks, hook),
             optionalUserAgentsDir ? safeJoin(path.join(optionalUserAgentsDir, 'hooks'), hook) : null,
+            safeJoin(centralHooks, hook),
             ...extraRepos.map((e) => safeJoin(path.join(e.dir, 'hooks'), hook)),
           ];
           const srcFile = candidates.find((p) => p && fs.existsSync(p) && !fs.lstatSync(p).isSymbolicLink()) || null;
@@ -1668,8 +1668,8 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
     for (const mem of memoryToSync) {
       const candidates: Array<string | null> = [
         projectMemoryDir ? safeJoin(projectMemoryDir, `${mem}.md`) : null,
-        safeJoin(centralMemory, `${mem}.md`),
         optionalUserMemoryDir ? safeJoin(optionalUserMemoryDir, `${mem}.md`) : null,
+        safeJoin(centralMemory, `${mem}.md`),
         ...extraRepos.map((e) => safeJoin(path.join(e.dir, 'rules'), `${mem}.md`)),
       ];
       const srcFile = candidates.find((p) => p && fs.existsSync(p) && !fs.lstatSync(p).isSymbolicLink()) || null;

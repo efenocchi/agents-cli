@@ -303,7 +303,9 @@ Two repos with the same shape, different roles:
 | `~/.agents-system/` | **System repo** — core/built-in skills, commands, hooks, rules, MCP configs, permissions, and profiles that ship with `agents-cli`. The defaults every install gets. | Maintained upstream at [phnx-labs/.agents-system](https://github.com/phnx-labs/.agents-system) |
 | `~/.agents/` | **User repo** — your personal additions and overrides. This is what `agents push`/`pull` syncs. | You |
 
-Resolution order at sync time: **project > user > system**. A project-local `agents.yaml` wins, then `~/.agents/`, then `~/.agents-system/`. Same-named resources higher in the chain override the lower ones; everything else unions in.
+**Version pinning:** `agents.yaml` at project root pins which agent version to use (like `.nvmrc` for Node).
+
+**Resource resolution:** When syncing resources (commands, skills, rules, hooks, MCP, permissions), the order is **project > user > system**. A `.agents/` directory at project root wins, then `~/.agents/`, then `~/.agents-system/`. Same-named resources higher in the chain override lower ones; everything else unions in.
 
 ---
 
