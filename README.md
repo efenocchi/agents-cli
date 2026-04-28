@@ -316,6 +316,8 @@ Two repos with the same shape, different roles:
 
 **Resource resolution:** When syncing resources (commands, skills, rules, hooks, MCP, permissions), the order is **project > user > system**. A `.agents/` directory at project root wins, then `~/.agents/`, then `~/.agents-system/`. Same-named resources higher in the chain override lower ones; everything else unions in.
 
+See [docs/00-concepts.md](docs/00-concepts.md) for the full mental model: DotAgents repos, resource kinds, and how resolution works end-to-end.
+
 ---
 
 ## Private skills
