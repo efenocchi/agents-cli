@@ -703,7 +703,7 @@ export interface ViewJsonAgent {
 /**
  * Collect structured info for one or more agents without rendering to the
  * terminal. Used by `--json` output and any programmatic consumer (e.g. the
- * companion extension's "resume current session in best available version"
+ * agents-cli extension's "resume current session in best available version"
  * command).
  */
 async function collectAgentsJson(filterAgentId?: AgentId): Promise<ViewJsonAgent[]> {

@@ -161,7 +161,7 @@ function compareVersions(a: string, b: string): number {
 /** Fetch and display changelog entries between two versions from unpkg. */
 async function showWhatsNew(fromVersion: string, toVersion: string): Promise<void> {
   try {
-    const response = await fetch(`https://unpkg.com/@companion/agents-cli@${toVersion}/CHANGELOG.md`);
+    const response = await fetch(`https://unpkg.com/@phnx-labs/agents-cli@${toVersion}/CHANGELOG.md`);
     if (!response.ok) return;
 
     const changelog = await response.text();
@@ -239,7 +239,7 @@ function saveUpdateCheck(latestVersion: string): void {
 /** Present an interactive upgrade prompt (TTY) or a one-line hint (non-TTY). */
 async function promptUpgrade(latestVersion: string): Promise<void> {
   if (!process.stdout.isTTY) {
-    console.error(chalk.yellow(`Update available: ${VERSION} -> ${latestVersion}. Run: npm install -g @companion/agents-cli@latest`));
+    console.error(chalk.yellow(`Update available: ${VERSION} -> ${latestVersion}. Run: npm install -g @phnx-labs/agents-cli@latest`));
     return;
   }
 
@@ -273,7 +273,7 @@ async function promptUpgrade(latestVersion: string): Promise<void> {
     const execFileAsync = promisify(execFile);
     const spinner = ora('Upgrading...').start();
     try {
-      await execFileAsync('npm', ['install', '-g', '@companion/agents-cli@latest']);
+      await execFileAsync('npm', ['install', '-g', '@phnx-labs/agents-cli@latest']);
       spinner.succeed(`Upgraded to ${latestVersion}`);
       await showWhatsNew(VERSION, latestVersion);
       console.log();
@@ -285,7 +285,7 @@ async function promptUpgrade(latestVersion: string): Promise<void> {
       process.exit(result.status ?? 0);
     } catch {
       spinner.fail('Upgrade failed');
-      console.log(chalk.gray('Run manually: npm install -g @companion/agents-cli@latest'));
+      console.log(chalk.gray('Run manually: npm install -g @phnx-labs/agents-cli@latest'));
     }
     console.log();
   }
@@ -293,7 +293,7 @@ async function promptUpgrade(latestVersion: string): Promise<void> {
 
 /** Fire-and-forget: refresh the registry cache in background. Never blocks the command. */
 function refreshUpdateCacheInBackground(): void {
-  fetch('https://registry.npmjs.org/@companion/agents-cli/latest', {
+  fetch('https://registry.npmjs.org/@phnx-labs/agents-cli/latest', {
     signal: AbortSignal.timeout(2000),
   })
     .then((response) => (response.ok ? response.json() : null))
@@ -418,7 +418,7 @@ program
     .action(async () => {
       const spinner = ora('Checking for updates...').start();
       try {
-        const response = await fetch('https://registry.npmjs.org/@companion/agents-cli/latest', {
+        const response = await fetch('https://registry.npmjs.org/@phnx-labs/agents-cli/latest', {
           signal: AbortSignal.timeout(5000),
         });
         if (!response.ok) {
@@ -443,12 +443,12 @@ program
         const { execFile } = await import('child_process');
         const { promisify } = await import('util');
         const execFileAsync = promisify(execFile);
-        await execFileAsync('npm', ['install', '-g', '@companion/agents-cli@latest']);
+        await execFileAsync('npm', ['install', '-g', '@phnx-labs/agents-cli@latest']);
         spinner.succeed(`Upgraded to ${latestVersion}`);
         await showWhatsNew(VERSION, latestVersion);
       } catch (err) {
         spinner.fail('Upgrade failed');
-        console.log(chalk.gray('Run manually: npm install -g @companion/agents-cli@latest'));
+        console.log(chalk.gray('Run manually: npm install -g @phnx-labs/agents-cli@latest'));
       }
     });
 

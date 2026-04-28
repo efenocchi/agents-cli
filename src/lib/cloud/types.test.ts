@@ -7,8 +7,8 @@ describe('resolveDispatchRepos', () => {
   });
 
   it('falls back to singular repo when repos is absent', () => {
-    expect(resolveDispatchRepos({ prompt: 'do', repo: 'muqsitnawaz/agents' }))
-      .toEqual(['muqsitnawaz/agents']);
+    expect(resolveDispatchRepos({ prompt: 'do', repo: 'example-user/agents' }))
+      .toEqual(['example-user/agents']);
   });
 
   it('uses repos[] when provided', () => {
@@ -31,9 +31,9 @@ describe('resolveDispatchRepos', () => {
     expect(
       resolveDispatchRepos({
         prompt: 'do',
-        repos: ['Muqsitnawaz/Agents', 'muqsitnawaz/agents', 'MUQSITNAWAZ/AGENTS'],
+        repos: ['Example-User/Agents', 'example-user/agents', 'EXAMPLE-USER/AGENTS'],
       }),
-    ).toEqual(['Muqsitnawaz/Agents']);
+    ).toEqual(['Example-User/Agents']);
   });
 
   it('trims whitespace', () => {
