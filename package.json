@@ -19,9 +19,12 @@
     "ag": "dist/index.js"
   },
   "files": [
-    "dist",
-    "scripts",
-    "CHANGELOG.md"
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "scripts/postinstall.js",
+    "CHANGELOG.md",
+    "README.md",
+    "LICENSE"
   ],
   "repository": {
     "type": "git",
