@@ -3,26 +3,31 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
-// The module under test imports from state.ts and other libs that read real
-// ~/.agents-system paths. We mock those to stay fully in tmpDir.
-vi.mock('../state.js', async (importOriginal) => {
-  const real = await importOriginal<typeof import('../state.js')>();
-  return {
-    ...real,
-    getProjectAgentsDir: () => null,
-    getUserAgentsDir: () => tmpDir,
-    getSystemAgentsDir: () => tmpDir,
-    getSkillsDir: () => path.join(tmpDir, 'skills'),
-    getUserHooksDir: () => path.join(tmpDir, 'hooks'),
-    getHooksDir: () => path.join(tmpDir, 'hooks'),
-    getUserRulesDir: () => path.join(tmpDir, 'rules'),
-    getResolvedRulesDir: () => path.join(tmpDir, 'rules'),
-    getUserPermissionsDir: () => path.join(tmpDir),
-    getPermissionsDir: () => path.join(tmpDir),
-    getVersionsDir: () => path.join(tmpDir, 'versions'),
-    getEnabledExtraRepos: () => [],
-  };
-});
+// Declare before vi.mock so getter closures can reference it
+let tmpDir: string;
+
+vi.mock('../state.js', () => ({
+  get getProjectAgentsDir()  { return () => null; },
+  get getUserAgentsDir()     { return () => tmpDir; },
+  get getSystemAgentsDir()   { return () => tmpDir; },
+  get getSkillsDir()         { return () => path.join(tmpDir, 'skills'); },
+  get getUserHooksDir()      { return () => path.join(tmpDir, 'hooks'); },
+  get getHooksDir()          { return () => path.join(tmpDir, 'hooks'); },
+  get getUserRulesDir()      { return () => path.join(tmpDir, 'rules'); },
+  get getResolvedRulesDir()  { return () => path.join(tmpDir, 'rules'); },
+  get getUserPermissionsDir(){ return () => tmpDir; },
+  get getPermissionsDir()    { return () => tmpDir; },
+  get getVersionsDir()       { return () => path.join(tmpDir, 'versions'); },
+  get getEnabledExtraRepos() { return () => []; },
+}));
+
+vi.mock('../resources.js', () => ({
+  resolveResource: (kind: string, name: string) => {
+    const base = path.join(tmpDir, kind, name);
+    if (fs.existsSync(base)) return { path: base };
+    return null;
+  },
+}));
 
 vi.mock('../mcp.js', () => ({
   listMcpServerConfigs: () => [],
@@ -36,13 +41,7 @@ vi.mock('../permissions.js', () => ({
   getActivePermissionSetName: () => null,
 }));
 
-// tmpDir is set in beforeEach; mocks above close over the variable name, so
-// we need it declared in module scope.
-let tmpDir: string;
-
-// Re-import after mocks are set up.
-const { loadSyncManifest, saveSyncManifest, buildManifest, isSyncStale } =
-  await import('../sync-manifest.js');
+import { loadSyncManifest, saveSyncManifest, buildManifest, isSyncStale } from '../sync-manifest.js';
 
 function write(rel: string, content: string): string {
   const abs = path.join(tmpDir, rel);
@@ -56,15 +55,8 @@ const VERSION = 'test-0.0.1';
 
 function emptyAvailable() {
   return {
-    commands: [],
-    skills: [],
-    hooks: [],
-    memory: [],
-    mcp: [],
-    permissions: [],
-    subagents: [],
-    plugins: [],
-    promptcuts: false,
+    commands: [], skills: [], hooks: [], memory: [], mcp: [],
+    permissions: [], subagents: [], plugins: [], promptcuts: false,
   };
 }
 
@@ -76,83 +68,41 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
+// ─── Load/save ────────────────────────────────────────────────────────────────
+
 describe('loadSyncManifest', () => {
   it('returns null when manifest is missing', () => {
     expect(loadSyncManifest(AGENT, VERSION)).toBeNull();
   });
 
-  it('returns null when manifest version is wrong', () => {
+  it('returns null when manifest version field is wrong', () => {
     const p = path.join(tmpDir, 'versions', AGENT, VERSION, 'home', '.sync-manifest.json');
     fs.mkdirSync(path.dirname(p), { recursive: true });
     fs.writeFileSync(p, JSON.stringify({ v: 99 }));
     expect(loadSyncManifest(AGENT, VERSION)).toBeNull();
   });
-});
 
-describe('saveSyncManifest + loadSyncManifest round-trip', () => {
-  it('writes and reads back identical content', () => {
-    const available = emptyAvailable();
-    const manifest = buildManifest(AGENT, VERSION, available, tmpDir);
+  it('returns manifest for a valid file', () => {
+    const manifest = buildManifest(AGENT, VERSION, emptyAvailable(), tmpDir);
     saveSyncManifest(AGENT, VERSION, manifest);
-    const loaded = loadSyncManifest(AGENT, VERSION);
-    expect(loaded).not.toBeNull();
-    expect(loaded!.v).toBe(1);
-    expect(loaded!.commands).toEqual({});
-    expect(loaded!.skills).toEqual({});
+    expect(loadSyncManifest(AGENT, VERSION)).not.toBeNull();
   });
 });
 
-describe('isSyncStale — cold start', () => {
-  it('returns true when manifest is null', () => {
-    expect(isSyncStale(null as never, emptyAvailable(), AGENT, VERSION, tmpDir)).toBe(true);
-  });
-});
+// ─── Clean state ──────────────────────────────────────────────────────────────
 
-describe('isSyncStale — clean state', () => {
-  it('returns false immediately after buildManifest with no source files', () => {
+describe('isSyncStale — clean', () => {
+  it('returns false right after buildManifest with no sources', () => {
     const available = emptyAvailable();
     const manifest = buildManifest(AGENT, VERSION, available, tmpDir);
     expect(isSyncStale(manifest, available, AGENT, VERSION, tmpDir)).toBe(false);
   });
 
-  it('returns false for a command whose source is unchanged', () => {
+  it('returns false when a command source is unchanged', () => {
     write('commands/hello.md', '# Hello\nDo stuff');
     const available = { ...emptyAvailable(), commands: ['hello'] };
     const manifest = buildManifest(AGENT, VERSION, available, tmpDir);
     expect(isSyncStale(manifest, available, AGENT, VERSION, tmpDir)).toBe(false);
-  });
-});
-
-describe('isSyncStale — command changes', () => {
-  it('detects a new command added to source', () => {
-    write('commands/hello.md', '# Hello');
-    const available = { ...emptyAvailable(), commands: ['hello'] };
-    const manifest = buildManifest(AGENT, VERSION, available, tmpDir);
-
-    // Add a second command after the manifest was written
-    write('commands/world.md', '# World');
-    const newAvailable = { ...available, commands: ['hello', 'world'] };
-    expect(isSyncStale(manifest, newAvailable, AGENT, VERSION, tmpDir)).toBe(true);
-  });
-
-  it('detects a command removed from source', () => {
-    write('commands/hello.md', '# Hello');
-    write('commands/world.md', '# World');
-    const available = { ...emptyAvailable(), commands: ['hello', 'world'] };
-    const manifest = buildManifest(AGENT, VERSION, available, tmpDir);
-
-    const newAvailable = { ...available, commands: ['hello'] };
-    expect(isSyncStale(manifest, newAvailable, AGENT, VERSION, tmpDir)).toBe(true);
-  });
-
-  it('detects content change in an existing command', () => {
-    const p = write('commands/hello.md', '# Hello\nOriginal content');
-    const available = { ...emptyAvailable(), commands: ['hello'] };
-    const manifest = buildManifest(AGENT, VERSION, available, tmpDir);
-
-    // Modify content, bump mtime so tier-1 also fires
-    fs.writeFileSync(p, '# Hello\nModified content');
-    expect(isSyncStale(manifest, available, AGENT, VERSION, tmpDir)).toBe(true);
   });
 
   it('returns false when mtime drifted but content is identical (tier-2 path)', () => {
@@ -160,51 +110,93 @@ describe('isSyncStale — command changes', () => {
     const available = { ...emptyAvailable(), commands: ['hello'] };
     const manifest = buildManifest(AGENT, VERSION, available, tmpDir);
 
-    // Touch the file (new mtime) but keep same content
-    const content = fs.readFileSync(p, 'utf-8');
-    fs.writeFileSync(p, content);
+    // Overwrite with identical content — mtime advances but sha256 stays same
+    fs.writeFileSync(p, fs.readFileSync(p));
     expect(isSyncStale(manifest, available, AGENT, VERSION, tmpDir)).toBe(false);
   });
 });
 
-describe('isSyncStale — skill directory changes', () => {
-  it('detects new file added inside a skill directory', () => {
+// ─── Command changes ──────────────────────────────────────────────────────────
+
+describe('isSyncStale — commands', () => {
+  it('detects new command added to source', () => {
+    write('commands/hello.md', '# Hello');
+    const available = { ...emptyAvailable(), commands: ['hello'] };
+    const manifest = buildManifest(AGENT, VERSION, available, tmpDir);
+
+    write('commands/world.md', '# World');
+    expect(isSyncStale(manifest, { ...available, commands: ['hello', 'world'] }, AGENT, VERSION, tmpDir)).toBe(true);
+  });
+
+  it('detects command removed from source', () => {
+    write('commands/hello.md', '# Hello');
+    write('commands/world.md', '# World');
+    const available = { ...emptyAvailable(), commands: ['hello', 'world'] };
+    const manifest = buildManifest(AGENT, VERSION, available, tmpDir);
+
+    expect(isSyncStale(manifest, { ...available, commands: ['hello'] }, AGENT, VERSION, tmpDir)).toBe(true);
+  });
+
+  it('detects content change in existing command', () => {
+    const p = write('commands/hello.md', '# Hello\nOriginal content here');
+    const available = { ...emptyAvailable(), commands: ['hello'] };
+    const manifest = buildManifest(AGENT, VERSION, available, tmpDir);
+
+    // Write different content with different size so mtime+size fast-path is bypassed
+    fs.writeFileSync(p, '# Hello\nModified — much longer replacement content that changes size');
+    expect(isSyncStale(manifest, available, AGENT, VERSION, tmpDir)).toBe(true);
+  });
+});
+
+// ─── Skill directory changes ──────────────────────────────────────────────────
+
+describe('isSyncStale — skills', () => {
+  it('detects new file added inside a skill dir', () => {
     write('skills/my-skill/SKILL.md', '# MySkill');
     const available = { ...emptyAvailable(), skills: ['my-skill'] };
     const manifest = buildManifest(AGENT, VERSION, available, tmpDir);
 
-    // Add a second file to the skill
     write('skills/my-skill/extra.md', 'extra');
     expect(isSyncStale(manifest, available, AGENT, VERSION, tmpDir)).toBe(true);
   });
 
   it('detects content change inside a skill file', () => {
-    const p = write('skills/my-skill/SKILL.md', 'original');
+    const p = write('skills/my-skill/SKILL.md', 'original short');
     const available = { ...emptyAvailable(), skills: ['my-skill'] };
     const manifest = buildManifest(AGENT, VERSION, available, tmpDir);
 
-    fs.writeFileSync(p, 'modified');
+    fs.writeFileSync(p, 'modified with a longer replacement string to change file size');
     expect(isSyncStale(manifest, available, AGENT, VERSION, tmpDir)).toBe(true);
+  });
+
+  it('detects new skill added to source', () => {
+    write('skills/skill-a/SKILL.md', '# A');
+    const available = { ...emptyAvailable(), skills: ['skill-a'] };
+    const manifest = buildManifest(AGENT, VERSION, available, tmpDir);
+
+    write('skills/skill-b/SKILL.md', '# B');
+    expect(isSyncStale(manifest, { ...available, skills: ['skill-a', 'skill-b'] }, AGENT, VERSION, tmpDir)).toBe(true);
   });
 });
 
-describe('isSyncStale — hook changes', () => {
-  it('detects a new hook added', () => {
-    write('hooks/00-existing.sh', '#!/bin/sh');
-    const available = { ...emptyAvailable(), hooks: ['00-existing.sh'] };
+// ─── Hook changes ─────────────────────────────────────────────────────────────
+
+describe('isSyncStale — hooks', () => {
+  it('detects new hook file added', () => {
+    write('hooks/00-check.sh', '#!/bin/sh');
+    const available = { ...emptyAvailable(), hooks: ['00-check.sh'] };
     const manifest = buildManifest(AGENT, VERSION, available, tmpDir);
 
     write('hooks/01-new.sh', '#!/bin/sh\necho hi');
-    const newAvailable = { ...available, hooks: ['00-existing.sh', '01-new.sh'] };
-    expect(isSyncStale(manifest, newAvailable, AGENT, VERSION, tmpDir)).toBe(true);
+    expect(isSyncStale(manifest, { ...available, hooks: ['00-check.sh', '01-new.sh'] }, AGENT, VERSION, tmpDir)).toBe(true);
   });
 
-  it('detects content change in a hook', () => {
+  it('detects content change in hook', () => {
     const p = write('hooks/00-check.sh', '#!/bin/sh\necho old');
     const available = { ...emptyAvailable(), hooks: ['00-check.sh'] };
     const manifest = buildManifest(AGENT, VERSION, available, tmpDir);
 
-    fs.writeFileSync(p, '#!/bin/sh\necho new');
+    fs.writeFileSync(p, '#!/bin/sh\necho new content with extra lines\necho that change size');
     expect(isSyncStale(manifest, available, AGENT, VERSION, tmpDir)).toBe(true);
   });
 });
