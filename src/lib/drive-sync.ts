@@ -85,9 +85,7 @@ export function writeDriveConfig(config: DriveConfig): void {
 
 /** Set the remote target (user@host) for rsync operations. */
 export function setRemote(target: string): void {
-  if (!target.match(/^[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+$/)) {
-    throw new Error(`Invalid remote: ${target}. Expected: user@host`);
-  }
+  assertValidRemote(target);
   const config = readDriveConfig();
   config.remote = target;
   writeDriveConfig(config);
@@ -97,11 +95,14 @@ export function setRemote(target: string): void {
 export async function pull(): Promise<void> {
   const config = readDriveConfig();
   if (!config.remote) throw new Error('No remote configured. Run: agents drive remote <user@host>');
+  assertValidRemote(config.remote);
 
   const localDir = getDriveDir() + '/';
-  const remote = `${config.remote}:~/.agents/drive/`;
+  const remoteSpec = `${config.remote}:~/.agents/drive/`;
 
-  await execAsync(`rsync -az --exclude='config.json' ${remote} ${localDir}`);
+  // Argv form: no shell, no interpolation — even a tainted `config.remote` that
+  // somehow got past the regex cannot escape into command syntax.
+  await execFileAsync('rsync', ['-az', '--exclude=config.json', remoteSpec, localDir]);
 
   config.lastPull = new Date().toISOString();
   writeDriveConfig(config);
@@ -111,13 +112,15 @@ export async function pull(): Promise<void> {
 export async function push(): Promise<void> {
   const config = readDriveConfig();
   if (!config.remote) throw new Error('No remote configured. Run: agents drive remote <user@host>');
+  assertValidRemote(config.remote);
 
   const localDir = getDriveDir() + '/';
-  const remote = `${config.remote}:~/.agents/drive/`;
+  const remoteSpec = `${config.remote}:~/.agents/drive/`;
 
-  // Ensure remote directory exists
-  await execAsync(`ssh ${config.remote} 'mkdir -p ~/.agents/drive'`);
-  await execAsync(`rsync -az --exclude='config.json' ${localDir} ${remote}`);
+  // Ensure remote directory exists. ssh's command argument is one positional
+  // string; we hand it as a single argv element so no local shell sees it.
+  await execFileAsync('ssh', [config.remote, 'mkdir -p ~/.agents/drive']);
+  await execFileAsync('rsync', ['-az', '--exclude=config.json', localDir, remoteSpec]);
 
   config.lastPush = new Date().toISOString();
   writeDriveConfig(config);
