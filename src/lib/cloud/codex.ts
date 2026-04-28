@@ -16,6 +16,7 @@ import type {
   CloudTaskStatus,
   CloudEvent,
   DispatchOptions,
+  ProviderCapabilities,
 } from './types.js';
 import { resolveDispatchRepos } from './types.js';
 
@@ -100,12 +101,24 @@ export class CodexCloudProvider implements CloudProvider {
     this.defaultEnv = config?.env;
   }
 
-  supports(_options: DispatchOptions): boolean {
-    return codexAvailable();
+  capabilities(): ProviderCapabilities {
+    const available = codexAvailable();
+    return {
+      available,
+      dispatch: available,
+      status: available,
+      list: available,
+      stream: available,
+      cancel: false,
+      message: false,
+      multiRepo: false,
+      skills: false,
+      images: false,
+    };
   }
 
   async dispatch(options: DispatchOptions): Promise<CloudTask> {
-    const env = options.providerOptions?.env ?? this.defaultEnv;
+    const env = (options.providerOptions?.env as string | undefined) ?? this.defaultEnv;
     if (!env) {
       throw new Error('Codex Cloud requires --env <id>. Set a default in ~/.agents/agents.yaml under cloud.providers.codex.env.');
     }
@@ -215,17 +228,18 @@ export class CodexCloudProvider implements CloudProvider {
         const task = await this.status(taskId);
         if (task.status !== lastStatus) {
           lastStatus = task.status;
-          yield {
-            type: terminalStatuses.has(task.status) ? 'done' : 'status',
-            data: JSON.stringify({ status: task.status, summary: task.summary }),
-            timestamp: new Date().toISOString(),
-          };
+          const ts = new Date().toISOString();
+          if (terminalStatuses.has(task.status)) {
+            yield { type: 'done', status: task.status, summary: task.summary, timestamp: ts };
+          } else {
+            yield { type: 'status', status: task.status, timestamp: ts };
+          }
         }
         if (terminalStatuses.has(task.status)) break;
       } catch (err) {
         yield {
           type: 'error',
-          data: err instanceof Error ? err.message : String(err),
+          message: err instanceof Error ? err.message : String(err),
           timestamp: new Date().toISOString(),
         };
         break;
