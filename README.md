@@ -355,6 +355,8 @@ No. API keys come from your shell environment or each agent CLI's existing auth.
 
 macOS and Linux. Windows via WSL works but isn't first-class yet.
 
+**macOS-only features:** Keychain-based secrets (`agents secrets`, `agents profiles login`) require macOS. On Linux, use environment variables or `.env` files for API keys. Native Linux credential store support is planned.
+
 ### Do I need Node.js?
 
 The installer tries Bun first (faster), falls back to npm. Node 18+ required at runtime.
