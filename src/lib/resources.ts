@@ -3,6 +3,8 @@
  * Scans filesystem (source of truth) to find all installed resources for an agent.
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import type { AgentId } from './types.js';
 import { AGENTS, listInstalledMcpsWithScope } from './agents.js';
 import { listInstalledCommandsWithScope } from './commands.js';
@@ -11,6 +13,121 @@ import { listInstalledHooksWithScope } from './hooks.js';
 import { listInstalledInstructionsWithScope } from './memory.js';
 import { getEffectiveHome } from './versions.js';
 import { listMcpServerConfigs } from './mcp.js';
+import {
+  getProjectAgentsDir,
+  getUserAgentsDir,
+  getSystemAgentsDir,
+  getEnabledExtraRepos,
+} from './state.js';
+
+// ─── Resource resolver ────────────────────────────────────────────────────────
+
+/** Resource kind — matches the subdirectory name under each repo root. */
+export type ResourceKind =
+  | 'commands'
+  | 'skills'
+  | 'hooks'
+  | 'rules'
+  | 'mcp'
+  | 'permissions'
+  | 'subagents'
+  | 'profiles'
+  | 'secrets';
+
+/** A resource resolved with its origin. */
+export interface ResolvedResource {
+  name: string;
+  /** Absolute path to the resource file or directory. */
+  path: string;
+  source: 'project' | 'user' | 'system';
+}
+
+/**
+ * Resolve a single resource by kind + name using project > user > system precedence.
+ * For file-based resources the path ends in `.md`, `.yaml`, or `.yml` as appropriate.
+ * Returns null when the resource does not exist in any scope.
+ *
+ * Extra repos are searched last (after system) to match syncResourcesToVersion order.
+ */
+export function resolveResource(
+  kind: ResourceKind,
+  name: string,
+  cwd?: string,
+): ResolvedResource | null {
+  const projectDir = getProjectAgentsDir(cwd);
+  const extraRepos = getEnabledExtraRepos();
+
+  const candidates: Array<[string, 'project' | 'user' | 'system']> = [
+    ...(projectDir ? [[path.join(projectDir, kind), 'project' as const]] : []),
+    [path.join(getUserAgentsDir(), kind), 'user'],
+    [path.join(getSystemAgentsDir(), kind), 'system'],
+    ...extraRepos.map((e) => [path.join(e.dir, kind), 'system' as const]),
+  ];
+
+  for (const [dir, source] of candidates) {
+    if (!fs.existsSync(dir)) continue;
+
+    // Try exact name (for directories like skills/subagents)
+    const exactPath = path.join(dir, name);
+    if (fs.existsSync(exactPath)) {
+      return { name, path: exactPath, source };
+    }
+
+    // Try with common file extensions
+    for (const ext of ['.md', '.yaml', '.yml']) {
+      const withExt = exactPath + ext;
+      if (fs.existsSync(withExt)) {
+        return { name, path: withExt, source };
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * List all resources of a given kind across project, user, and system scopes.
+ * Returns a deduplicated union (project wins on name collision), each entry
+ * annotated with its origin source.
+ */
+export function listResources(
+  kind: ResourceKind,
+  cwd?: string,
+): ResolvedResource[] {
+  const seen = new Set<string>();
+  const results: ResolvedResource[] = [];
+  const projectDir = getProjectAgentsDir(cwd);
+  const extraRepos = getEnabledExtraRepos();
+
+  const roots: Array<[string, 'project' | 'user' | 'system']> = [
+    ...(projectDir ? [[path.join(projectDir, kind), 'project' as const]] : []),
+    [path.join(getUserAgentsDir(), kind), 'user'],
+    [path.join(getSystemAgentsDir(), kind), 'system'],
+    ...extraRepos.map((e) => [path.join(e.dir, kind), 'system' as const]),
+  ];
+
+  for (const [dir, source] of roots) {
+    if (!fs.existsSync(dir)) continue;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch { continue; }
+
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue;
+      const rawName = entry.name.replace(/\.(md|yaml|yml)$/, '');
+      if (seen.has(rawName)) continue;
+      seen.add(rawName);
+      results.push({
+        name: rawName,
+        path: path.join(dir, entry.name),
+        source,
+      });
+    }
+  }
+
+  return results;
+}
 
 /** A single installed resource (command, skill, memory file, or hook). */
 export interface ResourceEntry {

@@ -11,7 +11,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { AGENTS, ALL_AGENT_IDS } from './agents.js';
-import { getMemoryDir, getProjectAgentsDir } from './state.js';
+import { getMemoryDir, getResolvedRulesDir, getProjectAgentsDir } from './state.js';
 import { getEffectiveHome } from './versions.js';
 import type { AgentId } from './types.js';
 
@@ -352,7 +352,7 @@ export function installInstructionsCentrally(
  * List top-level rules files from central ~/.agents/rules/ directory.
  */
 export function listCentralMemory(): string[] {
-  const centralDir = getMemoryDir();
+  const centralDir = getResolvedRulesDir();
   if (!fs.existsSync(centralDir)) {
     return [];
   }

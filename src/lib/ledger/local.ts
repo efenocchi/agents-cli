@@ -24,7 +24,7 @@ import {
   type LedgerTaskView,
 } from './types.js';
 
-const DEFAULT_ROOT = path.join(getAgentsDir(), 'ledger');
+const DEFAULT_ROOT = path.join(getAgentsDir(), 'teams');
 
 async function pathExists(p: string): Promise<boolean> {
   try { await fs.access(p); return true; } catch { return false; }
@@ -52,7 +52,7 @@ export class LocalDiskLedger implements LedgerStore {
 
   /** Resolve and ensure the root + team subdirs exist. */
   private async teamDir(team_id: string): Promise<string> {
-    const d = path.join(this.root, 'teams', team_id);
+    const d = path.join(this.root, team_id);
     await fs.mkdir(path.join(d, 'sessions'), { recursive: true });
     await fs.mkdir(path.join(d, 'artifacts'), { recursive: true });
     await fs.mkdir(path.join(d, 'bugs'), { recursive: true });
