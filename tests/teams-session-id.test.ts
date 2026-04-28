@@ -153,14 +153,14 @@ describe('AgentProcess: remoteSessionId extraction', () => {
   // means teammates stop inheriting agents-cli-synced config correctly.
   describe('buildCommand', () => {
     it('does NOT pass --settings for Claude (CLAUDE_CONFIG_DIR handles config)', () => {
-      const mgr = new AgentManager(50, 10, tmpBase);
+      const mgr = new AgentManager(50, tmpBase);
       // @ts-expect-error — exercising private method
       const cmd: string[] = mgr.buildCommand('claude', 'hi', 'edit', 'some-model', null, 'session-uuid');
       expect(cmd).not.toContain('--settings');
     });
 
     it('does pass --session-id for Claude when given (identity pinning)', () => {
-      const mgr = new AgentManager(50, 10, tmpBase);
+      const mgr = new AgentManager(50, tmpBase);
       // @ts-expect-error — private
       const cmd: string[] = mgr.buildCommand('claude', 'hi', 'edit', 'some-model', null, 'the-uuid');
       const idx = cmd.indexOf('--session-id');
@@ -169,7 +169,7 @@ describe('AgentProcess: remoteSessionId extraction', () => {
     });
 
     it('does pass --add-dir for Claude when cwd is given (directory access)', () => {
-      const mgr = new AgentManager(50, 10, tmpBase);
+      const mgr = new AgentManager(50, tmpBase);
       // @ts-expect-error — private
       const cmd: string[] = mgr.buildCommand('claude', 'hi', 'edit', 'some-model', '/tmp/work', null);
       const idx = cmd.indexOf('--add-dir');
@@ -177,13 +177,16 @@ describe('AgentProcess: remoteSessionId extraction', () => {
       expect(cmd[idx + 1]).toBe('/tmp/work');
     });
 
-    it('non-Claude agents (Codex) get no --settings / --add-dir / --session-id', () => {
-      const mgr = new AgentManager(50, 10, tmpBase);
+    it('non-Claude agents (Codex) get no --settings / --session-id (but do get --add-dir for ~/.agents)', () => {
+      const mgr = new AgentManager(50, tmpBase);
       // @ts-expect-error — private
       const cmd: string[] = mgr.buildCommand('codex', 'hi', 'edit', 'some-model', '/tmp', 'uuid');
       expect(cmd).not.toContain('--settings');
-      expect(cmd).not.toContain('--add-dir');
       expect(cmd).not.toContain('--session-id');
+      // Codex gets --add-dir ~/.agents so subprocesses can write to the store.
+      const addDirIdx = cmd.indexOf('--add-dir');
+      expect(addDirIdx).toBeGreaterThan(-1);
+      expect(cmd[addDirIdx + 1]).toContain('.agents');
     });
   });
 
@@ -195,7 +198,7 @@ describe('AgentProcess: remoteSessionId extraction', () => {
     }
 
     it('rejects --after when --name is not provided', async () => {
-      const mgr = new AgentManager(50, 10, freshBase());
+      const mgr = new AgentManager(50, freshBase());
       await expect(
         mgr.spawn('t', 'claude', 'hi', null, 'plan', 'low', null, null, null, null, ['someone'])
       ).rejects.toThrow(/--after without --name/i);
@@ -203,7 +206,7 @@ describe('AgentProcess: remoteSessionId extraction', () => {
 
     it('rejects --after pointing at a teammate that does not exist', async () => {
       const base = freshBase();
-      const mgr = new AgentManager(50, 10, base);
+      const mgr = new AgentManager(50, base);
       await expect(
         mgr.spawn('t', 'claude', 'hi', null, 'plan', 'low', null, null, null, 'alice', ['ghost'])
       ).rejects.toThrow(/no teammate named 'ghost'/i);
@@ -211,7 +214,7 @@ describe('AgentProcess: remoteSessionId extraction', () => {
 
     it('rejects a cycle: adding B after A when A already depends on B', async () => {
       const base = freshBase();
-      const mgr = new AgentManager(50, 10, base);
+      const mgr = new AgentManager(50, base);
       // First teammate: no deps.
       const a = await mgr.spawn('t', 'claude', 'x', null, 'plan', 'low', null, null, null, 'a');
       expect(a.status).toBe('running');
@@ -221,7 +224,7 @@ describe('AgentProcess: remoteSessionId extraction', () => {
       // walk. We're simulating a prior `teams add a --after b`, so we need b
       // to exist first. Start over with the correct order.
       const base2 = freshBase();
-      const mgr2 = new AgentManager(50, 10, base2);
+      const mgr2 = new AgentManager(50, base2);
       // For a true cycle test we need: b depends on a, then try to make a depend on b.
       // But a was added first without deps — and we can't re-add a. So we do:
       //   add alice (no deps)
@@ -236,7 +239,7 @@ describe('AgentProcess: remoteSessionId extraction', () => {
 
     it('stages teammate with deps as PENDING', async () => {
       const base = freshBase();
-      const mgr = new AgentManager(50, 10, base);
+      const mgr = new AgentManager(50, base);
       const alice = await mgr.spawn('t', 'claude', 'x', null, 'plan', 'low', null, null, null, 'alice');
       // alice will try to actually launch (--mode plan, with a real claude shim).
       // In test env claude may or may not be present; what we care about for
@@ -252,7 +255,7 @@ describe('AgentProcess: remoteSessionId extraction', () => {
 
     it('startReady does not launch a pending teammate whose dep is still running', async () => {
       const base = freshBase();
-      const mgr = new AgentManager(50, 10, base);
+      const mgr = new AgentManager(50, base);
       const alice = await mgr.spawn('t', 'claude', 'x', null, 'plan', 'low', null, null, null, 'alice');
       const bob = await mgr.spawn(
         't', 'claude', 'y', null, 'plan', 'low', null, null, null, 'bob', ['alice']
@@ -270,7 +273,7 @@ describe('AgentProcess: remoteSessionId extraction', () => {
 
     it('startReady launches a pending teammate once all deps are COMPLETED', async () => {
       const base = freshBase();
-      const mgr = new AgentManager(50, 10, base);
+      const mgr = new AgentManager(50, base);
       const alice = await mgr.spawn('t', 'claude', 'x', null, 'plan', 'low', null, null, null, 'alice');
       await mgr.spawn('t', 'claude', 'y', null, 'plan', 'low', null, null, null, 'bob', ['alice']);
 
@@ -296,7 +299,7 @@ describe('AgentProcess: remoteSessionId extraction', () => {
 
     it('startReady does NOT launch if a dep failed', async () => {
       const base = freshBase();
-      const mgr = new AgentManager(50, 10, base);
+      const mgr = new AgentManager(50, base);
       const alice = await mgr.spawn('t', 'claude', 'x', null, 'plan', 'low', null, null, null, 'alice');
       await mgr.spawn('t', 'claude', 'y', null, 'plan', 'low', null, null, null, 'bob', ['alice']);
 
@@ -312,7 +315,7 @@ describe('AgentProcess: remoteSessionId extraction', () => {
 
     it('--model override is stored and wins over effort→model map', async () => {
       const base = freshBase();
-      const mgr = new AgentManager(50, 10, base);
+      const mgr = new AgentManager(50, base);
       // Stage a teammate so we don't depend on claude binary being installed.
       const alice = await mgr.spawn('t', 'claude', 'x', null, 'plan', 'low', null, null, null, 'alice');
       const bob = await mgr.spawn(
@@ -329,7 +332,7 @@ describe('AgentProcess: remoteSessionId extraction', () => {
 
     it('--env overrides are stored and round-trip through disk', async () => {
       const base = freshBase();
-      const mgr = new AgentManager(50, 10, base);
+      const mgr = new AgentManager(50, base);
       const alice = await mgr.spawn('t', 'claude', 'x', null, 'plan', 'low', null, null, null, 'alice');
       const bob = await mgr.spawn(
         't', 'claude', 'y', null, 'plan', 'low', null, null, null, 'bob',
@@ -345,7 +348,7 @@ describe('AgentProcess: remoteSessionId extraction', () => {
 
     it('loadFromDisk round-trips status correctly (including PENDING)', async () => {
       const base = freshBase();
-      const mgr = new AgentManager(50, 10, base);
+      const mgr = new AgentManager(50, base);
       const alice = await mgr.spawn('t', 'claude', 'x', null, 'plan', 'low', null, null, null, 'alice');
       const bob = await mgr.spawn(
         't', 'claude', 'y', null, 'plan', 'low', null, null, null, 'bob', ['alice']

@@ -11,7 +11,7 @@ import * as path from 'path';
 import * as yaml from 'yaml';
 import type { AgentId, RunStrategy } from './types.js';
 import { getAccountInfo, type AccountInfo } from './agents.js';
-import { readMeta, writeMeta } from './state.js';
+import { readMeta, writeMeta, getAgentsDir } from './state.js';
 import { listInstalledVersions, getVersionHomePath, resolveVersion } from './versions.js';
 import {
   getUsageInfoByIdentity,
@@ -285,6 +285,31 @@ export async function selectAvailableVersion(
  * strategy cannot find a usable candidate, fall back to the pinned
  * workspace/global version.
  */
+/**
+ * Record a rotation pick so parallel callers see it as recently-used.
+ * Writes a stamp file per agent — lightweight, no locking needed since
+ * a torn write just means the next reader sees a stale timestamp (harmless).
+ */
+function recordRotationPick(agent: AgentId, version: string): void {
+  const stampPath = path.join(getAgentsDir(), `rotate-stamp-${agent}.json`);
+  try {
+    fs.writeFileSync(stampPath, JSON.stringify({ version, ts: Date.now() }), 'utf-8');
+  } catch { /* best effort — doesn't block the run */ }
+}
+
+/**
+ * Read the most recent rotation pick for an agent. Returns null if no stamp
+ * or stamp is older than 60 seconds (stale).
+ */
+function readRotationStamp(agent: AgentId): string | null {
+  const stampPath = path.join(getAgentsDir(), `rotate-stamp-${agent}.json`);
+  try {
+    const raw = JSON.parse(fs.readFileSync(stampPath, 'utf-8')) as { version: string; ts: number };
+    if (Date.now() - raw.ts < 60_000) return raw.version;
+  } catch { /* missing or corrupt — treat as no stamp */ }
+  return null;
+}
+
 export async function resolveRunVersion(agent: AgentId, strategy: RunStrategy, cwd: string = process.cwd()): Promise<{
   version: string | null;
   rotation: RotateResult | null;
@@ -297,7 +322,18 @@ export async function resolveRunVersion(agent: AgentId, strategy: RunStrategy, c
   const rotation = strategy === 'available'
     ? await selectAvailableVersion(agent, fallback)
     : await selectRotateVersion(agent);
-  if (rotation) return { version: rotation.picked.version, rotation };
+
+  if (rotation) {
+    // If another process just picked the same version (within 60s), try the
+    // next healthy candidate to distribute load across accounts.
+    const recentPick = readRotationStamp(agent);
+    if (recentPick === rotation.picked.version && rotation.healthy.length > 1) {
+      const alt = rotation.healthy.find(c => c.version !== recentPick);
+      if (alt) rotation.picked = alt;
+    }
+    recordRotationPick(agent, rotation.picked.version);
+    return { version: rotation.picked.version, rotation };
+  }
 
   return { version: fallback, rotation: null };
 }

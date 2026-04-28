@@ -21,7 +21,7 @@ afterEach(() => {
 
 function runVersionSync(home: string, expression: string): unknown {
   const moduleUrl = pathToFileURL(path.resolve('src/lib/versions.ts')).href;
-  const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
+  const child = spawnSync('bun', ['--input-type=module', '-e', `
     import { syncResourcesToVersion } from ${JSON.stringify(moduleUrl)};
     const home = ${JSON.stringify(home)};
     const result = ${expression};

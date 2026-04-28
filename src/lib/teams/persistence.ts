@@ -67,6 +67,7 @@ const TEAMS_DIR = path.join(homedir(), '.agents', 'teams');
 
 // Legacy paths (for migration)
 const LEGACY_CONFIG_DIR = path.join(homedir(), '.agents');
+// Legacy migration from pre-OSS brand; safe to remove after 2026-07
 const LEGACY_BASE_DIR = path.join(homedir(), '.swarmify');
 const TMP_FALLBACK_DIR = path.join(tmpdir(), 'agents');
 

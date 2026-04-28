@@ -8,7 +8,7 @@
   <a href="https://www.npmjs.com/package/@swarmify/agents-cli"><img src="https://img.shields.io/npm/v/@swarmify/agents-cli.svg?style=flat-square" alt="npm version" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/npm/l/@swarmify/agents-cli.svg?style=flat-square" alt="license" /></a>
   <a href="https://www.npmjs.com/package/@swarmify/agents-cli"><img src="https://img.shields.io/npm/dm/@swarmify/agents-cli.svg?style=flat-square" alt="downloads" /></a>
-  <a href="https://github.com/swarmify/agents-cli"><img src="https://img.shields.io/badge/github-swarmify%2Fagents--cli-blue?style=flat-square" alt="github" /></a>
+  <a href="https://github.com/phnx-labs/agents-cli"><img src="https://img.shields.io/badge/github-phnx--labs%2Fagents--cli-blue?style=flat-square" alt="github" /></a>
 </p>
 
 **The missing toolchain for CLI coding agents.** Pin versions per project. Share config across Claude Code, Codex, Gemini CLI, and Cursor. Stop setting up the same MCP server three times.
@@ -39,7 +39,7 @@ npm install -g @swarmify/agents-cli
 bun install -g @swarmify/agents-cli
 ```
 
-Source: [github.com/swarmify/agents-cli](https://github.com/swarmify/agents-cli)
+Source: [github.com/phnx-labs/agents-cli](https://github.com/phnx-labs/agents-cli)
 
 Also available as `ag` -- all commands work with both `agents` and `ag`.
 
@@ -374,7 +374,7 @@ Agents are defined in [src/lib/agents.ts](src/lib/agents.ts) -- each is a config
 ## Contributing
 
 ```bash
-git clone https://github.com/swarmify/agents-cli
+git clone https://github.com/phnx-labs/agents-cli
 cd agents-cli
 bun install && bun run build && bun test
 ```
