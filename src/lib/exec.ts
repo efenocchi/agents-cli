@@ -80,15 +80,23 @@ export function buildExecEnv(options: ExecOptions): NodeJS.ProcessEnv {
   // understand. Strip foreign vars and pin the right one to the versioned home.
   if (options.agent === 'claude') {
     const cwd = options.cwd || process.cwd();
-    const version = options.version || resolveVersion('claude', cwd);
-    if (version && isVersionInstalled('claude', version)) {
+    const resolvedVersion = options.version ?? resolveVersion('claude', cwd);
+    // Use an explicitly pinned version unconditionally; for auto-resolved versions
+    // only inject the path when the version is actually installed on disk.
+    const version = options.version
+      ? resolvedVersion
+      : (resolvedVersion && isVersionInstalled('claude', resolvedVersion) ? resolvedVersion : null);
+    if (version) {
       result.CLAUDE_CONFIG_DIR = path.join(getVersionHomePath('claude', version), '.claude');
     }
     delete result.CODEX_HOME;
   } else if (options.agent === 'codex') {
     const cwd = options.cwd || process.cwd();
-    const version = options.version || resolveVersion('codex', cwd);
-    if (version && isVersionInstalled('codex', version)) {
+    const resolvedVersion = options.version ?? resolveVersion('codex', cwd);
+    const version = options.version
+      ? resolvedVersion
+      : (resolvedVersion && isVersionInstalled('codex', resolvedVersion) ? resolvedVersion : null);
+    if (version) {
       result.CODEX_HOME = path.join(getVersionHomePath('codex', version), '.codex');
     }
     delete result.CLAUDE_CONFIG_DIR;

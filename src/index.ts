@@ -61,6 +61,8 @@ import { registerProfilesCommands } from './commands/profiles.js';
 import { registerSecretsCommands } from './commands/secrets.js';
 import { registerCloudCommands } from './commands/cloud.js';
 import { registerFactoryCommands } from './commands/factory.js';
+import { registerUsageCommand } from './commands/usage.js';
+import { registerAliasCommand } from './commands/alias.js';
 import { applyGlobalHelpConventions } from './lib/help.js';
 import { isPromptCancelled } from './commands/utils.js';
 
@@ -392,6 +394,8 @@ registerRefreshMemoryCommand(program);
 registerDriveCommands(program);
 registerCloudCommands(program);
 registerFactoryCommands(program);
+registerUsageCommand(program);
+registerAliasCommand(program);
 registerPtyCommands(program);
 
 // Deprecated 'jobs' and 'cron' aliases for 'routines'
