@@ -19,7 +19,7 @@ import { isGitRepo } from '../lib/git.js';
 import { isPromptCancelled, isInteractiveTerminal } from './utils.js';
 import { AGENTS, getUnmanagedAgentInstalls, countSessionFiles, agentLabel } from '../lib/agents.js';
 import { setGlobalDefault } from '../lib/versions.js';
-import { ensureShimCurrent, isShimsInPath, addShimsToPath, getPathSetupInstructions } from '../lib/shims.js';
+import { ensureShimCurrent, switchHomeFileSymlinks, isShimsInPath, addShimsToPath, getPathSetupInstructions } from '../lib/shims.js';
 
 const HOME = os.homedir();
 
@@ -27,12 +27,17 @@ const HOME = os.homedir();
  * Import an existing unmanaged agent installation into agents-cli.
  * Moves the config dir into the versions structure and creates a symlink.
  */
-async function importAgent(agentId: AgentId, version: string): Promise<{ success: boolean; error?: string }> {
+async function importAgent(agentId: AgentId, version: string): Promise<{ success: boolean; skipped?: boolean; error?: string }> {
   const agent = AGENTS[agentId];
   const configDir = agent.configDir;
   const versionsDir = getVersionsDir();
   const versionHome = path.join(versionsDir, agentId, version, 'home');
   const versionConfigDir = path.join(versionHome, `.${agentId}`);
+
+  // Skip if version dir already exists (collision)
+  if (fs.existsSync(versionConfigDir)) {
+    return { success: false, skipped: true, error: `${version} already installed` };
+  }
 
   try {
     // Create version home directory
@@ -46,6 +51,9 @@ async function importAgent(agentId: AgentId, version: string): Promise<{ success
 
     // Set as global default
     setGlobalDefault(agentId, version);
+
+    // Handle home-level files (e.g. ~/.claude.json)
+    switchHomeFileSymlinks(agentId, version);
 
     // Ensure shim exists
     ensureShimCurrent(agentId);
@@ -119,6 +127,8 @@ export async function runInit(program: Command, options: { force?: boolean } = {
         const result = await importAgent(install.agentId, version);
         if (result.success) {
           spinner.succeed(`${agentLabel(install.agentId)} imported`);
+        } else if (result.skipped) {
+          spinner.warn(`${agentLabel(install.agentId)}: ${result.error} (skipped)`);
         } else {
           spinner.fail(`${agentLabel(install.agentId)}: ${result.error}`);
         }
