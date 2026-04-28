@@ -127,6 +127,21 @@ What it syncs:
 Skip CLI installs with --skip-clis when you only want config updates, not version changes.
 `)
     .action(async (arg1: string | undefined, options) => {
+      // Deprecation banner — `agents pull` is on its way out. agents-cli now
+      // auto-syncs the system repo in the background and surfaces upstream
+      // changes for user/extra repos as one-line notices. Repo lifecycle is
+      // managed under `agents repo`. We keep this command functional today
+      // because `agents init` still invokes it for first-time setup; once
+      // init is refactored to call the bootstrap helpers directly, this
+      // command will hard-error like `agents memory` does.
+      if (!options.yes && process.argv[2] === 'pull') {
+        process.stderr.write(
+          'agents-cli: "agents pull" is deprecated.\n' +
+            '            First-time setup:  agents init\n' +
+            '            Force a sync now:  agents repo pull\n' +
+            '            Push your repo:    agents repo push\n\n',
+        );
+      }
       const skipPrompts = options.yes || !isInteractiveTerminal();
       let agentFilter: AgentId | undefined;
 

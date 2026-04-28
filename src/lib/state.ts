@@ -44,7 +44,7 @@ const SYSTEM_MCP_DIR = path.join(SYSTEM_AGENTS_DIR, 'mcp');
 const SYSTEM_PERMISSIONS_DIR = path.join(SYSTEM_AGENTS_DIR, 'permissions');
 const SYSTEM_SUBAGENTS_DIR = path.join(SYSTEM_AGENTS_DIR, 'subagents');
 const SYSTEM_SECRETS_DIR = path.join(SYSTEM_AGENTS_DIR, 'secrets');
-const SYSTEM_PROMPTCUTS_FILE = path.join(SYSTEM_AGENTS_DIR, 'promptcuts.yaml');
+const SYSTEM_PROMPTCUTS_FILE = path.join(SYSTEM_AGENTS_DIR, 'hooks', 'promptcuts.yaml');
 const SYSTEM_MCP_CONFIG_FILE = path.join(SYSTEM_AGENTS_DIR, 'mcp.json');
 const SYSTEM_INSTRUCTIONS_FILE = path.join(SYSTEM_AGENTS_DIR, 'instructions.md');
 
@@ -69,7 +69,7 @@ const USER_MCP_DIR = path.join(USER_AGENTS_DIR, 'mcp');
 const USER_PERMISSIONS_DIR = path.join(USER_AGENTS_DIR, 'permissions');
 const USER_SUBAGENTS_DIR = path.join(USER_AGENTS_DIR, 'subagents');
 const USER_SECRETS_DIR = path.join(USER_AGENTS_DIR, 'secrets');
-const USER_PROMPTCUTS_FILE = path.join(USER_AGENTS_DIR, 'promptcuts.yaml');
+const USER_PROMPTCUTS_FILE = path.join(USER_AGENTS_DIR, 'hooks', 'promptcuts.yaml');
 
 const META_HEADER = `# agents-cli metadata
 # Auto-generated - do not edit manually
@@ -166,8 +166,36 @@ export function getRulesDir(): string { return SYSTEM_RULES_DIR; }
 /** Back-compat export; resolves to system rules dir. */
 export function getMemoryDir(): string { return SYSTEM_RULES_DIR; }
 
-/** Alias for getMemoryDir(); resolves to system rules dir. */
-export function getResolvedRulesDir(): string { return SYSTEM_RULES_DIR; }
+let legacyMemoryWarned = false;
+
+/**
+ * Read-side resolution for the canonical rules dir.
+ *
+ * Returns SYSTEM_RULES_DIR normally. Falls back to the legacy
+ * SYSTEM_LEGACY_MEMORY_DIR (~/.agents-system/memory/) only when the upstream
+ * still uses the old layout and the user hasn't pulled the rename yet —
+ * detected by absence of rules/AGENTS.md and presence of memory/AGENTS.md.
+ *
+ * Prints a single warning per process the first time the fallback fires.
+ * Per the read-only system-repo invariant, this never moves files; the rename
+ * is applied when the user pulls upstream.
+ */
+export function getResolvedRulesDir(): string {
+  const rulesAgents = path.join(SYSTEM_RULES_DIR, 'AGENTS.md');
+  const legacyAgents = path.join(SYSTEM_LEGACY_MEMORY_DIR, 'AGENTS.md');
+  if (fs.existsSync(rulesAgents)) return SYSTEM_RULES_DIR;
+  if (fs.existsSync(legacyAgents)) {
+    if (!legacyMemoryWarned) {
+      legacyMemoryWarned = true;
+      process.stderr.write(
+        'agents-cli: Legacy memory/ directory detected — agents-cli still works, ' +
+          "but run 'agents repo pull system' to migrate to rules/.\n",
+      );
+    }
+    return SYSTEM_LEGACY_MEMORY_DIR;
+  }
+  return SYSTEM_RULES_DIR;
+}
 
 /** Path to MCP server YAML configs — system repo. */
 export function getMcpDir(): string { return SYSTEM_MCP_DIR; }
@@ -274,12 +302,6 @@ export function getEnabledExtraRepos(): Array<{ alias: string; dir: string; url:
 
 // ─── Directory setup ───────────────────────────────────────────────────────────
 
-function migrateLegacyRulesDir(): void {
-  if (fs.existsSync(SYSTEM_RULES_DIR)) return;
-  if (!fs.existsSync(SYSTEM_LEGACY_MEMORY_DIR)) return;
-  fs.renameSync(SYSTEM_LEGACY_MEMORY_DIR, SYSTEM_RULES_DIR);
-}
-
 /** Create both the system and user directory trees if any subdirectories are missing. */
 export function ensureAgentsDir(): void {
   const opts = { recursive: true, mode: 0o700 } as const;
@@ -302,7 +324,6 @@ export function ensureAgentsDir(): void {
   if (!fs.existsSync(SYSTEM_COMMANDS_DIR)) fs.mkdirSync(SYSTEM_COMMANDS_DIR, opts);
   if (!fs.existsSync(SYSTEM_HOOKS_DIR)) fs.mkdirSync(SYSTEM_HOOKS_DIR, opts);
   if (!fs.existsSync(SYSTEM_SKILLS_DIR)) fs.mkdirSync(SYSTEM_SKILLS_DIR, opts);
-  migrateLegacyRulesDir();
   if (!fs.existsSync(SYSTEM_RULES_DIR)) fs.mkdirSync(SYSTEM_RULES_DIR, opts);
   if (!fs.existsSync(SYSTEM_PERMISSIONS_DIR)) fs.mkdirSync(SYSTEM_PERMISSIONS_DIR, opts);
   if (!fs.existsSync(SYSTEM_SUBAGENTS_DIR)) fs.mkdirSync(SYSTEM_SUBAGENTS_DIR, opts);
@@ -365,8 +386,11 @@ function migrateSystemMetaToUser(): void {
 export function readMeta(): Meta {
   ensureAgentsDir();
 
-  // One-shot: move agents.yaml from system repo if user file not yet present
-  migrateSystemMetaToUser();
+  // NOTE: agents.yaml migration from ~/.agents-system/ to ~/.agents/ is handled
+  // exclusively by runMigration() in migrate.ts, called from postinstall and
+  // explicit command-time fallbacks (agents view/use/pull). Calling it here
+  // would mutate real-user filesystem state during test runs that import this
+  // module, causing cross-test pollution.
 
   // Legacy migration: check for old meta.yaml in system dir
   const oldMetaFile = path.join(SYSTEM_AGENTS_DIR, 'meta.yaml');
