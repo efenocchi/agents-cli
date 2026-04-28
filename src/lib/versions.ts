@@ -18,7 +18,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as yaml from 'yaml';
-import { exec } from 'child_process';
+import { exec, execFile } from 'child_process';
 import { promisify } from 'util';
 import chalk from 'chalk';
 import * as TOML from 'smol-toml';
@@ -40,6 +40,13 @@ import { safeJoin } from './paths.js';
 
 /** Promisified exec for running shell commands. */
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+
+// Strict shape for an agent version string. Anything outside this is rejected
+// at parse time so it can't reach an exec/shell boundary or get interpolated
+// into a generated bash alias. Must allow "latest" plus npm-dist-tag /
+// semver-shaped values (digits, dots, dashes, +, _).
+const VERSION_RE = /^(?:latest|[A-Za-z0-9._+-]{1,64})$/;
 
 /**
  * Resource selection for syncing to a version.
@@ -849,6 +856,12 @@ export function parseAgentSpec(spec: string): AgentSpec | null {
     return null;
   }
 
+  // Reject any version string that could escape an exec context or a
+  // bash-shim interpolation. Real agent versions are semver-shaped or "latest".
+  if (!VERSION_RE.test(version)) {
+    return null;
+  }
+
   return {
     agent: agentName as AgentId,
     version,
@@ -895,7 +908,7 @@ export async function getLatestNpmVersion(agent: AgentId): Promise<string | null
   if (!agentConfig.npmPackage) return null;
 
   try {
-    const { stdout } = await execAsync(`npm view ${agentConfig.npmPackage} version`);
+    const { stdout } = await execFileAsync('npm', ['view', agentConfig.npmPackage, 'version']);
     return stdout.trim();
   } catch {
     return null;
@@ -995,9 +1008,16 @@ export async function installVersion(
     ? agentConfig.npmPackage
     : `${agentConfig.npmPackage}@${version}`;
 
+  // Defense-in-depth: even if a future caller bypasses parseAgentSpec, the
+  // version string never reaches /bin/sh because we use execFile (argv form)
+  // and re-validate here.
+  if (version !== 'latest' && !VERSION_RE.test(version)) {
+    throw new Error(`Invalid version: ${JSON.stringify(version)}`);
+  }
+
   try {
     onProgress?.(`Installing ${packageSpec}...`);
-    const { stdout } = await execAsync(`npm install ${packageSpec}`, { cwd: versionDir });
+    const { stdout } = await execFileAsync('npm', ['install', packageSpec], { cwd: versionDir });
 
     // Determine the actual installed version
     let installedVersion = version;
@@ -1204,7 +1224,7 @@ export async function getInstalledVersion(agent: AgentId, version: string): Prom
   }
 
   try {
-    const { stdout } = await execAsync(`${binaryPath} --version`);
+    const { stdout } = await execFileAsync(binaryPath, ['--version']);
     const match = stdout.match(/(\d+\.\d+\.\d+)/);
     return match ? match[1] : version;
   } catch {
