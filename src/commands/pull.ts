@@ -166,8 +166,8 @@ Skip CLI installs with --skip-clis when you only want config updates, not versio
         if (isGitRepo(agentsDir)) {
           // Don't pull if the remote is the system repo — that's a misconfiguration
           if (await isSystemRepoOrigin(agentsDir)) {
-            spinner.fail('~/.agents/ is pointing at the system repo. Use a personal .agents repo instead.');
-            console.log(chalk.gray('\nCreate your own repo first: agents push --init'));
+            spinner.fail('~/.agents/ is pointing at the system repo. Use a personal repo instead.');
+            console.log(chalk.gray('\nCreate your own repo: agents repo init'));
             return;
           }
           spinner.text = 'Pulling updates...';
@@ -180,7 +180,7 @@ Skip CLI installs with --skip-clis when you only want config updates, not versio
           spinner.succeed(`Updated to ${commit}`);
         } else {
           // ~/.agents/ is not a git repo yet — skip git pull, proceed with local resource sync
-          spinner.succeed('Using local ~/.agents/ (not a git repo — skipping pull)');
+          spinner.succeed('Using local ~/.agents/ (no remote configured)');
         }
 
         // Pull extra DotAgent repos before resource sync so any new skills /
