@@ -1229,6 +1229,21 @@ export function resolveVersionAlias(agent: AgentId, raw: string | undefined | nu
 }
 
 /**
+ * Loose variant of resolveVersionAlias for record-filter contexts (sessions,
+ * team history). Same `default`/`latest` semantics, but explicit versions
+ * pass through unchanged so historical records of uninstalled versions remain
+ * queryable.
+ */
+export function resolveVersionAliasLoose(agent: AgentId, raw: string | undefined | null): string | undefined {
+  if (!raw || raw === 'default') return undefined;
+  if (raw === 'latest') {
+    const installed = listInstalledVersions(agent);
+    return installed.length > 0 ? installed[installed.length - 1] : undefined;
+  }
+  return raw;
+}
+
+/**
  * Get version specified in a project-root agents.yaml (not the user ~/.agents-system/agents.yaml).
  */
 export function getProjectVersion(agent: AgentId, startPath: string): string | null {

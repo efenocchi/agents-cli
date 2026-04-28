@@ -137,7 +137,7 @@ function fingerprintDir(dirPath: string): Fingerprint[] {
     }
   }
   walk(dirPath);
-  results.sort((a, b) => a.path.localeCompare(b.path));
+  results.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   return results;
 }
 
@@ -160,13 +160,49 @@ function isFileStale(stored: Fingerprint, currentPath: string): boolean {
   }
 }
 
-/** Check if a DirEntry is stale for the given source directory. */
+/**
+ * Walk a directory recursively and return sorted absolute file paths.
+ * No file reads — used for the hot-path check where we want stat-only speed.
+ */
+function walkDirPaths(dirPath: string): string[] {
+  const results: string[] = [];
+  function walk(dir: string): void {
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) { walk(full); }
+      else if (entry.isFile()) { results.push(full); }
+    }
+  }
+  walk(dirPath);
+  results.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  return results;
+}
+
+/**
+ * Check if a DirEntry is stale for the given source directory.
+ * Hot path: stat only (no file reads) when mtime+size match.
+ */
 function isDirStale(stored: DirEntry, currentDirPath: string): boolean {
   if (stored.dirPath !== currentDirPath) return true;
-  const current = fingerprintDir(currentDirPath);
-  if (current.length !== stored.files.length) return true;
-  for (let i = 0; i < current.length; i++) {
-    if (isFileStale(stored.files[i], current[i].path)) return true;
+  // Get current file list without reading content
+  const currentPaths = walkDirPaths(currentDirPath);
+  if (currentPaths.length !== stored.files.length) return true;
+  for (let i = 0; i < currentPaths.length; i++) {
+    const storedFp = stored.files[i];
+    const currentPath = currentPaths[i];
+    if (storedFp.path !== currentPath) return true; // added/removed/renamed
+    // Tier 1: mtime+size stat only
+    try {
+      const stat = fs.statSync(currentPath);
+      if (stat.mtimeMs === storedFp.mtime && stat.size === storedFp.size) continue;
+      // Tier 2: sha256 (only on mismatch)
+      if (sha256(fs.readFileSync(currentPath, 'utf-8')) !== storedFp.sha256) return true;
+    } catch {
+      return true;
+    }
   }
   return false;
 }
