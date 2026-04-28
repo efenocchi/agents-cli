@@ -1,0 +1,27 @@
+{
+  "name": "@companion/agents-cli",
+  "version": "1.14.0",
+  "description": "This package has moved to @phnx-labs/agents-cli. Install that instead.",
+  "dependencies": {
+    "@phnx-labs/agents-cli": ">=1.13.4"
+  },
+  "bin": {
+    "agents": "bin/agents.js",
+    "ag": "bin/agents.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phnx-labs/agents-cli.git"
+  },
+  "homepage": "https://agents-cli.sh",
+  "bugs": {
+    "url": "https://github.com/phnx-labs/agents-cli/issues"
+  }
+}

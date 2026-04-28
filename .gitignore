@@ -34,3 +34,6 @@ coverage/
 
 # Scrub script lists personal data strings — must not be committed to public repo
 scripts/scrub-history.sh
+
+# Other
+.refs/

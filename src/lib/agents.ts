@@ -980,8 +980,8 @@ interface McpConfigEntry {
 
 /**
  * Extract version from npm package specification.
- * Examples: @companion/agents-mcp@latest -> latest
- *           @companion/agents-mcp@1.2.3 -> 1.2.3
+ * Examples: @scope/package@latest -> latest
+ *           @scope/package@1.2.3 -> 1.2.3
  *           some-package -> undefined
  */
 function extractNpmVersion(args: string[]): string | undefined {

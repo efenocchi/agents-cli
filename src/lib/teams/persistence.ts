@@ -307,7 +307,7 @@ async function migrateLegacyConfig(): Promise<SwarmConfig | null> {
   // Write migrated config to new location
   const newConfigPath = await ensureConfigPath();
   await fs.writeFile(newConfigPath, JSON.stringify(config, null, 2));
-  console.warn(`[agents-mcp] Migrated config to ${newConfigPath}`);
+  console.warn(`[agents] Migrated config to ${newConfigPath}`);
 
   return config;
 }

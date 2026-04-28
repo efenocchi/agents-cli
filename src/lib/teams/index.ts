@@ -1,7 +1,7 @@
 /**
  * Public library surface for the teams subsystem.
  *
- * Consumers (e.g. @companion/agents-mcp) import from '@companion/agents-cli/teams'
+ * Consumers import from '@phnx-labs/agents-cli/teams'
  * to reuse the same agent lifecycle, parsing, summarization, and persistence
  * layer that powers the `agents teams` CLI.
  */
