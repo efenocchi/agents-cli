@@ -111,10 +111,10 @@ export function getAvailableResources(cwd: string = process.cwd()): AvailableRes
   if (projectAgentsDir) {
     resourceBases.push({ scope: 'project', base: projectAgentsDir });
   }
-  resourceBases.push({ scope: 'user', base: userBase });
   if (optionalUserBase) {
     resourceBases.push({ scope: 'user', base: optionalUserBase });
   }
+  resourceBases.push({ scope: 'user', base: userBase });
   // Extra DotAgent repos registered via `agents repo add`. Ordered after the
   // primary so primary names win in the dedup Set below.
   for (const extra of getEnabledExtraRepos()) {

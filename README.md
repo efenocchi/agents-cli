@@ -294,6 +294,17 @@ agents pull
 agents push     # Snapshot your config to git
 ```
 
+### How config is layered
+
+Two repos with the same shape, different roles:
+
+| Repo | Role | Owner |
+|---|---|---|
+| `~/.agents-system/` | **System repo** — core/built-in skills, commands, hooks, rules, MCP configs, permissions, and profiles that ship with `agents-cli`. The defaults every install gets. | Maintained upstream at [phnx-labs/.agents-system](https://github.com/phnx-labs/.agents-system) |
+| `~/.agents/` | **User repo** — your personal additions and overrides. This is what `agents push`/`pull` syncs. | You |
+
+Resolution order at sync time: **project > user > system**. A project-local `agents.yaml` wins, then `~/.agents/`, then `~/.agents-system/`. Same-named resources higher in the chain override the lower ones; everything else unions in.
+
 ---
 
 ## Private skills
@@ -334,6 +345,8 @@ Extras clone into `~/.agents/.repos/<alias>/` and ship the same layout as the pr
 | Roo Code | yes | yes | yes | yes | AGENTS.md | -- | -- | -- | -- | -- |
 
 Hooks columns marked `yes (>= X.Y.Z)` are version-gated: `agents hooks add` skips with a clear message when the installed binary is older than the listed version, instead of writing config the older binary would silently ignore. OpenCode's plugin-based hook system is on the roadmap; the entry is `--` until a writer ships.
+
+Codex command sync is version-aware: Codex `0.116.x` and older receive slash commands in `.codex/prompts/`; Codex `0.117.0+` receives those commands as generated skills so they can be invoked with `$name`.
 
 ## FAQ
 
