@@ -26,7 +26,7 @@ const COMPILED_HEADER =
 /** Sidecar manifest recording source file hashes for staleness detection. */
 export interface CompileManifest {
   compiledAt: string;
-  sources: { path: string; sha256: string }[];
+  sources: { path: string; sha256: string; mtime?: number; size?: number }[];
 }
 
 function expandTilde(p: string): string {
@@ -147,6 +147,12 @@ export function isMemoryStale(agentId: AgentId, version: string): boolean {
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as CompileManifest;
     for (const src of manifest.sources) {
       if (!fs.existsSync(src.path)) return true;
+      // Tier 1: mtime+size fast path (no file read needed)
+      if (src.mtime !== undefined && src.size !== undefined) {
+        const stat = fs.statSync(src.path);
+        if (stat.mtimeMs === src.mtime && stat.size === src.size) continue;
+      }
+      // Tier 2: content hash
       if (sha256(fs.readFileSync(src.path, 'utf8')) !== src.sha256) return true;
     }
     return false;
@@ -194,7 +200,11 @@ export function compileMemoryForAgent(
   const allSources = [sourceAgents, ...sources];
   const manifest: CompileManifest = {
     compiledAt: new Date().toISOString(),
-    sources: allSources.map(p => ({ path: p, sha256: sha256(fs.readFileSync(p, 'utf8')) })),
+    sources: allSources.map(p => {
+      const content = fs.readFileSync(p, 'utf8');
+      const stat = fs.statSync(p);
+      return { path: p, sha256: sha256(content), mtime: stat.mtimeMs, size: stat.size };
+    }),
   };
   fs.writeFileSync(getManifestPath(compiledPath), JSON.stringify(manifest, null, 2));
 
