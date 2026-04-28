@@ -282,7 +282,7 @@ describe('agents sessions', () => {
         'phnx-labs-test',
         phnxSessionId,
         phnxDir,
-        'Inspect the swarmify session list',
+        'Inspect the phnx-labs session list',
         '2026-04-17T19:35:30.000Z'
       );
       writeClaudeSession(
@@ -423,7 +423,7 @@ describe('agents sessions', () => {
       writeUpdateCache(tempHome);
 
       const workspaceDir = path.join(tempHome, 'work');
-      const phnxDir = path.join(workspaceDir, 'swarmify');
+      const phnxDir = path.join(workspaceDir, 'phnx-labs');
       const agentsCliDir = path.join(workspaceDir, 'agents-cli');
       const phnxSessionId = '55555555-5555-4555-8555-555555555555';
       const agentsCliSessionId = '66666666-6666-4666-8666-666666666666';
@@ -435,7 +435,7 @@ describe('agents sessions', () => {
         'phnx-labs-test',
         phnxSessionId,
         phnxDir,
-        'Inspect the swarmify session list',
+        'Inspect the phnx-labs session list',
         '2026-04-17T19:35:30.000Z'
       );
       writeClaudeSession(
@@ -587,7 +587,7 @@ describe('agents sessions (render-mode)', () => {
         'phnx-labs-test',
         '44444444-4444-4444-8444-444444444444',
         phnxDir,
-        'Inspect the swarmify session list',
+        'Inspect the phnx-labs session list',
         '2026-04-17T19:35:30.000Z'
       );
       writeClaudeSession(
