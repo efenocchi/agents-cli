@@ -177,7 +177,7 @@ export interface RepoInfo {
 /** Default upstream config repo used by `agents pull` / `agents fork`. */
 export const DEFAULT_SYSTEM_REPO = 'gh:phnx-labs/.agents';
 /** Previous default repo, kept for migration detection. */
-export const LEGACY_SYSTEM_REPO = 'gh:muqsitnawaz/.agents';
+export const LEGACY_SYSTEM_REPO = 'gh:example-user/.agents';
 
 /** Strip the `gh:` prefix and `.git` suffix to get a GitHub `owner/repo` slug. */
 export function systemRepoSlug(repo: string = DEFAULT_SYSTEM_REPO): string {

@@ -272,16 +272,16 @@ describe('agents sessions', () => {
     try {
       writeUpdateCache(tempHome);
 
-      const swarmifyDir = path.join(tempHome, 'work', 'swarmify');
+      const phnxDir = path.join(tempHome, 'work', 'phnx-labs');
       const agentsCliDir = path.join(tempHome, 'work', 'agents-cli');
-      const swarmifySessionId = '11111111-1111-4111-8111-111111111111';
+      const phnxSessionId = '11111111-1111-4111-8111-111111111111';
       const agentsCliSessionId = '22222222-2222-4222-8222-222222222222';
 
       writeClaudeSession(
         tempHome,
-        'swarmify-test',
-        swarmifySessionId,
-        swarmifyDir,
+        'phnx-labs-test',
+        phnxSessionId,
+        phnxDir,
         'Inspect the swarmify session list',
         '2026-04-17T19:35:30.000Z'
       );
@@ -294,18 +294,18 @@ describe('agents sessions', () => {
         '2026-04-17T19:36:30.000Z'
       );
 
-      const localResult = runAgents(['sessions'], swarmifyDir, tempHome);
+      const localResult = runAgents(['sessions'], phnxDir, tempHome);
       expect(localResult.status).toBe(0);
 
       const localOutput = outputOf(localResult);
-      expect(localOutput).toContain(swarmifySessionId.slice(0, 8));
+      expect(localOutput).toContain(phnxSessionId.slice(0, 8));
       expect(localOutput).not.toContain(agentsCliSessionId.slice(0, 8));
 
-      const allResult = runAgents(['sessions', '--all'], swarmifyDir, tempHome);
+      const allResult = runAgents(['sessions', '--all'], phnxDir, tempHome);
       expect(allResult.status).toBe(0);
 
       const allOutput = outputOf(allResult);
-      expect(allOutput).toContain(swarmifySessionId.slice(0, 8));
+      expect(allOutput).toContain(phnxSessionId.slice(0, 8));
       expect(allOutput).toContain(agentsCliSessionId.slice(0, 8));
     } finally {
       fs.rmSync(tempHome, { recursive: true, force: true });
@@ -423,18 +423,18 @@ describe('agents sessions', () => {
       writeUpdateCache(tempHome);
 
       const workspaceDir = path.join(tempHome, 'work');
-      const swarmifyDir = path.join(workspaceDir, 'swarmify');
+      const phnxDir = path.join(workspaceDir, 'swarmify');
       const agentsCliDir = path.join(workspaceDir, 'agents-cli');
-      const swarmifySessionId = '55555555-5555-4555-8555-555555555555';
+      const phnxSessionId = '55555555-5555-4555-8555-555555555555';
       const agentsCliSessionId = '66666666-6666-4666-8666-666666666666';
 
       fs.mkdirSync(workspaceDir, { recursive: true });
 
       writeClaudeSession(
         tempHome,
-        'swarmify-test',
-        swarmifySessionId,
-        swarmifyDir,
+        'phnx-labs-test',
+        phnxSessionId,
+        phnxDir,
         'Inspect the swarmify session list',
         '2026-04-17T19:35:30.000Z'
       );
@@ -452,7 +452,7 @@ describe('agents sessions', () => {
 
       const output = outputOf(result);
       expect(output).toContain(agentsCliSessionId.slice(0, 8));
-      expect(output).not.toContain(swarmifySessionId.slice(0, 8));
+      expect(output).not.toContain(phnxSessionId.slice(0, 8));
       expect(output).not.toContain(`No sessions found for ${workspaceDir}`);
     } finally {
       fs.rmSync(tempHome, { recursive: true, force: true });
@@ -578,15 +578,15 @@ describe('agents sessions (render-mode)', () => {
     try {
       writeUpdateCache(tempHome);
 
-      const swarmifyDir = path.join(tempHome, 'work', 'swarmify');
+      const phnxDir = path.join(tempHome, 'work', 'phnx-labs');
       const agentsCliDir = path.join(tempHome, 'work', 'agents-cli');
       const siblingSessionId = '33333333-3333-4333-8333-333333333333';
 
       writeClaudeSession(
         tempHome,
-        'swarmify-test',
+        'phnx-labs-test',
         '44444444-4444-4444-8444-444444444444',
-        swarmifyDir,
+        phnxDir,
         'Inspect the swarmify session list',
         '2026-04-17T19:35:30.000Z'
       );
@@ -599,7 +599,7 @@ describe('agents sessions (render-mode)', () => {
         '2026-04-17T19:36:30.000Z'
       );
 
-      const result = runAgents(['sessions', siblingSessionId, '--markdown'], swarmifyDir, tempHome);
+      const result = runAgents(['sessions', siblingSessionId, '--markdown'], phnxDir, tempHome);
       expect(result.status).toBe(0);
 
       const output = outputOf(result);
@@ -616,12 +616,12 @@ describe('agents sessions (render-mode)', () => {
     try {
       writeUpdateCache(tempHome);
 
-      const projectRoot = path.join(tempHome, 'work', 'swarmify');
+      const projectRoot = path.join(tempHome, 'work', 'phnx-labs');
       const transcriptCwd = path.join(projectRoot, 'extension');
       const transcriptId = '92267176-d991-45c2-a8e5-e851e30a203b';
       const historyOnlyId = 'f6a6cd2d-2138-41c4-b653-d2881ce9cdd3';
 
-      fs.mkdirSync(path.join(tempHome, '.claude', 'projects', 'swarmify-test'), { recursive: true });
+      fs.mkdirSync(path.join(tempHome, '.claude', 'projects', 'phnx-labs-test'), { recursive: true });
       fs.writeFileSync(
         path.join(tempHome, '.claude', 'history.jsonl'),
         JSON.stringify({
@@ -634,7 +634,7 @@ describe('agents sessions (render-mode)', () => {
       );
       fs.mkdirSync(transcriptCwd, { recursive: true });
       fs.writeFileSync(
-        path.join(tempHome, '.claude', 'projects', 'swarmify-test', `${transcriptId}.jsonl`),
+        path.join(tempHome, '.claude', 'projects', 'phnx-labs-test', `${transcriptId}.jsonl`),
         [
           JSON.stringify({
             type: 'user',

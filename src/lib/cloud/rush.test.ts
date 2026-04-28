@@ -7,17 +7,17 @@ describe('buildDispatchBody', () => {
       agent: 'claude',
       prompt: 'fix the bug',
       resolvedRepos: [
-        { installation_id: 42, repo_owner: 'muqsitnawaz', repo_name: 'agents' },
+        { installation_id: 42, repo_owner: 'example-user', repo_name: 'agents' },
       ],
     });
     expect(body).toMatchObject({
       agent: 'claude',
       prompt: 'fix the bug',
       installation_id: 42,
-      repo_owner: 'muqsitnawaz',
+      repo_owner: 'example-user',
       repo_name: 'agents',
       repos: [
-        { installation_id: 42, repo_owner: 'muqsitnawaz', repo_name: 'agents' },
+        { installation_id: 42, repo_owner: 'example-user', repo_name: 'agents' },
       ],
     });
   });
@@ -27,16 +27,16 @@ describe('buildDispatchBody', () => {
       agent: 'claude',
       prompt: 'refactor',
       resolvedRepos: [
-        { installation_id: 1, repo_owner: 'muqsitnawaz', repo_name: 'rush' },
-        { installation_id: 1, repo_owner: 'muqsitnawaz', repo_name: 'agents' },
+        { installation_id: 1, repo_owner: 'example-user', repo_name: 'rush' },
+        { installation_id: 1, repo_owner: 'example-user', repo_name: 'agents' },
       ],
     });
     expect(body.installation_id).toBeUndefined();
     expect(body.repo_owner).toBeUndefined();
     expect(body.repo_name).toBeUndefined();
     expect(body.repos).toEqual([
-      { installation_id: 1, repo_owner: 'muqsitnawaz', repo_name: 'rush' },
-      { installation_id: 1, repo_owner: 'muqsitnawaz', repo_name: 'agents' },
+      { installation_id: 1, repo_owner: 'example-user', repo_name: 'rush' },
+      { installation_id: 1, repo_owner: 'example-user', repo_name: 'agents' },
     ]);
   });
 
