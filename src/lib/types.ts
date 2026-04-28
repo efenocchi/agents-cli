@@ -166,7 +166,7 @@ export interface InstalledSkill {
   agent: AgentId;
 }
 
-/** Git remote metadata for the ~/.agents/ config repository. */
+/** Git remote metadata for the ~/.agents-system/ config repository. */
 export interface RepoInfo {
   source: string;
   branch: string;
@@ -174,7 +174,7 @@ export interface RepoInfo {
   lastSync: string;
 }
 
-/** Canonical system repo cloned into ~/.agents/. */
+/** Canonical system repo cloned into ~/.agents-system/. */
 export const DEFAULT_SYSTEM_REPO = 'gh:phnx-labs/.agents';
 /** Previous system repo, kept for migration detection. */
 export const LEGACY_SYSTEM_REPO = 'gh:phnx-labs/.agents';
@@ -366,9 +366,9 @@ export interface InstalledSubagent {
 }
 
 /**
- * Extra DotAgent repo registered alongside the primary ~/.agents/ repo.
- * Managed clones default to ~/.agents/.repos/<alias>/, but user-owned repos
- * may live anywhere on disk. Primary (~/.agents/) always wins on name
+ * Extra DotAgent repo registered alongside the primary ~/.agents-system/ repo.
+ * Managed clones default to ~/.agents-system/.repos/<alias>/, but user-owned repos
+ * may live anywhere on disk. Primary (~/.agents-system/) always wins on name
  * collisions; extras are searched in insertion order after primary.
  */
 export interface ExtraRepoConfig {
@@ -377,18 +377,18 @@ export interface ExtraRepoConfig {
   enabled: boolean;
 }
 
-/** Top-level structure of ~/.agents/agents.yaml -- the CLI's persistent state. */
+/** Top-level structure of ~/.agents-system/agents.yaml -- the CLI's persistent state. */
 export interface Meta {
   agents?: Partial<Record<AgentId, string>>;
   run?: Partial<Record<AgentId, { strategy?: RunStrategy }>>;
   registries?: Record<RegistryType, Record<string, RegistryConfig>>;
   // Per-version resource tracking
   versions?: Partial<Record<AgentId, Record<string, VersionResources>>>;
-  // Git remote source URL (when ~/.agents/ is a git repo)
+  // Git remote source URL (when ~/.agents-system/ is a git repo)
   source?: string;
   /**
-   * Extra DotAgent repos merged after the primary ~/.agents/ system repo.
-   * Managed clones may live in ~/.agents/.repos/<alias>/, while user-owned
+   * Extra DotAgent repos merged after the primary ~/.agents-system/ system repo.
+   * Managed clones may live in ~/.agents-system/.repos/<alias>/, while user-owned
    * repos can point at arbitrary paths.
    */
   extraRepos?: Record<string, ExtraRepoConfig>;

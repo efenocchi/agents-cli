@@ -2,7 +2,7 @@
  * Config pull command.
  *
  * Registers the `agents pull` command which clones or updates the
- * system ~/.agents/ git repo and syncs CLI versions, MCP servers,
+ * system ~/.agents-system/ git repo and syncs CLI versions, MCP servers,
  * resources, and hooks to installed agent versions.
  */
 
@@ -70,7 +70,7 @@ import { isInteractiveTerminal, isPromptCancelled } from './utils.js';
 
 /**
  * Old repo layout stored promptcuts under claude/promptcuts.yaml (agent-scoped).
- * The new layout is ~/.agents/promptcuts.yaml at the repo root — the hook
+ * The new layout is ~/.agents-system/promptcuts.yaml at the repo root — the hook
  * reads from a fixed path so it survives version upgrades. If the root file
  * doesn't exist yet but an agent-scoped one does, hoist the first one found.
  */
@@ -97,12 +97,12 @@ function migratePromptcutsToRoot(agentsDir: string): void {
 export function registerPullCommand(program: Command): void {
   program
     .command('pull [agent]')
-    .description('Sync the system repo at ~/.agents/ and refresh installed agent versions.')
+    .description('Sync the system repo at ~/.agents-system/ and refresh installed agent versions.')
     .option('-y, --yes', 'Auto-sync all resources without prompting')
     .option('--skip-clis', 'Pull config changes but do not install or upgrade agent CLIs')
     .addHelpText('after', `
 Examples:
-  # First time: clone the system repo into ~/.agents/
+  # First time: clone the system repo into ~/.agents-system/
   agents pull
 
   # Sync only one agent's config
@@ -149,11 +149,8 @@ Skip CLI installs with --skip-clis when you only want config updates, not versio
 
         if (isGitRepo(agentsDir)) {
           if (!await isSystemRepoOrigin(agentsDir)) {
-            spinner.fail('~/.agents/ is not tracking the system repo.');
-            console.log(chalk.gray('\nMove your custom repo out of ~/.agents/, then register it as an extra:'));
-            console.log(chalk.cyan('  mv ~/.agents ~/.agents-mine'));
-            console.log(chalk.cyan('  agents repo add ~/.agents-mine --as mine'));
-            console.log(chalk.cyan('  agents pull'));
+            spinner.fail('~/.agents-system/ is not tracking the system repo.');
+            console.log(chalk.gray('\nRename or remove ~/.agents-system/, then re-run `agents pull`.'));
             return;
           }
           spinner.text = 'Pulling updates...';
@@ -197,7 +194,7 @@ Skip CLI installs with --skip-clis when you only want config updates, not versio
 
         // One-time migration: promptcuts.yaml moved from agent-scoped
         // (e.g. claude/promptcuts.yaml) to repo root. We move it so the
-        // hook at ~/.agents/hooks/ can always find it at a fixed path.
+        // hook at ~/.agents-system/hooks/ can always find it at a fixed path.
         migratePromptcutsToRoot(agentsDir);
 
         // Read manifest for CLI versions and MCP config
