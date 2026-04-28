@@ -10,7 +10,8 @@ import * as readline from 'readline';
 
 const HOME = os.homedir();
 const SHIMS_DIR = path.join(HOME, '.agents-system', 'shims');
-const AGENTS_DIR = path.join(HOME, '.agents-system');
+const SYSTEM_DIR = path.join(HOME, '.agents-system');
+const USER_DIR = path.join(HOME, '.agents');
 
 // Only run for global installs
 if (!process.env.npm_config_global && !process.argv.includes('-g')) {
@@ -19,7 +20,37 @@ if (!process.env.npm_config_global && !process.argv.includes('-g')) {
 
 // Create directories
 fs.mkdirSync(SHIMS_DIR, { recursive: true });
-fs.mkdirSync(AGENTS_DIR, { recursive: true });
+fs.mkdirSync(SYSTEM_DIR, { recursive: true });
+fs.mkdirSync(USER_DIR, { recursive: true, mode: 0o700 });
+
+// One-shot idempotent migrations
+function runMigrations() {
+  // 1. Move agents.yaml from system to user repo
+  const src = path.join(SYSTEM_DIR, 'agents.yaml');
+  const dest = path.join(USER_DIR, 'agents.yaml');
+  if (fs.existsSync(src) && !fs.existsSync(dest)) {
+    try { fs.renameSync(src, dest); } catch { /* best-effort */ }
+  }
+
+  // 2. Delete dead prompts.json
+  const promptsJson = path.join(SYSTEM_DIR, 'prompts.json');
+  if (fs.existsSync(promptsJson)) {
+    try { fs.unlinkSync(promptsJson); } catch { /* best-effort */ }
+  }
+
+  // 3. Move legacy config.json to ~/.agents/teams/config.json
+  const configSrc = path.join(SYSTEM_DIR, 'config.json');
+  const configDest = path.join(USER_DIR, 'teams', 'config.json');
+  if (fs.existsSync(configSrc) && !fs.existsSync(configDest)) {
+    try {
+      fs.mkdirSync(path.dirname(configDest), { recursive: true });
+      fs.copyFileSync(configSrc, configDest);
+      fs.unlinkSync(configSrc);
+    } catch { /* best-effort */ }
+  }
+}
+
+runMigrations();
 
 const shellName = path.basename(process.env.SHELL || '/bin/bash');
 

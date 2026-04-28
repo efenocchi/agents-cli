@@ -26,6 +26,7 @@ import {
 } from '../lib/manifest.js';
 import {
   getAgentsDir,
+  getUserAgentsDir,
   ensureAgentsDir,
   getEnabledExtraRepos,
   updateMeta,
@@ -97,7 +98,7 @@ function migratePromptcutsToRoot(agentsDir: string): void {
 export function registerPullCommand(program: Command): void {
   program
     .command('pull [agent]')
-    .description('Sync the system repo at ~/.agents-system/ and refresh installed agent versions.')
+    .description('Pull your user repo at ~/.agents/ and refresh installed agent versions.')
     .option('-y, --yes', 'Auto-sync all resources without prompting')
     .option('--skip-clis', 'Pull config changes but do not install or upgrade agent CLIs')
     .addHelpText('after', `
@@ -139,18 +140,19 @@ Skip CLI installs with --skip-clis when you only want config updates, not versio
         }
       }
 
-      const agentsDir = getAgentsDir();
+      const agentsDir = getUserAgentsDir();
       ensureAgentsDir();
 
       const spinner = ora('Syncing...').start();
 
       try {
-        let commit: string;
+        let commit: string = '';
 
         if (isGitRepo(agentsDir)) {
-          if (!await isSystemRepoOrigin(agentsDir)) {
-            spinner.fail('~/.agents-system/ is not tracking the system repo.');
-            console.log(chalk.gray('\nRename or remove ~/.agents-system/, then re-run `agents pull`.'));
+          // Don't pull if the remote is the system repo — that's a misconfiguration
+          if (await isSystemRepoOrigin(agentsDir)) {
+            spinner.fail('~/.agents/ is pointing at the system repo. Use a personal .agents repo instead.');
+            console.log(chalk.gray('\nCreate your own repo first: agents push --init'));
             return;
           }
           spinner.text = 'Pulling updates...';
@@ -162,19 +164,9 @@ Skip CLI installs with --skip-clis when you only want config updates, not versio
           commit = result.commit;
           spinner.succeed(`Updated to ${commit}`);
         } else {
-          spinner.text = `Cloning ${DEFAULT_SYSTEM_REPO}...`;
-          const result = await cloneIntoExisting(DEFAULT_SYSTEM_REPO, agentsDir);
-          if (!result.success) {
-            spinner.fail(`Clone failed: ${result.error}`);
-            return;
-          }
-          commit = result.commit;
-          spinner.succeed(`Initialized from ${DEFAULT_SYSTEM_REPO}`);
+          // ~/.agents/ is not a git repo yet — skip git pull, proceed with local resource sync
+          spinner.succeed('Using local ~/.agents/ (not a git repo — skipping pull)');
         }
-
-        updateMeta({
-          source: `https://github.com/${systemRepoSlug(DEFAULT_SYSTEM_REPO)}.git`,
-        });
 
         // Pull extra DotAgent repos before resource sync so any new skills /
         // commands they ship land in the version homes on this same run.

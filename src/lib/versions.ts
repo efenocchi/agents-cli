@@ -24,7 +24,7 @@ import chalk from 'chalk';
 import * as TOML from 'smol-toml';
 import { checkbox, select, confirm } from '@inquirer/prompts';
 import type { AgentId, VersionResources } from './types.js';
-import { getVersionsDir, getShimsDir, ensureAgentsDir, readMeta, writeMeta, getCommandsDir, getSkillsDir, getHooksDir, getMemoryDir, getResolvedRulesDir, getPermissionsDir, getSubagentsDir, clearVersionResources, getVersionResources, recordVersionResources, getMcpDir, getProjectAgentsDir, getPromptcutsPath, getEnabledExtraRepos, getAgentsDir, getOptionalUserAgentsDir, getUserAgentsDir } from './state.js';
+import { getVersionsDir, getShimsDir, ensureAgentsDir, readMeta, writeMeta, getCommandsDir, getSkillsDir, getHooksDir, getMemoryDir, getResolvedRulesDir, getUserRulesDir, getPermissionsDir, getSubagentsDir, clearVersionResources, getVersionResources, recordVersionResources, getMcpDir, getProjectAgentsDir, getPromptcutsPath, getEnabledExtraRepos, getAgentsDir, getOptionalUserAgentsDir, getUserAgentsDir } from './state.js';
 import { resolveResource } from './resources.js';
 import { AGENTS, getAccountEmail, MCP_CAPABLE_AGENTS, COMMANDS_CAPABLE_AGENTS, getMcpConfigPathForHome, parseMcpConfig, resolveAgentName, formatAgentError } from './agents.js';
 import { getDefaultPermissionSet, applyPermissionsToVersion as applyPermsToVersion, PERMISSIONS_CAPABLE_AGENTS, discoverPermissionGroups, getTotalPermissionRuleCount, buildPermissionsFromGroups, CODEX_RULES_FILENAME, getActivePermissionSetName, readPermissionSetRecipe, PERMISSION_SET_ENV_VAR } from './permissions.js';
@@ -161,19 +161,22 @@ export function getAvailableResources(cwd: string = process.cwd()): AvailableRes
   result.hooks = Array.from(hookNames);
 
   // Rules (*.md files, excluding symlinks and README)
+  // Scan 'rules/' first (canonical), then 'memory/' (legacy name) for backward compat.
   const memoryNames = new Set<string>();
   for (const { base } of resourceBases) {
-    const memoryDir = path.join(base, 'rules');
-    if (!fs.existsSync(memoryDir)) continue;
-    const names = fs.readdirSync(memoryDir)
-      .filter(f => {
-        if (!f.endsWith('.md') || f === RULES_DOC_FILENAME) return false;
-        const stat = fs.lstatSync(path.join(memoryDir, f));
-        return !stat.isSymbolicLink();
-      })
-      .map(f => f.replace(/\.md$/, ''));
-    for (const name of names) {
-      memoryNames.add(name);
+    for (const subdir of ['rules', 'memory']) {
+      const memoryDir = path.join(base, subdir);
+      if (!fs.existsSync(memoryDir)) continue;
+      const names = fs.readdirSync(memoryDir)
+        .filter(f => {
+          if (!f.endsWith('.md') || f === RULES_DOC_FILENAME) return false;
+          const stat = fs.lstatSync(path.join(memoryDir, f));
+          return !stat.isSymbolicLink();
+        })
+        .map(f => f.replace(/\.md$/, ''));
+      for (const name of names) {
+        memoryNames.add(name);
+      }
     }
   }
   result.memory = Array.from(memoryNames);
@@ -351,7 +354,7 @@ export function getActuallySyncedResources(agent: AgentId, version: string, opti
   // Rules - check which instruction files are actually in sync (content matches)
   const memoryDir = getResolvedRulesDir();
   const projectMemoryDir = projectAgentsDir ? path.join(projectAgentsDir, 'rules') : null;
-  const userMemoryDir = path.join(userAgentsDir, 'rules');
+  const userMemoryDir = getUserRulesDir();
   const memoryFiles = new Set<string>();
   if (fs.existsSync(memoryDir)) {
     fs.readdirSync(memoryDir).filter(f => f.endsWith('.md') && f !== RULES_DOC_FILENAME).forEach(f => memoryFiles.add(f));
@@ -370,12 +373,12 @@ export function getActuallySyncedResources(agent: AgentId, version: string, opti
 
     const projectFile = projectMemoryDir ? path.join(projectMemoryDir, file) : null;
     const centralFile = path.join(memoryDir, file);
-    const optionalUserFile = optionalUserMemoryDir ? path.join(optionalUserMemoryDir, file) : null;
+    const userFile = path.join(userMemoryDir, file);
     const hasProject = projectFile ? fs.existsSync(projectFile) : false;
-    const hasOptionalUser = optionalUserFile ? fs.existsSync(optionalUserFile) : false;
+    const hasUser = fs.existsSync(userFile);
     const hasCentral = fs.existsSync(centralFile);
-    const sourceFile = hasProject ? projectFile! : hasOptionalUser ? optionalUserFile! : centralFile;
-    if (!hasProject && !hasCentral && !hasOptionalUser) {
+    const sourceFile = hasProject ? projectFile! : hasUser ? userFile : centralFile;
+    if (!hasProject && !hasCentral && !hasUser) {
       result.memory.push(memName);
       continue;
     }
@@ -1600,8 +1603,8 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
             ? fs.readdirSync(getHooksDir()).filter(f => !f.startsWith('.'))
             : []
         );
-        if (optionalUserAgentsDir) {
-          const hooksDir = path.join(optionalUserAgentsDir, 'hooks');
+        {
+          const hooksDir = path.join(userAgentsDir, 'hooks');
           if (fs.existsSync(hooksDir)) {
             for (const file of fs.readdirSync(hooksDir).filter(f => !f.startsWith('.'))) {
               centralHookNames.add(file);
@@ -1646,14 +1649,14 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
   if (memoryToSync.length > 0 && COMMANDS_CAPABLE_AGENTS.includes(agent)) {
     const centralMemory = getResolvedRulesDir();
     const projectMemoryDir = projectAgentsDir ? path.join(projectAgentsDir, 'rules') : null;
-    const optionalUserMemoryDir = optionalUserAgentsDir ? path.join(optionalUserAgentsDir, 'rules') : null;
+    const userMemoryDir = getUserRulesDir();
     const syncedMemory: string[] = [];
     const agentSupportsImports = !!agentConfig.capabilities.memoryImports;
 
     for (const mem of memoryToSync) {
       const candidates: Array<string | null> = [
         projectMemoryDir ? safeJoin(projectMemoryDir, `${mem}.md`) : null,
-        optionalUserMemoryDir ? safeJoin(optionalUserMemoryDir, `${mem}.md`) : null,
+        safeJoin(userMemoryDir, `${mem}.md`),
         safeJoin(centralMemory, `${mem}.md`),
         ...extraRepos.map((e) => safeJoin(path.join(e.dir, 'rules'), `${mem}.md`)),
       ];

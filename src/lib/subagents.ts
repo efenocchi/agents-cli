@@ -10,7 +10,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'yaml';
-import { getSubagentsDir } from './state.js';
+import { getSubagentsDir, getUserSubagentsDir } from './state.js';
 import { safeJoin } from './paths.js';
 import type { AgentId, DiscoveredSubagent, InstalledSubagent, SubagentFrontmatter } from './types.js';
 
@@ -118,12 +118,12 @@ export function discoverSubagentsFromRepo(repoPath: string): DiscoveredSubagent[
  * List installed subagents from ~/.agents/subagents/
  */
 export function listInstalledSubagents(): InstalledSubagent[] {
+  const seen = new Set<string>();
   const subagents: InstalledSubagent[] = [];
-  const subagentsDir = getSubagentsDir();
 
-  if (!fs.existsSync(subagentsDir)) {
-    return subagents;
-  }
+  // User dir first (wins on name collision), then system
+  for (const subagentsDir of [getUserSubagentsDir(), getSubagentsDir()]) {
+    if (!fs.existsSync(subagentsDir)) continue;
 
   for (const dir of fs.readdirSync(subagentsDir)) {
     const dirPath = path.join(subagentsDir, dir);
@@ -134,6 +134,9 @@ export function listInstalledSubagents(): InstalledSubagent[] {
 
     const frontmatter = parseSubagentFrontmatter(agentMd);
     if (!frontmatter) continue;
+
+    if (seen.has(dir)) continue;
+    seen.add(dir);
 
     const files = fs.readdirSync(dirPath)
       .filter(f => f.endsWith('.md'))
@@ -146,6 +149,7 @@ export function listInstalledSubagents(): InstalledSubagent[] {
       frontmatter,
     });
   }
+  }
 
   return subagents;
 }
@@ -154,33 +158,18 @@ export function listInstalledSubagents(): InstalledSubagent[] {
  * Get a specific installed subagent
  */
 export function getInstalledSubagent(name: string): InstalledSubagent | null {
-  const subagentsDir = getSubagentsDir();
-  const dirPath = path.join(subagentsDir, name);
-
-  if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
-    return null;
+  // Check user dir first, then system
+  for (const subagentsDir of [getUserSubagentsDir(), getSubagentsDir()]) {
+    const dirPath = path.join(subagentsDir, name);
+    if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) continue;
+    const agentMd = path.join(dirPath, 'AGENT.md');
+    if (!fs.existsSync(agentMd)) continue;
+    const frontmatter = parseSubagentFrontmatter(agentMd);
+    if (!frontmatter) continue;
+    const files = fs.readdirSync(dirPath).filter(f => f.endsWith('.md')).sort();
+    return { name, path: dirPath, files, frontmatter };
   }
-
-  const agentMd = path.join(dirPath, 'AGENT.md');
-  if (!fs.existsSync(agentMd)) {
-    return null;
-  }
-
-  const frontmatter = parseSubagentFrontmatter(agentMd);
-  if (!frontmatter) {
-    return null;
-  }
-
-  const files = fs.readdirSync(dirPath)
-    .filter(f => f.endsWith('.md'))
-    .sort();
-
-  return {
-    name,
-    path: dirPath,
-    files,
-    frontmatter,
-  };
+  return null;
 }
 
 /**
@@ -190,7 +179,7 @@ export function installSubagentCentrally(
   sourcePath: string,
   name: string
 ): { success: boolean; error?: string } {
-  const subagentsDir = getSubagentsDir();
+  const subagentsDir = getUserSubagentsDir();
   const targetDir = safeJoin(subagentsDir, name);
 
   try {
@@ -217,19 +206,18 @@ export function installSubagentCentrally(
  * Remove an installed subagent
  */
 export function removeSubagent(name: string): { success: boolean; error?: string } {
-  const subagentsDir = getSubagentsDir();
-  const targetDir = safeJoin(subagentsDir, name);
-
-  if (!fs.existsSync(targetDir)) {
-    return { success: false, error: `Subagent '${name}' not found` };
+  for (const subagentsDir of [getUserSubagentsDir(), getSubagentsDir()]) {
+    const candidate = safeJoin(subagentsDir, name);
+    if (fs.existsSync(candidate)) {
+      try {
+        fs.rmSync(candidate, { recursive: true });
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: String(err) };
+      }
+    }
   }
-
-  try {
-    fs.rmSync(targetDir, { recursive: true });
-    return { success: true };
-  } catch (err) {
-    return { success: false, error: String(err) };
-  }
+  return { success: false, error: `Subagent '${name}' not found` };
 }
 
 /**

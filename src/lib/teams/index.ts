@@ -20,7 +20,6 @@ export {
   resolveMode,
   type TaskType,
   type CloudDispatchFn,
-  type CompletionHook,
 } from './agents.js';
 
 export { type AgentType } from './parsers.js';

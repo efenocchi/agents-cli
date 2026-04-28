@@ -375,7 +375,7 @@ describe('buildExecCommand', () => {
     it('injects Claude config dir for pinned Claude versions', () => {
       const env = buildExecEnv(opts({ agent: 'claude', version: '2.1.98' }));
       expect(env.CLAUDE_CONFIG_DIR).toBe(
-        `${process.env.HOME}/.agents/versions/claude/2.1.98/home/.claude`
+        `${process.env.HOME}/.agents-system/versions/claude/2.1.98/home/.claude`
       );
     });
 

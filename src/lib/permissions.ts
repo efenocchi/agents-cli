@@ -20,7 +20,7 @@ import type {
   OpenCodePermissions,
   CodexPermissions,
 } from './types.js';
-import { getPermissionsDir, ensureAgentsDir } from './state.js';
+import { getPermissionsDir, getUserPermissionsDir, ensureAgentsDir } from './state.js';
 import { safeJoin } from './paths.js';
 import { AGENTS } from './agents.js';
 
@@ -61,7 +61,7 @@ export function convertDenyToCodexRules(deny: string[]): string | null {
  * Ensure central permissions directory exists.
  */
 export function ensurePermissionsDir(): void {
-  const dir = getPermissionsDir();
+  const dir = getUserPermissionsDir();
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -149,41 +149,37 @@ export interface PermissionGroupInfo {
  * Returns groups with their rule counts.
  */
 export function discoverPermissionGroups(): PermissionGroupInfo[] {
-  const groupsDir = path.join(getPermissionsDir(), 'groups');
-
-  if (!fs.existsSync(groupsDir)) {
-    return [];
-  }
-
+  const seen = new Set<string>();
   const groups: PermissionGroupInfo[] = [];
 
-  try {
-    const entries = fs.readdirSync(groupsDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isFile()) continue;
-      if (!entry.name.endsWith('.yml') && !entry.name.endsWith('.yaml')) continue;
+  // Search user dir first, then system (user wins on name collision)
+  for (const baseDir of [getUserPermissionsDir(), getPermissionsDir()]) {
+    const groupsDir = path.join(baseDir, 'groups');
+    if (!fs.existsSync(groupsDir)) continue;
 
-      const filePath = path.join(groupsDir, entry.name);
-      const name = entry.name.replace(/\.(yaml|yml)$/, '');
+    try {
+      const entries = fs.readdirSync(groupsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        if (!entry.name.endsWith('.yml') && !entry.name.endsWith('.yaml')) continue;
 
-      // Count rules in this group
-      let ruleCount = 0;
-      try {
-        const content = fs.readFileSync(filePath, 'utf-8');
-        // Count lines that look like permission entries (start with - " after optional whitespace)
-        const matches = content.match(/^\s*-\s*"/gm);
-        ruleCount = matches ? matches.length : 0;
-      } catch {
-        // Skip files we can't read
+        const name = entry.name.replace(/\.(yaml|yml)$/, '');
+        if (seen.has(name)) continue;
+        seen.add(name);
+
+        const filePath = path.join(groupsDir, entry.name);
+        let ruleCount = 0;
+        try {
+          const content = fs.readFileSync(filePath, 'utf-8');
+          const matches = content.match(/^\s*-\s*"/gm);
+          ruleCount = matches ? matches.length : 0;
+        } catch { /* Skip files we can't read */ }
+
+        groups.push({ name, ruleCount, path: filePath });
       }
-
-      groups.push({ name, ruleCount, path: filePath });
-    }
-  } catch {
-    // Skip inaccessible directory
+    } catch { /* Skip inaccessible directory */ }
   }
 
-  // Sort by name (which sorts by numeric prefix)
   return groups.sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -251,19 +247,21 @@ export function getActivePermissionSetName(): string | null {
  * permission files often contain unescaped nested quotes that break YAML.
  */
 export function buildPermissionsFromGroups(groupNames: string[]): PermissionSet {
-  const groupsDir = path.join(getPermissionsDir(), 'groups');
   const allAllow: string[] = [];
   const allDeny: string[] = [];
 
   for (const groupName of groupNames) {
-    // Try both .yaml and .yml extensions
-    let filePath = safeJoin(groupsDir, `${groupName}.yaml`);
-    if (!fs.existsSync(filePath)) {
-      filePath = safeJoin(groupsDir, `${groupName}.yml`);
+    // Search user dir first, then system dir
+    let filePath: string | null = null;
+    for (const baseDir of [getUserPermissionsDir(), getPermissionsDir()]) {
+      const groupsDir = path.join(baseDir, 'groups');
+      for (const ext of ['.yaml', '.yml']) {
+        const candidate = safeJoin(groupsDir, `${groupName}${ext}`);
+        if (fs.existsSync(candidate)) { filePath = candidate; break; }
+      }
+      if (filePath) break;
     }
-    if (!fs.existsSync(filePath)) {
-      continue;
-    }
+    if (!filePath) continue;
 
     try {
       const content = fs.readFileSync(filePath, 'utf-8');
@@ -1187,7 +1185,7 @@ export function exportPermissionsFromPath(filePath: string): PermissionSet | nul
  */
 export function savePermissionSet(set: PermissionSet): { success: boolean; error?: string } {
   ensurePermissionsDir();
-  const filePath = safeJoin(getPermissionsDir(), set.name + '.yml');
+  const filePath = safeJoin(getUserPermissionsDir(), set.name + '.yml');
 
   try {
     const content = yaml.stringify({

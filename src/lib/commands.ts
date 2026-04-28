@@ -12,7 +12,7 @@ import * as path from 'path';
 import * as yaml from 'yaml';
 import { AGENTS, COMMANDS_CAPABLE_AGENTS, ensureCommandsDir } from './agents.js';
 import { markdownToToml } from './convert.js';
-import { getCommandsDir, getEnabledExtraRepos, getProjectAgentsDir, getSkillsDir } from './state.js';
+import { getCommandsDir, getUserCommandsDir, getEnabledExtraRepos, getProjectAgentsDir, getSkillsDir } from './state.js';
 import { getEffectiveHome, getVersionHomePath, listInstalledVersions } from './versions.js';
 import type { AgentId, CommandInstallation } from './types.js';
 import {
@@ -629,7 +629,7 @@ export function installCommandCentrally(
     };
   }
 
-  const centralDir = getCommandsDir();
+  const centralDir = getUserCommandsDir();
   if (!fs.existsSync(centralDir)) {
     fs.mkdirSync(centralDir, { recursive: true });
   }
@@ -650,18 +650,18 @@ export function installCommandCentrally(
 }
 
 /**
- * List commands from central ~/.agents/commands/ directory.
+ * List commands from user (~/.agents/commands/) and system (~/.agents-system/commands/) dirs.
+ * User dir takes priority; deduplication preserves first occurrence.
  */
 export function listCentralCommands(): string[] {
-  const centralDir = getCommandsDir();
-  if (!fs.existsSync(centralDir)) {
-    return [];
+  const seen = new Set<string>();
+  for (const dir of [getUserCommandsDir(), getCommandsDir()]) {
+    if (!fs.existsSync(dir)) continue;
+    for (const f of fs.readdirSync(dir).filter((f) => f.endsWith('.md'))) {
+      seen.add(f.replace('.md', ''));
+    }
   }
-
-  return fs
-    .readdirSync(centralDir)
-    .filter((f) => f.endsWith('.md'))
-    .map((f) => f.replace('.md', ''));
+  return Array.from(seen);
 }
 
 /**

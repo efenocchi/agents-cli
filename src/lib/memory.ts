@@ -11,7 +11,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { AGENTS, ALL_AGENT_IDS } from './agents.js';
-import { getMemoryDir, getResolvedRulesDir, getProjectAgentsDir } from './state.js';
+import { getMemoryDir, getResolvedRulesDir, getUserRulesDir, getProjectAgentsDir } from './state.js';
 import { getEffectiveHome } from './versions.js';
 import type { AgentId } from './types.js';
 
@@ -312,7 +312,7 @@ export function installInstructionsCentrally(
   const installed: string[] = [];
   const errors: string[] = [];
 
-  const centralDir = getMemoryDir();
+  const centralDir = getUserRulesDir();
   if (!fs.existsSync(centralDir)) {
     fs.mkdirSync(centralDir, { recursive: true });
   }
@@ -349,15 +349,15 @@ export function installInstructionsCentrally(
 }
 
 /**
- * List top-level rules files from central ~/.agents/rules/ directory.
+ * List top-level rules files from user and system dirs (user wins on collision).
  */
 export function listCentralMemory(): string[] {
-  const centralDir = getResolvedRulesDir();
-  if (!fs.existsSync(centralDir)) {
-    return [];
+  const seen = new Set<string>();
+  for (const dir of [getUserRulesDir(), getResolvedRulesDir()]) {
+    if (!fs.existsSync(dir)) continue;
+    for (const f of fs.readdirSync(dir).filter((f) => isSyncableRuleMarkdown(f))) {
+      seen.add(f);
+    }
   }
-
-  return fs
-    .readdirSync(centralDir)
-    .filter((f) => isSyncableRuleMarkdown(f));
+  return Array.from(seen);
 }

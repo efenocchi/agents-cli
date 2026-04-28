@@ -10,7 +10,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'yaml';
 import type { AgentId } from './types.js';
-import { getAgentsDir } from './state.js';
+import { getUserAgentsDir } from './state.js';
 import { getKeychainToken, keychainItemName } from './profiles-keychain.js';
 import { getPreset, type Preset } from './profiles-presets.js';
 
@@ -35,7 +35,7 @@ const PROFILE_NAME_PATTERN = /^[a-z0-9][a-z0-9-_]{0,48}$/i;
 
 /** Get the directory where profile YAML files are stored. */
 export function getProfilesDir(): string {
-  return path.join(getAgentsDir(), 'profiles');
+  return path.join(getUserAgentsDir(), 'profiles');
 }
 
 function profilePath(name: string): string {

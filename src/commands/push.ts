@@ -26,6 +26,7 @@ import {
 } from '../lib/manifest.js';
 import {
   getAgentsDir,
+  getUserAgentsDir,
   ensureAgentsDir,
 } from '../lib/state.js';
 import type { AgentId } from '../lib/types.js';
@@ -77,7 +78,7 @@ Blocked if:
 `)
     .action(async (options) => {
       try {
-        const agentsDir = getAgentsDir();
+        const agentsDir = getUserAgentsDir();
         ensureAgentsDir();
 
         // Check if ~/.agents/ is a git repo
@@ -125,11 +126,11 @@ Blocked if:
           spinner.succeed(`Initialized git repo with remote ${username}/.agents`);
         }
 
-        // Check if origin is system repo (can't push there)
+        // Guard: don't push to the system repo URL by accident
         if (await isSystemRepoOrigin(agentsDir)) {
           console.log(chalk.red("Can't push to the system repo."));
-          console.log(chalk.gray('\nTo save your changes, fork the repo first:'));
-          console.log(chalk.cyan('  agents fork'));
+          console.log(chalk.gray('\nCreate your own .agents repo first:'));
+          console.log(chalk.cyan('  agents push --init'));
           return;
         }
 
