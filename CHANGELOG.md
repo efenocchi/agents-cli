@@ -16,7 +16,7 @@
 **Default upstream moved to `phnx-labs/.agents`**
 
 - `DEFAULT_SYSTEM_REPO` now resolves to `gh:phnx-labs/.agents` — a curated, org-owned upstream. `agents pull` (no args) and `agents fork` target the new repo on fresh machines.
-- Existing users whose upstream still points at `phnx-labs/.agents` see a one-time nudge on `agents pull --upstream` with the command to switch. Nothing else breaks; legacy remotes continue to work.
+- Existing users whose upstream still points at the old default see a one-time nudge on `agents pull --upstream` with the command to switch. Nothing else breaks; legacy remotes continue to work.
 
 **Consolidate sessions command**
 
