@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**System repo moved to `~/.agents-system`; `~/.agents` is now free for user-owned repos**
+
+- The CLI-managed global root now lives under `~/.agents-system/` instead of `~/.agents/`. This includes `agents.yaml`, commands, skills, hooks, rules, versions, shims, routines, runs, plugins, secrets, and managed extra-repo clones.
+- `agents init` and `agents pull` now bootstrap and sync the fixed system repo in `~/.agents-system/`.
+- `agents repo init` now supports `--from <source>` and no longer pushes users toward generated names like `~/.agents-mine`; `~/.agents` is now the recommended clean path for a personal repo.
+
 **Scheduler merged into `routines`; top-level help simplified**
 
 - `agents routines add` now auto-starts the background scheduler when it is not already running. First-time users no longer need a separate `daemon start` step — the common path is just `routines add`.

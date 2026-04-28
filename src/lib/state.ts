@@ -1,7 +1,7 @@
 /**
  * Filesystem layout and persistent state for agents-cli.
  *
- * Owns the canonical paths under ~/.agents/, the agents.yaml metadata file,
+ * Owns the canonical paths under ~/.agents-system/, the agents.yaml metadata file,
  * and the per-version resource tracking that survives across CLI invocations.
  * Every module that needs a path or reads/writes agents.yaml goes through here.
  */
@@ -14,7 +14,7 @@ import type { Meta, RegistryType } from './types.js';
 import { SEEDED_REGISTRIES } from './types.js';
 
 const HOME = os.homedir();
-const AGENTS_DIR = path.join(HOME, '.agents');
+const AGENTS_DIR = path.join(HOME, '.agents-system');
 const META_FILE = path.join(AGENTS_DIR, 'agents.yaml');
 const COMMANDS_DIR = path.join(AGENTS_DIR, 'commands');
 const HOOKS_DIR = path.join(AGENTS_DIR, 'hooks');
@@ -44,34 +44,19 @@ const META_HEADER = `# agents-cli metadata
 
 `;
 
-const RULES_README = `# Rules
-
-This directory stores the persistent instruction files that agents-cli syncs into each agent runtime.
-
-Files and folders:
-- AGENTS.md: Canonical root rules file. Synced as CLAUDE.md, GEMINI.md, .cursorrules, or AGENTS.md depending on the agent.
-- presets/: Optional bundles of reusable rule fragments.
-- rules/: Optional reusable rule fragments imported from AGENTS.md or a preset.
-
-How it works:
-- Keep AGENTS.md if you want one flat instruction file.
-- Use @presets/proactive.md or @rules/some-rule.md if you want modular composition.
-- Agents that do not support native @imports get a compiled copy at sync time.
-`;
-
-/** Root of the agents-cli data directory (~/.agents/). */
+/** Root of the agents-cli system data directory (~/.agents-system/). */
 export function getAgentsDir(): string {
   return AGENTS_DIR;
 }
 
-/** Walk up from startPath to find a project-scoped .agents/ directory (skipping ~/.agents/). */
+/** Walk up from startPath to find a project-scoped .agents/ directory (skipping ~/.agents-system/). */
 export function getProjectAgentsDir(startPath: string = process.cwd()): string | null {
   let dir = path.resolve(startPath);
 
   while (true) {
     const agentsPath = path.join(dir, '.agents');
     if (fs.existsSync(agentsPath) && fs.statSync(agentsPath).isDirectory()) {
-      // Skip if this is ~/.agents (user scope, not project scope)
+      // Skip if this is ~/.agents-system (user scope, not project scope)
       if (agentsPath !== AGENTS_DIR) {
         return agentsPath;
       }
@@ -103,72 +88,72 @@ export function getScopedAgentsDirs(startPath: string = process.cwd()): Array<{ 
   return dirs;
 }
 
-/** Path to cloned packages (~/.agents/packages/). */
+/** Path to cloned packages (~/.agents-system/packages/). */
 export function getPackagesDir(): string {
   return PACKAGES_DIR;
 }
 
-/** Path to routine YAML definitions (~/.agents/routines/). */
+/** Path to routine YAML definitions (~/.agents-system/routines/). */
 export function getRoutinesDir(): string {
   return ROUTINES_DIR;
 }
 
-/** Path to routine execution logs (~/.agents/runs/). */
+/** Path to routine execution logs (~/.agents-system/runs/). */
 export function getRunsDir(): string {
   return RUNS_DIR;
 }
 
-/** Path to installed agent CLI binaries (~/.agents/versions/). */
+/** Path to installed agent CLI binaries (~/.agents-system/versions/). */
 export function getVersionsDir(): string {
   return VERSIONS_DIR;
 }
 
-/** Path to version-switching shim scripts (~/.agents/shims/). */
+/** Path to version-switching shim scripts (~/.agents-system/shims/). */
 export function getShimsDir(): string {
   return SHIMS_DIR;
 }
 
-/** Path to permission group YAML files (~/.agents/permissions/). */
+/** Path to permission group YAML files (~/.agents-system/permissions/). */
 export function getPermissionsDir(): string {
   return PERMISSIONS_DIR;
 }
 
-/** Path to MCP server YAML configs (~/.agents/mcp/). */
+/** Path to MCP server YAML configs (~/.agents-system/mcp/). */
 export function getMcpDir(): string {
   return MCP_DIR;
 }
 
-/** Path to config backups created during version switches (~/.agents/backups/). */
+/** Path to config backups created during version switches (~/.agents-system/backups/). */
 export function getBackupsDir(): string {
   return BACKUPS_DIR;
 }
 
-/** Path to subagent definition directories (~/.agents/subagents/). */
+/** Path to subagent definition directories (~/.agents-system/subagents/). */
 export function getSubagentsDir(): string {
   return SUBAGENTS_DIR;
 }
 
-/** Path to plugin bundles (~/.agents/plugins/). */
+/** Path to plugin bundles (~/.agents-system/plugins/). */
 export function getPluginsDir(): string {
   return PLUGINS_DIR;
 }
 
-/** Path to synced remote session data (~/.agents/drive/). */
+/** Path to synced remote session data (~/.agents-system/drive/). */
 export function getDriveDir(): string {
   return DRIVE_DIR;
 }
 
-/** Path to encrypted secret bundles (~/.agents/secrets/). */
+/** Path to encrypted secret bundles (~/.agents-system/secrets/). */
 export function getSecretsDir(): string {
   return SECRETS_DIR;
 }
 
-/** Path to cloned extra DotAgent repos (~/.agents/.repos/). */
+/** Path to managed extra DotAgent repo clones (~/.agents-system/.repos/). */
 export function getExtraReposDir(): string {
   return EXTRA_REPOS_DIR;
 }
 
-/** Path to a single extra DotAgent repo clone (~/.agents/.repos/<alias>/). */
+/** Path to a single managed extra DotAgent repo clone (~/.agents-system/.repos/<alias>/). */
 export function getExtraRepoDir(alias: string): string {
   return path.join(EXTRA_REPOS_DIR, alias);
 }
@@ -183,7 +168,7 @@ export function resolveExtraRepoDir(alias: string, config?: { path?: string }): 
 
 /**
  * Return enabled extra repos that exist on disk, in insertion order.
- * Primary (~/.agents/) is intentionally excluded — callers decide order.
+ * Primary (~/.agents-system/) is intentionally excluded — callers decide order.
  */
 export function getEnabledExtraRepos(): Array<{ alias: string; dir: string; url: string }> {
   const meta = readMeta();
@@ -198,36 +183,29 @@ export function getEnabledExtraRepos(): Array<{ alias: string; dir: string; url:
   return out;
 }
 
-/** Path to slash command markdown files (~/.agents/commands/). */
+/** Path to slash command markdown files (~/.agents-system/commands/). */
 export function getCommandsDir(): string {
   return COMMANDS_DIR;
 }
 
-/** Path to hook script directories (~/.agents/hooks/). */
+/** Path to hook script directories (~/.agents-system/hooks/). */
 export function getHooksDir(): string {
   return HOOKS_DIR;
 }
 
-/** Path to skill bundles (~/.agents/skills/). */
+/** Path to skill bundles (~/.agents-system/skills/). */
 export function getSkillsDir(): string {
   return SKILLS_DIR;
 }
 
-/** Path to the canonical rules directory (~/.agents/rules/). */
+/** Path to the canonical rules directory (~/.agents-system/rules/). */
 export function getRulesDir(): string {
   return RULES_DIR;
 }
 
-/** Back-compat export for older internals; now resolves to ~/.agents/rules/. */
+/** Back-compat export for older internals; now resolves to ~/.agents-system/rules/. */
 export function getMemoryDir(): string {
   return RULES_DIR;
-}
-
-function ensureRulesReadme(): void {
-  const readmePath = path.join(RULES_DIR, 'README.md');
-  if (!fs.existsSync(readmePath)) {
-    fs.writeFileSync(readmePath, RULES_README, 'utf-8');
-  }
 }
 
 function migrateLegacyRulesDir(): void {
@@ -236,13 +214,13 @@ function migrateLegacyRulesDir(): void {
   fs.renameSync(LEGACY_MEMORY_DIR, RULES_DIR);
 }
 
-/** Path to the global instructions file (~/.agents/instructions.md). */
+/** Path to the global instructions file (~/.agents-system/instructions.md). */
 export function getInstructionsPath(): string {
   return INSTRUCTIONS_FILE;
 }
 
 /**
- * Path to ~/.agents/promptcuts.yaml — the canonical, version-independent
+ * Path to ~/.agents-system/promptcuts.yaml — the canonical, version-independent
  * source for prompt shortcuts. The expand-promptcuts hook reads directly
  * from this file, so it survives agent-version upgrades without any sync.
  */
@@ -250,12 +228,12 @@ export function getPromptcutsPath(): string {
   return PROMPTCUTS_FILE;
 }
 
-/** Path to the legacy MCP config JSON (~/.agents/mcp.json). */
+/** Path to the legacy MCP config JSON (~/.agents-system/mcp.json). */
 export function getMcpConfigPath(): string {
   return MCP_CONFIG_FILE;
 }
 
-/** Create the ~/.agents/ directory tree if any subdirectories are missing. */
+/** Create the ~/.agents-system/ directory tree if any subdirectories are missing. */
 export function ensureAgentsDir(): void {
   const opts = { recursive: true, mode: 0o700 } as const;
   if (!fs.existsSync(AGENTS_DIR)) {
@@ -301,7 +279,6 @@ export function ensureAgentsDir(): void {
   if (!fs.existsSync(EXTRA_REPOS_DIR)) {
     fs.mkdirSync(EXTRA_REPOS_DIR, opts);
   }
-  ensureRulesReadme();
   try { fs.chmodSync(AGENTS_DIR, 0o700); } catch {}
 }
 

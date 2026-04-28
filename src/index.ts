@@ -7,7 +7,6 @@
  * and launches the first-run interactive init when appropriate.
  */
 
-import './lib/_silence-sqlite-warning.js';
 import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
@@ -128,15 +127,15 @@ Automation tips:
   Non-TTY shells apply defaults   Omitted required selections fail with a plain hint
 
 Config sync (portable setup via git):
-  pull                            Clone or pull the system repo at ~/.agents/
-  repo init --path <dir>          Scaffold your own editable repo from the system template
+  pull                            Clone or pull the system repo at ~/.agents-system/
+  repo init --path <dir>          Scaffold your own editable repo from a template
   repo add <path|gh:user/repo>    Merge an extra repo after the system repo
 
 Options:
   -V, --version                   Show version number
   -h, --help                      Show help
 
-Config lives in ~/.agents/. Run 'agents <command> --help' for details.
+System config lives in ~/.agents-system/. Run 'agents <command> --help' for details.
 `;
   }
   return originalHelpInformation();
@@ -509,9 +508,9 @@ const passedArgs = process.argv.slice(2);
 const requestedCommand = passedArgs.find((arg) => !arg.startsWith('-'));
 
 /**
- * Lazily register command trees that pull in the SQLite session/cloud stack.
- * This keeps lightweight commands like `agents view` from loading `node:sqlite`
- * during CLI startup.
+ * Lazily register command trees that pull in the SQLite-backed session/cloud
+ * stack. This keeps lightweight commands like `agents view` from loading the
+ * DB layer during CLI startup.
  */
 async function registerLazyCommands(): Promise<void> {
   switch (requestedCommand) {

@@ -2,10 +2,10 @@
  * Extra DotAgent repo management.
  *
  * Registers `agents repo add|init|list|remove|enable|disable` which manage
- * additional DotAgent repos alongside the primary ~/.agents/ repo so
+ * additional DotAgent repos alongside the primary ~/.agents-system/ repo so
  * private, work, or team skills can ship separately from public ones.
  *
- * Managed extras live at ~/.agents/.repos/<alias>/, while user-owned repos
+ * Managed extras live at ~/.agents-system/.repos/<alias>/, while user-owned repos
  * may live anywhere. All extras are registered in meta.extraRepos. Sync
  * functions merge their resources into agent version homes after the
  * primary's (primary-wins on name collisions).
@@ -42,7 +42,7 @@ function deriveAlias(source: string): string {
     base = match ? match[2] : parsed.url;
   }
   // Strip leading dots (e.g. ".agents-work" -> "agents-work") so the alias
-  // is usable as a visible directory name under ~/.agents/.repos/.
+  // is usable as a visible directory name under ~/.agents-system/.repos/.
   return base.replace(/^\.+/, '') || 'repo';
 }
 
@@ -79,16 +79,16 @@ async function getShortCommit(repoDir: string): Promise<string | null> {
 export function registerRepoCommands(program: Command): void {
   const repoCmd = program
     .command('repo')
-    .description('Manage extra DotAgent repos alongside the primary ~/.agents/ (for private or team skills)')
+    .description('Manage extra DotAgent repos alongside the primary ~/.agents-system/ (for private or team skills)')
     .addHelpText('after', `
-Managed extras live at ~/.agents/.repos/<alias>/. User-owned repos can also live
+Managed extras live at ~/.agents-system/.repos/<alias>/. User-owned repos can also live
 anywhere and be registered by path. Their skills, commands, and hooks merge into
-agent version homes after the primary repo's — so the primary (~/.agents/) wins
+agent version homes after the primary repo's — so the primary (~/.agents-system/) wins
 on name collisions.
 
 Examples:
   # Scaffold your own editable repo from the system template
-  agents repo init --path ~/.agents-mine --as mine
+  agents repo init --path ~/.agents
 
   # Add a private repo for work-only skills
   agents repo add gh:yourname/.agents-work
@@ -108,10 +108,11 @@ Examples:
 
   repoCmd
     .command('init')
-    .description('Create a user-owned repo from the system template and register it as an extra')
+    .description('Create a user-owned repo from a template and register it as an extra')
     .requiredOption('--path <path>', 'Target directory for your editable repo')
+    .option('--from <source>', 'Template repo to clone from', DEFAULT_SYSTEM_REPO)
     .option('--as <alias>', 'Alias to register under (defaults to the directory name)')
-    .action(async (options: { path: string; as?: string }) => {
+    .action(async (options: { path: string; from: string; as?: string }) => {
       const targetDir = path.resolve(options.path.trim());
       const alias = options.as ? options.as.trim() : (path.basename(targetDir).replace(/^\.+/, '') || 'repo');
       if (!ALIAS_PATTERN.test(alias)) {
@@ -133,8 +134,8 @@ Examples:
         return;
       }
 
-      const parsed = parseSource(DEFAULT_SYSTEM_REPO);
-      const spinner = ora(`Cloning ${DEFAULT_SYSTEM_REPO} into ${targetDir}...`).start();
+      const parsed = parseSource(options.from);
+      const spinner = ora(`Cloning ${options.from} into ${targetDir}...`).start();
       try {
         fs.mkdirSync(path.dirname(targetDir), { recursive: true });
         await simpleGit().clone(parsed.url, targetDir);
@@ -158,7 +159,7 @@ Examples:
 
   repoCmd
     .command('add <source>')
-    .description('Register an existing local repo or clone a remote repo into ~/.agents/.repos/<alias>/')
+    .description('Register an existing local repo or clone a remote repo into ~/.agents-system/.repos/<alias>/')
     .option('--as <alias>', 'Override the auto-derived alias (letters, digits, _ or -)')
     .action(async (source: string, options: { as?: string }) => {
       const meta = readMeta();
@@ -235,7 +236,7 @@ Examples:
   repoCmd
     .command('list')
     .alias('ls')
-    .description('Show the primary ~/.agents/ repo and every registered extra')
+    .description('Show the primary ~/.agents-system/ repo and every registered extra')
     .action(async () => {
       const meta = readMeta();
       const primaryUrl = meta.source || DEFAULT_SYSTEM_REPO;

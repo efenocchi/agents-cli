@@ -2,7 +2,7 @@
  * First-run initialization command.
  *
  * Registers the `agents init` command which clones the system repo into
- * ~/.agents/ and installs agent CLIs with resource syncing.
+ * ~/.agents-system/ and installs agent CLIs with resource syncing.
  */
 
 import type { Command } from 'commander';
@@ -21,14 +21,14 @@ export async function runInit(program: Command, options: { force?: boolean } = {
   const alreadyConfigured = fs.existsSync(metaFile) || isGitRepo(agentsDir);
 
   if (alreadyConfigured && !options.force) {
-    console.log(chalk.yellow('~/.agents/ is already set up.'));
+    console.log(chalk.yellow('~/.agents-system/ is already set up.'));
     console.log(chalk.gray('\nTo sync updates:      agents pull'));
     console.log(chalk.gray('To re-initialize:     agents init --force'));
     return;
   }
 
   console.log(chalk.bold('\nWelcome to agents-cli.'));
-  console.log(chalk.gray(`Cloning the system repo from ${systemRepoSlug(DEFAULT_SYSTEM_REPO)} into ~/.agents/.\n`));
+  console.log(chalk.gray(`Cloning the system repo from ${systemRepoSlug(DEFAULT_SYSTEM_REPO)} into ~/.agents-system/.\n`));
 
   console.log();
   await program.parseAsync(['node', 'agents', 'pull']);
@@ -46,7 +46,7 @@ export async function runInit(program: Command, options: { force?: boolean } = {
   console.log(chalk.cyan('  agents view                 ') + chalk.gray(' # see what\'s installed'));
   console.log(chalk.cyan('  agents run <agent> "hello"  ') + chalk.gray(' # run an agent'));
   console.log(chalk.gray('\nWhen you want your own editable repo, scaffold one with:'));
-  console.log(chalk.cyan('  agents repo init --path ~/.agents-mine'));
+  console.log(chalk.cyan('  agents repo init --path ~/.agents'));
 }
 
 /** Register the `agents init` command. */
@@ -54,10 +54,10 @@ export function registerInitCommand(program: Command): void {
   program
     .command('init')
     .description('Set up agents-cli for the first time. Clones a config repo and installs agent CLIs.')
-    .option('-f, --force', 'Reinitialize even if ~/.agents/ already exists (use with caution)')
+    .option('-f, --force', 'Reinitialize even if ~/.agents-system/ already exists (use with caution)')
     .addHelpText('after', `
 Examples:
-  # First-time setup (clones the system repo into ~/.agents/)
+  # First-time setup (clones the system repo into ~/.agents-system/)
   agents init
 
   # Re-initialize after corruption
@@ -66,10 +66,10 @@ Examples:
 When to use:
   - First time running agents-cli: this is your starting point
   - Onboarding a new machine: restore the system repo and installed CLIs
-  - Repairing ~/.agents/ after accidental deletion or corruption
+  - Repairing ~/.agents-system/ after accidental deletion or corruption
 
 What it does:
-  1. Clones the system repo into ~/.agents/
+  1. Clones the system repo into ~/.agents-system/
   2. Installs agent CLIs based on agents.yaml in that repo
   3. Syncs commands, skills, hooks, and MCP servers to each version
 
