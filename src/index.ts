@@ -60,6 +60,7 @@ import { registerUsageCommand } from './commands/usage.js';
 import { registerAliasCommand } from './commands/alias.js';
 import { applyGlobalHelpConventions } from './lib/help.js';
 import { isPromptCancelled } from './commands/utils.js';
+import { getAgentsDir } from './lib/state.js';
 
 const program = new Command();
 
@@ -201,7 +202,7 @@ async function showWhatsNew(fromVersion: string, toVersion: string): Promise<voi
 }
 
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
-const UPDATE_CHECK_FILE = path.join(os.homedir(), '.agents', '.update-check');
+const UPDATE_CHECK_FILE = path.join(getAgentsDir(), '.update-check');
 
 /** Read the cached update-check state from disk. Returns null if the file is missing or corrupt. */
 function readUpdateCache(): { lastCheck: number; latestVersion: string; dismissed?: string } | null {
@@ -535,7 +536,7 @@ async function registerLazyCommands(): Promise<void> {
 }
 
 await registerLazyCommands();
-const metaFilePath = path.join(os.homedir(), '.agents', 'agents.yaml');
+const metaFilePath = path.join(getAgentsDir(), 'agents.yaml');
 const firstRun =
   passedArgs.length === 0 &&
   !fs.existsSync(metaFilePath) &&

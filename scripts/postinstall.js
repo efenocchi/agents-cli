@@ -9,8 +9,8 @@ import * as os from 'os';
 import * as readline from 'readline';
 
 const HOME = os.homedir();
-const SHIMS_DIR = path.join(HOME, '.agents', 'shims');
-const AGENTS_DIR = path.join(HOME, '.agents');
+const SHIMS_DIR = path.join(HOME, '.agents-system', 'shims');
+const AGENTS_DIR = path.join(HOME, '.agents-system');
 
 // Only run for global installs
 if (!process.env.npm_config_global && !process.argv.includes('-g')) {
@@ -91,7 +91,7 @@ async function main() {
     let alreadyConfigured = false;
     if (fs.existsSync(rcFile)) {
       const content = fs.readFileSync(rcFile, 'utf-8');
-      alreadyConfigured = content.includes('.agents/shims');
+      alreadyConfigured = content.includes('.agents-system/shims');
     }
     if (!alreadyConfigured) {
       const addition = `\n# agents-cli: version switching for AI coding agents\n${exportLine}\n`;
