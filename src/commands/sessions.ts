@@ -1148,7 +1148,7 @@ Examples:
   agents sessions --agent claude --since 7d
 
   # Filter sessions in a specific directory
-  agents sessions /Users/muqsit/src/my-project
+  agents sessions ~/src/my-project
 
   # Default summary view for one session
   agents sessions a1b2c3d4
