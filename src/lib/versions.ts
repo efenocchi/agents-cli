@@ -779,8 +779,9 @@ export async function promptResourceSelection(agent: AgentId): Promise<ResourceS
     return {};
   }
 
-  // If "Select All" was picked, sync everything without per-category prompts
-  if (selectedCategories.includes(SELECT_ALL_KEY)) {
+  // If "Select All" was picked, or all individual categories are selected, sync everything without per-category prompts
+  const allCategoryKeys = availableCategories.map(c => c.key);
+  if (selectedCategories.includes(SELECT_ALL_KEY) || allCategoryKeys.every(k => selectedCategories.includes(k))) {
     for (const c of availableCategories) {
       selection[c.key] = 'all';
     }
