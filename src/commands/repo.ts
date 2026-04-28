@@ -15,7 +15,25 @@ import chalk from 'chalk';
 import ora from 'ora';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import simpleGit from 'simple-git';
+
+const HOME = os.homedir();
+
+/**
+ * Resolve a target argument to an absolute path.
+ * - No arg: ~/.agents/
+ * - Looks like a path (starts with /, ~, .): resolve as path
+ * - Otherwise: ~/.agents-{name}/
+ */
+function resolveRepoPath(target?: string): string {
+  if (!target) return path.join(HOME, '.agents');
+  const trimmed = target.trim();
+  if (trimmed.startsWith('/') || trimmed.startsWith('~') || trimmed.startsWith('.')) {
+    return path.resolve(trimmed.replace(/^~/, HOME));
+  }
+  return path.join(HOME, `.agents-${trimmed}`);
+}
 
 import {
   ensureAgentsDir,
@@ -87,8 +105,14 @@ agent version homes after the primary repo's — so the primary (~/.agents-syste
 on name collisions.
 
 Examples:
-  # Scaffold your own editable repo from the system template
-  agents repo init --path ~/.agents
+  # Scaffold your own editable repo (default: ~/.agents/)
+  agents repo init
+
+  # Scaffold a named repo (creates ~/.agents-work/)
+  agents repo init work
+
+  # Scaffold at a custom path
+  agents repo init ~/my-agents
 
   # Add a private repo for work-only skills
   agents repo add gh:yourname/.agents-work
@@ -107,13 +131,12 @@ Examples:
 `);
 
   repoCmd
-    .command('init')
+    .command('init [target]')
     .description('Create a user-owned repo from a template and register it as an extra')
-    .requiredOption('--path <path>', 'Target directory for your editable repo')
     .option('--from <source>', 'Template repo to clone from', DEFAULT_SYSTEM_REPO)
     .option('--as <alias>', 'Alias to register under (defaults to the directory name)')
-    .action(async (options: { path: string; from: string; as?: string }) => {
-      const targetDir = path.resolve(options.path.trim());
+    .action(async (target: string | undefined, options: { from: string; as?: string }) => {
+      const targetDir = resolveRepoPath(target);
       const alias = options.as ? options.as.trim() : (path.basename(targetDir).replace(/^\.+/, '') || 'repo');
       if (!ALIAS_PATTERN.test(alias)) {
         console.log(chalk.red(`Invalid alias "${alias}".`));

@@ -9,6 +9,7 @@
 import type { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
+import { betaEnableHint, isBetaEnabled } from '../lib/beta.js';
 import {
   setRemote,
   pull,
@@ -20,8 +21,9 @@ import {
 
 /** Register the `agents drive` command tree. */
 export function registerDriveCommands(program: Command): void {
+  const enabled = isBetaEnabled('drive');
   const driveCmd = program
-    .command('drive')
+    .command('drive', { hidden: !enabled })
     .description('Sync agent session history across machines via rsync. Set up once, then pull/push to keep sessions in sync.')
     .addHelpText('after', `
 Typical workflow:
@@ -42,6 +44,13 @@ Typical workflow:
 Use case: Keep session history consistent across your laptop and desktop,
 or back up sessions to a server you control.
 `);
+
+  driveCmd.hook('preAction', () => {
+    if (enabled) return;
+    console.error(chalk.red('agents drive is in beta.'));
+    console.error(chalk.gray(betaEnableHint('drive')));
+    process.exit(1);
+  });
 
   driveCmd
     .command('remote <target>')

@@ -20,6 +20,7 @@ import chalk from 'chalk';
 import * as fs from 'fs';
 import * as path from 'path';
 import { homedir } from 'os';
+import { betaEnableHint, isBetaEnabled } from '../lib/beta.js';
 
 const FACTORY_URL = process.env.FACTORY_FLOOR_URL ?? 'https://agents.427yosemite.com';
 
@@ -66,14 +67,22 @@ async function postFactorySubmit(ref: string): Promise<SubmitResponse> {
 }
 
 export function registerFactoryCommands(program: Command): void {
+  const enabled = isBetaEnabled('factory');
   const factory = program
-    .command('factory', { hidden: true })
+    .command('factory', { hidden: !enabled })
     .description('Software Factory -- submit Linear tickets to the cloud orchestrator.')
     .addHelpText('after', `
 Examples:
   agents factory submit RUSH-2451
   agents factory submit https://linear.app/getrush/issue/RUSH-2451
 `);
+
+  factory.hook('preAction', () => {
+    if (enabled) return;
+    console.error(chalk.red('agents factory is in beta.'));
+    console.error(chalk.gray(betaEnableHint('factory')));
+    process.exit(1);
+  });
 
   factory
     .command('submit <linear-ref>')
