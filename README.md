@@ -369,6 +369,10 @@ Codex command sync is version-aware: Codex `0.116.x` and older receive slash com
 
 Claude Code, Codex CLI, and Gemini CLI each have their own config format, MCP setup, version management, and skill system. If you use more than one, you maintain N copies of everything. `agents` gives you one interface, one config source, and one place to pin versions -- plus features the individual CLIs don't ship: cross-agent pipelines, shared teams, unified session search, and project-pinned versions like `.nvmrc`.
 
+### Is it free?
+
+Yes. This developer tool is entirely free because we believe developers should have the best tools — fast and robust — so they can create the best products for their users.
+
 ### Is this like `nvm` / `mise` / `asdf` for AI agents?
 
 For version management, yes. `agents-cli` reads `agents.yaml` from the project root, walks up the directory tree, and routes to the correct binary per project. But it also manages agent-native resources (skills, MCP servers, commands, hooks, permissions) that language version managers don't touch.
