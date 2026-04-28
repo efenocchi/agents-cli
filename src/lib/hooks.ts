@@ -14,7 +14,9 @@ import * as yaml from 'yaml';
 import * as TOML from 'smol-toml';
 import { AGENTS, ALL_AGENT_IDS, HOOKS_CAPABLE_AGENTS } from './agents.js';
 import { supports, explainSkip } from './capabilities.js';
-import { getAgentsDir, getHooksDir as getCentralHooksDir, getProjectAgentsDir } from './state.js';
+import { getAgentsDir, getHooksDir as getSystemHooksDir, getUserHooksDir, getUserAgentsDir, getProjectAgentsDir } from './state.js';
+
+function getCentralHooksDir(): string { return getUserHooksDir(); }
 import { getEffectiveHome, getVersionHomePath, listInstalledVersions } from './versions.js';
 import type { AgentId, InstalledHook, ManifestHook } from './types.js';
 
@@ -581,10 +583,21 @@ export async function installHooksCentrally(
 }
 
 /**
- * List hooks from central ~/.agents/hooks/ directory.
+ * List hooks from user (~/.agents/hooks/) and system (~/.agents-system/hooks/) dirs.
+ * User dir takes priority; deduplication preserves first occurrence.
  */
 export function listCentralHooks(): HookEntry[] {
-  return listHookEntriesFromDir(getCentralHooksDir());
+  const seen = new Set<string>();
+  const results: HookEntry[] = [];
+  for (const dir of [getUserHooksDir(), getSystemHooksDir()]) {
+    for (const entry of listHookEntriesFromDir(dir)) {
+      if (!seen.has(entry.name)) {
+        seen.add(entry.name);
+        results.push(entry);
+      }
+    }
+  }
+  return results;
 }
 
 /**
@@ -592,18 +605,18 @@ export function listCentralHooks(): HookEntry[] {
  * Returns hook definitions with lifecycle event metadata.
  */
 export function parseHookManifest(): Record<string, ManifestHook> {
-  const manifestPath = path.join(getAgentsDir(), 'hooks.yaml');
-  if (!fs.existsSync(manifestPath)) {
-    return {};
+  for (const dir of [getUserAgentsDir(), getAgentsDir()]) {
+    const manifestPath = path.join(dir, 'hooks.yaml');
+    if (!fs.existsSync(manifestPath)) continue;
+    try {
+      const content = fs.readFileSync(manifestPath, 'utf-8');
+      const parsed = yaml.parse(content) as Record<string, ManifestHook> | null;
+      if (parsed) return parsed;
+    } catch {
+      /* continue to next dir */
+    }
   }
-
-  try {
-    const content = fs.readFileSync(manifestPath, 'utf-8');
-    const parsed = yaml.parse(content) as Record<string, ManifestHook> | null;
-    return parsed || {};
-  } catch {
-    return {};
-  }
+  return {};
 }
 
 // Codex events that support a matcher field (matches tool name or session type).

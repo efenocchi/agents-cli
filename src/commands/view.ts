@@ -53,8 +53,8 @@ import {
   ensureVersionedAliasCurrent,
   removeShim,
 } from '../lib/shims.js';
-import { getAgentResources } from '../lib/resources.js';
-import { getAgentsDir, getPromptcutsPath } from '../lib/state.js';
+import { getAgentResources, listResources } from '../lib/resources.js';
+import { getAgentsDir, getUserAgentsDir, getPromptcutsPath } from '../lib/state.js';
 import { isGitRepo, getGitSyncStatus } from '../lib/git.js';
 import { getCentralMemoryFileName } from '../lib/memory.js';
 import { getConfiguredRunStrategy } from '../lib/rotate.js';
@@ -489,11 +489,12 @@ async function showAgentResources(agentId: AgentId, requestedVersion: string): P
   const home = getVersionHomePath(agentId, version);
 
   // Get git sync status if ~/.agents/ is a git repo
-  const hasGitRepo = isGitRepo(agentsDir);
-  const commandsSync = hasGitRepo ? await getGitSyncStatus(agentsDir, 'commands') : null;
-  const skillsSync = hasGitRepo ? await getGitSyncStatus(agentsDir, 'skills') : null;
-  const hooksSync = hasGitRepo ? await getGitSyncStatus(agentsDir, 'hooks') : null;
-  const memorySync = hasGitRepo ? await getGitSyncStatus(agentsDir, 'rules') : null;
+  const userAgentsDir = getUserAgentsDir();
+  const hasGitRepo = isGitRepo(userAgentsDir);
+  const commandsSync = hasGitRepo ? await getGitSyncStatus(userAgentsDir, 'commands') : null;
+  const skillsSync = hasGitRepo ? await getGitSyncStatus(userAgentsDir, 'skills') : null;
+  const hooksSync = hasGitRepo ? await getGitSyncStatus(userAgentsDir, 'hooks') : null;
+  const memorySync = hasGitRepo ? await getGitSyncStatus(userAgentsDir, 'rules') : null;
 
   // Helper to determine sync state for a resource
   const getSyncState = (
@@ -616,12 +617,14 @@ async function showAgentResources(agentId: AgentId, requestedVersion: string): P
 
       let display = nameColor(r.name);
       if (r.ruleCount !== undefined) display += chalk.gray(` (${r.ruleCount} rules)`);
-      if (r.scope === 'project') {
-        display += chalk.gray(' [project]');
-      }
+      // Source annotation: project overrides user, user overrides system
+      const sourceTag = r.scope === 'project' ? chalk.blue('[project]')
+        : r.scope === 'user' ? chalk.cyan('[user]')
+        : chalk.gray('[system]');
+      display += ` ${sourceTag}`;
       const pathStr = r.path ? chalk.gray(formatPath(r.path, cwd)) : '';
       const syncStr = r.syncState ? chalk.gray(` [${r.syncState}]`) : '';
-      console.log(`    ${display.padEnd(24)} ${pathStr}${syncStr}`);
+      console.log(`    ${display.padEnd(38)} ${pathStr}${syncStr}`);
     }
   }
 

@@ -9,7 +9,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'yaml';
-import { getSecretsDir } from './state.js';
+import { getSecretsDir, getUserSecretsDir } from './state.js';
 import {
   parseBundleValue,
   resolveRef,
@@ -43,7 +43,12 @@ export function validateEnvKey(key: string): void {
 }
 
 function bundlePath(name: string): string {
-  return path.join(getSecretsDir(), `${name}.yml`);
+  // Check user dir first (for reads), write to user dir
+  const userPath = path.join(getUserSecretsDir(), `${name}.yml`);
+  if (fs.existsSync(userPath)) return userPath;
+  const systemPath = path.join(getSecretsDir(), `${name}.yml`);
+  if (fs.existsSync(systemPath)) return systemPath;
+  return userPath; // default write location
 }
 
 export function bundleExists(name: string): boolean {
@@ -78,7 +83,7 @@ export function writeBundle(bundle: SecretsBundle): void {
   for (const key of Object.keys(bundle.vars)) {
     validateEnvKey(key);
   }
-  const dir = getSecretsDir();
+  const dir = getUserSecretsDir();
   fs.mkdirSync(dir, { recursive: true });
   const body = yaml.stringify({
     name: bundle.name,
@@ -101,16 +106,19 @@ export function deleteBundle(name: string): boolean {
 }
 
 export function listBundles(): SecretsBundle[] {
-  const dir = getSecretsDir();
-  if (!fs.existsSync(dir)) return [];
-  const entries = fs.readdirSync(dir).filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'));
+  const seen = new Set<string>();
   const bundles: SecretsBundle[] = [];
-  for (const entry of entries) {
-    const name = entry.replace(/\.(yml|yaml)$/, '');
-    try {
-      bundles.push(readBundle(name));
-    } catch {
-      // Skip malformed bundles; surfaced via `agents secrets view <name>`.
+  for (const dir of [getUserSecretsDir(), getSecretsDir()]) {
+    if (!fs.existsSync(dir)) continue;
+    for (const entry of fs.readdirSync(dir).filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'))) {
+      const name = entry.replace(/\.(yml|yaml)$/, '');
+      if (seen.has(name)) continue;
+      seen.add(name);
+      try {
+        bundles.push(readBundle(name));
+      } catch {
+        // Skip malformed bundles; surfaced via `agents secrets view <name>`.
+      }
     }
   }
   return bundles.sort((a, b) => a.name.localeCompare(b.name));

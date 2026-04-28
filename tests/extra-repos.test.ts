@@ -20,7 +20,11 @@ let ENABLED_EXTRAS: Array<{ alias: string; dir: string; url: string }>;
 vi.mock('../src/lib/state.js', () => {
   return {
     get getAgentsDir() { return () => PRIMARY_AGENTS_DIR; },
+    get getSystemAgentsDir() { return () => PRIMARY_AGENTS_DIR; },
+    get getUserAgentsDir() { return () => PRIMARY_AGENTS_DIR; },
     get getSkillsDir() { return () => path.join(PRIMARY_AGENTS_DIR, 'skills'); },
+    get getSystemSkillsDir() { return () => path.join(PRIMARY_AGENTS_DIR, 'skills'); },
+    get getUserSkillsDir() { return () => path.join(PRIMARY_AGENTS_DIR, 'skills'); },
     get getProjectAgentsDir() { return () => null; },
     get getEnabledExtraRepos() { return () => ENABLED_EXTRAS; },
     get ensureAgentsDir() { return () => fs.mkdirSync(PRIMARY_AGENTS_DIR, { recursive: true }); },

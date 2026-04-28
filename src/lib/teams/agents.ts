@@ -113,11 +113,7 @@ export enum AgentStatus {
   STOPPED = 'stopped',
 }
 
-/**
- * Task type label for Software Factory workflows. Drives planner fan-out and
- * the test-oracle loop (failed `test` tasks emit `bugfix` tasks). Optional —
- * teammates without a task_type work exactly as before.
- */
+/** Task type label for Software Factory workflows. Drives planner fan-out. Optional — teammates without a task_type work exactly as before. */
 export type TaskType = 'plan' | 'implement' | 'test' | 'review' | 'bugfix' | 'docs';
 export const VALID_TASK_TYPES: readonly TaskType[] = [
   'plan', 'implement', 'test', 'review', 'bugfix', 'docs',
@@ -509,8 +505,7 @@ export class AgentProcess {
   model: string | null = null;
   // Extra env vars passed through to the child process (from --env KEY=VALUE).
   envOverrides: Record<string, string> | null = null;
-  // Factory task-type label. When set, drives planner fan-out and the
-  // test-oracle loop. Null for plain teammates — no behavioral change.
+  // Factory task-type label. Drives planner fan-out. Null for plain teammates — no behavioral change.
   taskType: TaskType | null = null;
   // Repo/branch for cloud dispatches that stage behind --after. Captured
   // at spawn time so startReady() can invoke the dispatcher with the same
@@ -991,14 +986,7 @@ export class AgentProcess {
  */
 export type CloudDispatchFn = (agent: AgentProcess) => Promise<{ cloudSessionId: string }>;
 
-/**
- * Called once a teammate transitions into a terminal status (completed,
- * failed, stopped). Teams.ts registers one via setCompletionHook() to push
- * outputs to the team Ledger. MCP package leaves it null.
- */
-export type CompletionHook = (agent: AgentProcess) => Promise<void>;
-
- export class AgentManager {
+export class AgentManager {
   private agents: Map<string, AgentProcess> = new Map();
   private maxAgents: number;
   private agentsDir: string = '';
@@ -1009,8 +997,6 @@ export type CompletionHook = (agent: AgentProcess) => Promise<void>;
   private constructorAgentConfigs: Record<AgentType, AgentConfig> | null = null;
   private initPromise: Promise<void> | null = null;
   private cloudDispatcher: CloudDispatchFn | null = null;
-  private completionHook: CompletionHook | null = null;
-  private syncedAgents: Set<string> = new Set();
 
   private constructorAgentsDir: string | null = null;
 
@@ -1066,16 +1052,6 @@ export type CompletionHook = (agent: AgentProcess) => Promise<void>;
    */
   setCloudDispatcher(fn: CloudDispatchFn | null): void {
     this.cloudDispatcher = fn;
-  }
-
-  /**
-   * Register a hook to run once per teammate the first time it lands in a
-   * terminal status (completed / failed / stopped). The hook fires during
-   * listAll() / listByTask() status polling, so any CLI or MCP command that
-   * touches status triggers sync automatically.
-   */
-  setCompletionHook(fn: CompletionHook | null): void {
-    this.completionHook = fn;
   }
 
   registerAgent(agent: AgentProcess): void {
@@ -1472,7 +1448,7 @@ export type CompletionHook = (agent: AgentProcess) => Promise<void>;
 
     if (agentType === 'codex') {
       // Codex's workspace-write sandbox blocks writes outside cwd. Factory
-      // teammates need to run further `agents teams add` / ledger commands,
+      // teammates need to run further `agents teams add` commands,
       // which write to ~/.agents/. Grant that root so subprocess-issued
       // `agents teams add` calls hit the real store instead of the tmp
       // fallback (which the supervisor does not watch).
@@ -1592,30 +1568,8 @@ export type CompletionHook = (agent: AgentProcess) => Promise<void>;
     for (const agent of agents) {
       await agent.readNewEvents();
       await agent.updateStatusFromProcess();
-      await this.maybeFireCompletionHook(agent);
     }
     return agents;
-  }
-
-  /**
-   * Fire the completion hook exactly once per teammate when it transitions
-   * into a terminal state. Errors are logged but never thrown — a ledger
-   * backend outage must not break status polling.
-   */
-  private async maybeFireCompletionHook(agent: AgentProcess): Promise<void> {
-    if (!this.completionHook) return;
-    const terminal =
-      agent.status === AgentStatus.COMPLETED ||
-      agent.status === AgentStatus.FAILED ||
-      agent.status === AgentStatus.STOPPED;
-    if (!terminal) return;
-    if (this.syncedAgents.has(agent.agentId)) return;
-    this.syncedAgents.add(agent.agentId);
-    try {
-      await this.completionHook(agent);
-    } catch (err) {
-      console.warn(`[ledger sync] completion hook failed for ${agent.agentId}:`, err);
-    }
   }
 
   async listRunning(): Promise<AgentProcess[]> {
