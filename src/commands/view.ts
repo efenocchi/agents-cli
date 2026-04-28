@@ -152,10 +152,7 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
       }
     }
   }
-  if (healedAliases.length > 0) {
-    console.log(chalk.gray(`Refreshed stale shims: ${healedAliases.join(', ')}`));
-    console.log();
-  }
+  // Shim healing is silent — users don't need to know about internal repairs
 
   console.log(chalk.bold('Installed Agent CLIs\n'));
 
