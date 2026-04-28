@@ -67,6 +67,15 @@ agents use claude@2.0.65 -p
 agents use codex@0.116.0 -p
 ```
 
+This creates an `agents.yaml` at the project root:
+
+```yaml
+# agents.yaml (commit this to your repo)
+agents:
+  claude: "2.0.65"
+  codex: "0.116.0"
+```
+
 Like `.nvmrc` for Node. A shim reads `agents.yaml` from the project root and routes `claude` / `codex` / `gemini` to the right version automatically. Each version gets its own isolated home -- switching backs up config and re-syncs resources.
 
 ```bash
