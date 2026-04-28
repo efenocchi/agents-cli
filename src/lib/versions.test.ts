@@ -21,7 +21,7 @@ afterEach(() => {
 
 function runVersionSync(home: string, expression: string): unknown {
   // tsx (Node) — not bun. The CLI ships against Node, and `versions.ts`
-  // transitively imports `node:sqlite`, which bun 1.2.x doesn't expose.
+  // transitively imports the SQLite layer that this test exercises.
   const moduleUrl = pathToFileURL(path.resolve('src/lib/versions.ts')).href;
   const tsxBin = path.resolve('node_modules/.bin/tsx');
   const child = spawnSync(tsxBin, ['-e', `
