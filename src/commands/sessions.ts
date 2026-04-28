@@ -25,7 +25,7 @@ import { parseSession } from '../lib/session/parse.js';
 import { renderConversationMarkdown, renderSummary, renderSummaryHeader, computeSummaryStats, renderJson, filterEvents, parseRoleList, type FilterOptions } from '../lib/session/render.js';
 import { renderMarkdown } from '../lib/markdown.js';
 import { colorAgent, resolveAgentName } from '../lib/agents.js';
-import { resolveVersion, resolveVersionAlias } from '../lib/versions.js';
+import { resolveVersion, resolveVersionAliasLoose } from '../lib/versions.js';
 import { isInteractiveTerminal, isPromptCancelled } from './utils.js';
 import { sessionPicker, type PickedSession } from './sessions-picker.js';
 import { registerSessionsTailCommand } from './sessions-tail.js';
@@ -967,7 +967,7 @@ function applyScopeFilters(
     // Accept "claude" or "claude@2.1.112" / "claude@default" / "claude@latest". Version suffix narrows further.
     const [wantAgent, rawVersion] = scope.agent.split('@');
     const resolvedAgent = resolveAgentName(wantAgent);
-    const wantVersion = resolvedAgent ? resolveVersionAlias(resolvedAgent, rawVersion) : rawVersion;
+    const wantVersion = resolvedAgent ? resolveVersionAliasLoose(resolvedAgent, rawVersion) : rawVersion;
     filtered = filtered.filter((s) => {
       if (s.agent !== wantAgent) return false;
       if (wantVersion && s.version !== wantVersion) return false;
