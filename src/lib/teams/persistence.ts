@@ -296,10 +296,10 @@ async function migrateLegacyConfig(): Promise<SwarmConfig | null> {
   const legacyConfigPath = await resolveLegacyConfigPath();
   let config = await tryReadLegacyConfig(legacyConfigPath);
 
-  // Try ~/.swarmify/agents/config.json
+  // Try ~/.swarmify/agents/config.json (legacy pre-OSS brand path)
   if (!config) {
-    const swarmifyConfigPath = await resolveLegacySwarmifyConfigPath();
-    config = await tryReadLegacyConfig(swarmifyConfigPath);
+    const legacyBrandConfigPath = await resolveLegacySwarmifyConfigPath();
+    config = await tryReadLegacyConfig(legacyBrandConfigPath);
   }
 
   if (!config) return null;
