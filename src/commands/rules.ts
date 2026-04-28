@@ -215,6 +215,9 @@ When to use:
           const hasUser = userInstr?.exists;
           const hasProject = projectInstr?.exists;
 
+          // Skip agents with nothing to show
+          if (!hasUser && !hasProject) continue;
+
           console.log(`  ${chalk.bold(agentLabel(aid))}:`);
           if (hasUser) {
             console.log(`    ${chalk.gray('User:')}`);

@@ -41,19 +41,25 @@ function isSyncableRuleMarkdown(filename: string): boolean {
   return filename.endsWith('.md') && filename !== RULES_DOC_FILENAME;
 }
 
-function walkRuleMarkdownFiles(baseDir: string, currentDir: string = baseDir): string[] {
-  const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+const RULES_SUBDIRS = ['default', 'presets'] as const;
+
+function listRuleMarkdownFiles(rulesDir: string): string[] {
   const files: string[] = [];
-  for (const entry of entries) {
-    const abs = path.join(currentDir, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...walkRuleMarkdownFiles(baseDir, abs));
-      continue;
+
+  const readDir = (dir: string, prefix: string) => {
+    if (!fs.existsSync(dir)) return;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isFile() && isSyncableRuleMarkdown(entry.name)) {
+        files.push(prefix ? `${prefix}/${entry.name}` : entry.name);
+      }
     }
-    if (entry.isFile() && isSyncableRuleMarkdown(entry.name)) {
-      files.push(path.relative(baseDir, abs));
-    }
+  };
+
+  readDir(rulesDir, '');
+  for (const sub of RULES_SUBDIRS) {
+    readDir(path.join(rulesDir, sub), sub);
   }
+
   return files.sort();
 }
 
@@ -185,7 +191,7 @@ export function discoverMemoryFilesFromRepo(repoPath: string): string[] {
   }
 
   try {
-    return walkRuleMarkdownFiles(rulesDir);
+    return listRuleMarkdownFiles(rulesDir);
   } catch {
     return [];
   }
@@ -323,7 +329,7 @@ export function installInstructionsCentrally(
   }
 
   try {
-    const files = filesToInstall ?? walkRuleMarkdownFiles(rulesDir);
+    const files = filesToInstall ?? listRuleMarkdownFiles(rulesDir);
     for (const file of files) {
       if (!isSyncableRuleMarkdown(path.basename(file))) continue;
 
