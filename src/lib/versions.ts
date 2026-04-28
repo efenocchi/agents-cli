@@ -36,6 +36,7 @@ import { parseHookManifest, registerHooksToSettings } from './hooks.js';
 import { supports, explainSkip } from './capabilities.js';
 import { discoverPlugins, syncPluginToVersion, isPluginSynced, pluginSupportsAgent, cleanOrphanedPluginSkills } from './plugins.js';
 import { compileMemoryForAgent } from './memory-compile.js';
+import { loadSyncManifest, saveSyncManifest, buildManifest, isSyncStale } from './sync-manifest.js';
 import { PLUGINS_CAPABLE_AGENTS } from './agents.js';
 import { safeJoin } from './paths.js';
 import { installCommandSkillToVersion, listCommandSkillsInVersion, shouldInstallCommandAsSkill } from './command-skills.js';
@@ -1430,7 +1431,7 @@ export function getResourceDiff(agent: AgentId, version: string): ResourceDiff {
  *
  * For Gemini: commands are converted from markdown to TOML.
  */
-export function syncResourcesToVersion(agent: AgentId, version: string, selection?: ResourceSelection, options: { projectDir?: string; cwd?: string } = {}): SyncResult {
+export function syncResourcesToVersion(agent: AgentId, version: string, selection?: ResourceSelection, options: { projectDir?: string; cwd?: string; force?: boolean } = {}): SyncResult {
   const agentConfig = AGENTS[agent];
   const versionHome = getVersionHomePath(agent, version);
   const agentDir = path.join(versionHome, `.${agent}`);
@@ -1444,6 +1445,16 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
   // project/user/system repos win on name collisions.
   const extraRepos = getEnabledExtraRepos();
   const available = getAvailableResources(cwd);
+
+  // Fast guard: skip the entire sync when no selection is active and nothing
+  // has changed since the last full sync. Drops steady-state cost from ~16s
+  // (unconditional file copies) to ~2ms (stat calls + manifest read).
+  if (!selection && !options.force) {
+    const manifest = loadSyncManifest(agent, version);
+    if (manifest && !isSyncStale(manifest, available, agent, version, cwd)) {
+      return { commands: false, skills: false, hooks: false, memory: [], permissions: false, mcp: [], subagents: [], plugins: [] };
+    }
+  }
 
   // Helper: remove a path (symlink or real) if it exists
   const removePath = (p: string) => {
@@ -1810,6 +1821,11 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
     if (result.plugins.length > 0) {
       recordVersionResources(agent, version, 'plugins', result.plugins);
     }
+  }
+
+  // Write manifest after a successful full sync so the next launch can skip this work.
+  if (!selection) {
+    saveSyncManifest(agent, version, buildManifest(agent, version, available, cwd));
   }
 
   return result;
