@@ -243,14 +243,14 @@ agents refresh-memory --agent "$AGENT" --agent-version "$VERSION" --quiet 2>/dev
 # Shim for ${agentConfig.name}
 # ${SHIM_VERSION_MARKER} ${SHIM_SCHEMA_VERSION}
 
-AGENTS_DIR="$HOME/.agents"
+AGENTS_DIR="$HOME/.agents-system"
 AGENT="${agent}"
 CLI_COMMAND="${cliCommand}"
 
-# Find project agents.yaml walking up from cwd (skip ~/.agents/agents.yaml)
+# Find project agents.yaml walking up from cwd (skip ~/.agents-system/agents.yaml)
 find_project_version() {
   local dir="$PWD"
-  local user_agents_yaml="$HOME/.agents/agents.yaml"
+  local user_agents_yaml="$HOME/.agents-system/agents.yaml"
   while [ "$dir" != "/" ]; do
     local candidate="$dir/agents.yaml"
     if [ -f "$candidate" ] && [ "$candidate" != "$user_agents_yaml" ]; then
@@ -408,8 +408,9 @@ export function removeShim(agent: AgentId): boolean {
  *        aliases can be detected and regenerated.
  *   v3 — emit CODEX_HOME for codex aliases so direct `codex@X` invocations
  *        read the versioned permissions/rules instead of $HOME/.codex.
+ *   v4 — direct aliases read binaries and config homes from ~/.agents-system.
  */
-export const VERSIONED_ALIAS_SCHEMA_VERSION = 3;
+export const VERSIONED_ALIAS_SCHEMA_VERSION = 4;
 
 /** Internal marker string used to embed the schema version in versioned alias scripts. */
 const VERSIONED_ALIAS_VERSION_MARKER = 'agents-versioned-alias-version:';
@@ -438,14 +439,14 @@ export function generateVersionedAliasScript(agent: AgentId, version: string): s
     ? `
 # Claude stores OAuth credentials in the macOS keychain. Scope them to this
 # version's config directory so direct aliases also switch the live account.
-export CLAUDE_CONFIG_DIR="$HOME/.agents/versions/${agent}/${version}/home/${configDirName}"
+export CLAUDE_CONFIG_DIR="$HOME/.agents-system/versions/${agent}/${version}/home/${configDirName}"
 `
     : agent === 'codex'
       ? `
 # Codex reads its config (approval_policy, sandbox_mode, MCP servers, rules)
 # from CODEX_HOME. Point direct aliases at the versioned home so permissions
 # and rules written by agents-cli actually take effect.
-export CODEX_HOME="$HOME/.agents/versions/${agent}/${version}/home/${configDirName}"
+export CODEX_HOME="$HOME/.agents-system/versions/${agent}/${version}/home/${configDirName}"
 `
       : '';
 
@@ -454,7 +455,7 @@ export CODEX_HOME="$HOME/.agents/versions/${agent}/${version}/home/${configDirNa
 # ${VERSIONED_ALIAS_VERSION_MARKER} ${VERSIONED_ALIAS_SCHEMA_VERSION}
 # Direct alias for ${agentConfig.name}@${version}
 
-BINARY="$HOME/.agents/versions/${agent}/${version}/node_modules/.bin/${agentConfig.cliCommand}"
+BINARY="$HOME/.agents-system/versions/${agent}/${version}/node_modules/.bin/${agentConfig.cliCommand}"
 
 if [ ! -x "$BINARY" ]; then
   echo "agents: ${agent}@${version} not installed" >&2
