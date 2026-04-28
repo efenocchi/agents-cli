@@ -190,7 +190,7 @@ Examples:
 
             // Build choices with descriptions
             const choices = centralCommands.map((name) => {
-              const cmdPath = path.join(os.homedir(), '.agents', 'commands', `${name}.md`);
+              const cmdPath = path.join(getCommandsDir(), `${name}.md`);
               let description = '';
               if (fs.existsSync(cmdPath)) {
                 const content = fs.readFileSync(cmdPath, 'utf-8');

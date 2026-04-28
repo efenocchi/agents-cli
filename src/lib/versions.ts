@@ -2,7 +2,7 @@
  * Version management module for agents-cli.
  *
  * Handles installing, removing, listing, and switching between agent CLI versions.
- * Each version is installed into an isolated directory under ~/.agents/versions/{agent}/{version}/
+ * Each version is installed into an isolated directory under ~/.agents-system/versions/{agent}/{version}/
  * with its own HOME directory for config isolation. Resources (commands, skills, hooks, memory,
  * MCP servers, permissions, subagents, plugins) from ~/.agents/ are synced into version homes
  * via copies or conversions (not symlinks).
@@ -24,7 +24,7 @@ import chalk from 'chalk';
 import * as TOML from 'smol-toml';
 import { checkbox, select, confirm } from '@inquirer/prompts';
 import type { AgentId, VersionResources } from './types.js';
-import { getVersionsDir, getShimsDir, ensureAgentsDir, readMeta, writeMeta, getCommandsDir, getSkillsDir, getHooksDir, getMemoryDir, getPermissionsDir, getSubagentsDir, clearVersionResources, getVersionResources, recordVersionResources, getMcpDir, getProjectAgentsDir, getPromptcutsPath, getEnabledExtraRepos } from './state.js';
+import { getVersionsDir, getShimsDir, ensureAgentsDir, readMeta, writeMeta, getCommandsDir, getSkillsDir, getHooksDir, getMemoryDir, getPermissionsDir, getSubagentsDir, clearVersionResources, getVersionResources, recordVersionResources, getMcpDir, getProjectAgentsDir, getPromptcutsPath, getEnabledExtraRepos, getAgentsDir, getOptionalUserAgentsDir } from './state.js';
 import { AGENTS, getAccountEmail, MCP_CAPABLE_AGENTS, COMMANDS_CAPABLE_AGENTS, getMcpConfigPathForHome, parseMcpConfig, resolveAgentName, formatAgentError } from './agents.js';
 import { getDefaultPermissionSet, applyPermissionsToVersion as applyPermsToVersion, PERMISSIONS_CAPABLE_AGENTS, discoverPermissionGroups, getTotalPermissionRuleCount, buildPermissionsFromGroups, CODEX_RULES_FILENAME, getActivePermissionSetName, readPermissionSetRecipe, PERMISSION_SET_ENV_VAR } from './permissions.js';
 import { installMcpServers } from './mcp.js';
@@ -37,6 +37,7 @@ import { discoverPlugins, syncPluginToVersion, isPluginSynced, pluginSupportsAge
 import { compileMemoryForAgent } from './memory-compile.js';
 import { PLUGINS_CAPABLE_AGENTS } from './agents.js';
 import { safeJoin } from './paths.js';
+import { installCommandSkillToVersion, listCommandSkillsInVersion, shouldInstallCommandAsSkill } from './command-skills.js';
 
 /** Promisified exec for running shell commands. */
 const execAsync = promisify(exec);
@@ -104,12 +105,16 @@ export function getAvailableResources(cwd: string = process.cwd()): AvailableRes
   };
 
   const projectAgentsDir = getProjectAgentsDir(cwd);
-  const userBase = path.dirname(getCommandsDir());
+  const userBase = getAgentsDir();
+  const optionalUserBase = getOptionalUserAgentsDir();
   const resourceBases: Array<{ scope: 'project' | 'user'; base: string }> = [];
   if (projectAgentsDir) {
     resourceBases.push({ scope: 'project', base: projectAgentsDir });
   }
   resourceBases.push({ scope: 'user', base: userBase });
+  if (optionalUserBase) {
+    resourceBases.push({ scope: 'user', base: optionalUserBase });
+  }
   // Extra DotAgent repos registered via `agents repo add`. Ordered after the
   // primary so primary names win in the dedup Set below.
   for (const extra of getEnabledExtraRepos()) {
@@ -284,6 +289,7 @@ export function getActuallySyncedResources(agent: AgentId, version: string, opti
   const skillsDir = path.join(configDir, 'skills');
   const centralSkillsDir = getSkillsDir();
   const projectSkillsDir = projectAgentsDir ? path.join(projectAgentsDir, 'skills') : null;
+  const optionalUserAgentsDir = getOptionalUserAgentsDir();
   const extraRepos = getEnabledExtraRepos();
   if (fs.existsSync(skillsDir)) {
     const installedSkills = fs.readdirSync(skillsDir, { withFileTypes: true })
@@ -294,6 +300,7 @@ export function getActuallySyncedResources(agent: AgentId, version: string, opti
       const sourceCandidates: Array<string | null> = [
         projectSkillsDir ? path.join(projectSkillsDir, skill) : null,
         path.join(centralSkillsDir, skill),
+        optionalUserAgentsDir ? path.join(optionalUserAgentsDir, 'skills', skill) : null,
         ...extraRepos.map((e) => path.join(e.dir, 'skills', skill)),
       ];
       const sourceDir = sourceCandidates.find((p) => p && fs.existsSync(p)) || null;
@@ -314,16 +321,19 @@ export function getActuallySyncedResources(agent: AgentId, version: string, opti
   const hooksDir = path.join(configDir, 'hooks');
   const centralHooksDir = getHooksDir();
   const projectHooksDir = projectAgentsDir ? path.join(projectAgentsDir, 'hooks') : null;
+  const optionalUserHooksDir = optionalUserAgentsDir ? path.join(optionalUserAgentsDir, 'hooks') : null;
   if (fs.existsSync(hooksDir)) {
     const installedHooks = fs.readdirSync(hooksDir).filter(f => !f.startsWith('.'));
     for (const hook of installedHooks) {
       const projectFile = projectHooksDir ? path.join(projectHooksDir, hook) : null;
       const centralFile = path.join(centralHooksDir, hook);
+      const optionalUserFile = optionalUserHooksDir ? path.join(optionalUserHooksDir, hook) : null;
       const versionFile = path.join(hooksDir, hook);
       const hasProject = projectFile ? fs.existsSync(projectFile) : false;
       const hasCentral = fs.existsSync(centralFile);
-      const sourceFile = hasProject ? projectFile! : centralFile;
-      if (!hasProject && !hasCentral) {
+      const hasOptionalUser = optionalUserFile ? fs.existsSync(optionalUserFile) : false;
+      const sourceFile = hasProject ? projectFile! : hasCentral ? centralFile : optionalUserFile!;
+      if (!hasProject && !hasCentral && !hasOptionalUser) {
         result.hooks.push(hook);
         continue;
       }
@@ -342,12 +352,16 @@ export function getActuallySyncedResources(agent: AgentId, version: string, opti
   // Rules - check which instruction files are actually in sync (content matches)
   const memoryDir = getMemoryDir();
   const projectMemoryDir = projectAgentsDir ? path.join(projectAgentsDir, 'rules') : null;
+  const optionalUserMemoryDir = optionalUserAgentsDir ? path.join(optionalUserAgentsDir, 'rules') : null;
   const memoryFiles = new Set<string>();
   if (fs.existsSync(memoryDir)) {
     fs.readdirSync(memoryDir).filter(f => f.endsWith('.md') && f !== RULES_DOC_FILENAME).forEach(f => memoryFiles.add(f));
   }
   if (projectMemoryDir && fs.existsSync(projectMemoryDir)) {
     fs.readdirSync(projectMemoryDir).filter(f => f.endsWith('.md') && f !== RULES_DOC_FILENAME).forEach(f => memoryFiles.add(f));
+  }
+  if (optionalUserMemoryDir && fs.existsSync(optionalUserMemoryDir)) {
+    fs.readdirSync(optionalUserMemoryDir).filter(f => f.endsWith('.md') && f !== RULES_DOC_FILENAME).forEach(f => memoryFiles.add(f));
   }
   for (const file of memoryFiles) {
     const memName = file.replace(/\.md$/, '');
@@ -357,10 +371,12 @@ export function getActuallySyncedResources(agent: AgentId, version: string, opti
 
     const projectFile = projectMemoryDir ? path.join(projectMemoryDir, file) : null;
     const centralFile = path.join(memoryDir, file);
+    const optionalUserFile = optionalUserMemoryDir ? path.join(optionalUserMemoryDir, file) : null;
     const hasProject = projectFile ? fs.existsSync(projectFile) : false;
     const hasCentral = fs.existsSync(centralFile);
-    const sourceFile = hasProject ? projectFile! : centralFile;
-    if (!hasProject && !hasCentral) {
+    const hasOptionalUser = optionalUserFile ? fs.existsSync(optionalUserFile) : false;
+    const sourceFile = hasProject ? projectFile! : hasCentral ? centralFile : optionalUserFile!;
+    if (!hasProject && !hasCentral && !hasOptionalUser) {
       result.memory.push(memName);
       continue;
     }
@@ -1171,10 +1187,10 @@ export function resolveVersion(agent: AgentId, projectPath?: string): string | n
 }
 
 /**
- * Get version specified in a project-root agents.yaml (not the user ~/.agents/agents.yaml).
+ * Get version specified in a project-root agents.yaml (not the user ~/.agents-system/agents.yaml).
  */
 export function getProjectVersion(agent: AgentId, startPath: string): string | null {
-  const userAgentsYaml = path.join(os.homedir(), '.agents', 'agents.yaml');
+  const userAgentsYaml = path.join(getAgentsDir(), 'agents.yaml');
   let dir = path.resolve(startPath);
 
   while (dir !== path.dirname(dir)) {
@@ -1290,11 +1306,30 @@ export function getResourceDiff(agent: AgentId, version: string): ResourceDiff {
     }
   };
 
-  // Commands: check directory symlink (or individual files for Gemini)
+  // Commands: check directory symlink (or individual files for Gemini / generated skills for newer Codex)
   const centralCommands = getCommandsDir();
   const commandsTarget = path.join(agentDir, agentConfig.commandsSubdir);
 
-  if (agentConfig.format === 'toml') {
+  if (shouldInstallCommandAsSkill(agent, version)) {
+    const centralFiles = fs.existsSync(centralCommands)
+      ? fs.readdirSync(centralCommands).filter(f => f.endsWith('.md'))
+      : [];
+    const centralNames = new Set(centralFiles.map(f => f.replace('.md', '')));
+    const versionNames = new Set(listCommandSkillsInVersion(agentDir));
+
+    for (const file of centralFiles) {
+      const name = file.replace('.md', '');
+      if (!versionNames.has(name)) {
+        diff.commands.added.push(file);
+      }
+    }
+
+    for (const name of versionNames) {
+      if (!centralNames.has(name)) {
+        diff.commands.dangling.push(`${name}.md`);
+      }
+    }
+  } else if (agentConfig.format === 'toml') {
     // Gemini: compare .md files in central vs .toml files in version
     if (fs.existsSync(centralCommands)) {
       const centralFiles = fs.readdirSync(centralCommands).filter(f => f.endsWith('.md'));
@@ -1402,6 +1437,7 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
   const result: SyncResult = { commands: false, skills: false, hooks: false, memory: [], permissions: false, mcp: [], subagents: [], plugins: [] };
   const cwd = options.cwd || process.cwd();
   const projectAgentsDir = options.projectDir || getProjectAgentsDir(cwd);
+  const optionalUserAgentsDir = getOptionalUserAgentsDir();
   // Extra DotAgent repos registered via `agents repo add`. Looked up after the
   // primary repo so primary wins on name collisions.
   const extraRepos = getEnabledExtraRepos();
@@ -1453,20 +1489,36 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
   if (commandsToSync.length > 0 && COMMANDS_CAPABLE_AGENTS.includes(agent)) {
     const centralCommands = getCommandsDir();
     const projectCommandsDir = projectAgentsDir ? path.join(projectAgentsDir, 'commands') : null;
+    const optionalUserCommandsDir = optionalUserAgentsDir ? path.join(optionalUserAgentsDir, 'commands') : null;
     const commandsTarget = path.join(agentDir, agentConfig.commandsSubdir);
-    fs.mkdirSync(commandsTarget, { recursive: true });
+    const commandsAsSkills = shouldInstallCommandAsSkill(agent, version);
+    if (commandsAsSkills) {
+      removePath(commandsTarget);
+    } else {
+      fs.mkdirSync(commandsTarget, { recursive: true });
+    }
 
     const syncedCommands: string[] = [];
     for (const cmd of commandsToSync) {
       const candidates: Array<string | null> = [
         projectCommandsDir ? safeJoin(projectCommandsDir, `${cmd}.md`) : null,
         safeJoin(centralCommands, `${cmd}.md`),
+        optionalUserCommandsDir ? safeJoin(optionalUserCommandsDir, `${cmd}.md`) : null,
         ...extraRepos.map((e) => safeJoin(path.join(e.dir, 'commands'), `${cmd}.md`)),
       ];
       const srcFile = candidates.find((p) => p && fs.existsSync(p) && !fs.lstatSync(p).isSymbolicLink()) || null;
       if (!srcFile) continue;
 
-      if (agentConfig.format === 'toml') {
+      if (commandsAsSkills) {
+        const skillSourceDirs = [
+          projectAgentsDir ? path.join(projectAgentsDir, 'skills') : null,
+          getSkillsDir(),
+          optionalUserAgentsDir ? path.join(optionalUserAgentsDir, 'skills') : null,
+          ...extraRepos.map((e) => path.join(e.dir, 'skills')),
+        ];
+        const installed = installCommandSkillToVersion(agentDir, cmd, srcFile, skillSourceDirs);
+        if (!installed.success) continue;
+      } else if (agentConfig.format === 'toml') {
         const content = fs.readFileSync(srcFile, 'utf-8');
         const tomlContent = markdownToToml(cmd, content);
         fs.writeFileSync(safeJoin(commandsTarget, `${cmd}.toml`), tomlContent);
@@ -1494,6 +1546,7 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
     if (skillsToSync.length > 0) {
       const centralSkills = getSkillsDir();
       const projectSkills = projectAgentsDir ? path.join(projectAgentsDir, 'skills') : null;
+      const optionalUserSkills = optionalUserAgentsDir ? path.join(optionalUserAgentsDir, 'skills') : null;
       const skillsTarget = path.join(agentDir, 'skills');
       fs.mkdirSync(skillsTarget, { recursive: true });
 
@@ -1502,6 +1555,7 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
         const candidates: Array<string | null> = [
           projectSkills ? safeJoin(projectSkills, skill) : null,
           safeJoin(centralSkills, skill),
+          optionalUserSkills ? safeJoin(optionalUserSkills, skill) : null,
           ...extraRepos.map((e) => safeJoin(path.join(e.dir, 'skills'), skill)),
         ];
         const srcDir = candidates.find((p) => p && fs.existsSync(p) && fs.lstatSync(p).isDirectory()) || null;
@@ -1544,6 +1598,7 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
           // ~/.agents/hooks/ or an explicitly enabled extra repo.
           const candidates: Array<string | null> = [
             safeJoin(centralHooks, hook),
+            optionalUserAgentsDir ? safeJoin(path.join(optionalUserAgentsDir, 'hooks'), hook) : null,
             ...extraRepos.map((e) => safeJoin(path.join(e.dir, 'hooks'), hook)),
           ];
           const srcFile = candidates.find((p) => p && fs.existsSync(p) && !fs.lstatSync(p).isSymbolicLink()) || null;
@@ -1554,12 +1609,28 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
           fs.chmodSync(destFile, 0o755);
           syncedHooks.push(hook);
         }
-        // Remove orphan hook files that exist in version home but not in central
+        // Remove orphan hook files that exist in version home but not in any trusted source.
         const centralHookNames = new Set(
           fs.existsSync(getHooksDir())
             ? fs.readdirSync(getHooksDir()).filter(f => !f.startsWith('.'))
             : []
         );
+        if (optionalUserAgentsDir) {
+          const hooksDir = path.join(optionalUserAgentsDir, 'hooks');
+          if (fs.existsSync(hooksDir)) {
+            for (const file of fs.readdirSync(hooksDir).filter(f => !f.startsWith('.'))) {
+              centralHookNames.add(file);
+            }
+          }
+        }
+        for (const extra of extraRepos) {
+          const hooksDir = path.join(extra.dir, 'hooks');
+          if (fs.existsSync(hooksDir)) {
+            for (const file of fs.readdirSync(hooksDir).filter(f => !f.startsWith('.'))) {
+              centralHookNames.add(file);
+            }
+          }
+        }
         if (fs.existsSync(hooksTarget)) {
           for (const file of fs.readdirSync(hooksTarget).filter(f => !f.startsWith('.'))) {
             if (!centralHookNames.has(file)) {
@@ -1590,6 +1661,7 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
   if (memoryToSync.length > 0 && COMMANDS_CAPABLE_AGENTS.includes(agent)) {
     const centralMemory = getMemoryDir();
     const projectMemoryDir = projectAgentsDir ? path.join(projectAgentsDir, 'rules') : null;
+    const optionalUserMemoryDir = optionalUserAgentsDir ? path.join(optionalUserAgentsDir, 'rules') : null;
     const syncedMemory: string[] = [];
     const agentSupportsImports = !!agentConfig.capabilities.memoryImports;
 
@@ -1597,6 +1669,7 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
       const candidates: Array<string | null> = [
         projectMemoryDir ? safeJoin(projectMemoryDir, `${mem}.md`) : null,
         safeJoin(centralMemory, `${mem}.md`),
+        optionalUserMemoryDir ? safeJoin(optionalUserMemoryDir, `${mem}.md`) : null,
         ...extraRepos.map((e) => safeJoin(path.join(e.dir, 'rules'), `${mem}.md`)),
       ];
       const srcFile = candidates.find((p) => p && fs.existsSync(p) && !fs.lstatSync(p).isSymbolicLink()) || null;

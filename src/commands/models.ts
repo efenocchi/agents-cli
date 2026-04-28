@@ -137,7 +137,7 @@ function printCatalog(agent: AgentId, version: string, isDefault: boolean, optio
   const src = locateModelSource(agent, version);
   if (!src) {
     console.log(chalk.yellow(`  Could not locate model source for ${agent}@${version}.`));
-    console.log(chalk.gray(`  Expected the agent's CLI bundle or native binary under ~/.agents/versions/${agent}/${version}/.`));
+        console.log(chalk.gray(`  Expected the agent's CLI bundle or native binary under ~/.agents-system/versions/${agent}/${version}/.`));
     return;
   }
 

@@ -15,6 +15,7 @@ import { SEEDED_REGISTRIES } from './types.js';
 
 const HOME = os.homedir();
 const AGENTS_DIR = path.join(HOME, '.agents-system');
+const OPTIONAL_USER_AGENTS_DIR = path.join(HOME, '.agents');
 const META_FILE = path.join(AGENTS_DIR, 'agents.yaml');
 const COMMANDS_DIR = path.join(AGENTS_DIR, 'commands');
 const HOOKS_DIR = path.join(AGENTS_DIR, 'hooks');
@@ -49,6 +50,26 @@ export function getAgentsDir(): string {
   return AGENTS_DIR;
 }
 
+/**
+ * Optional user-owned resource repo (~/.agents/).
+ *
+ * This is intentionally not created by agents-cli. When present as a real
+ * directory, it is merged after the primary system repo for resource discovery.
+ * A symlink to ~/.agents-system is ignored so legacy compatibility shims do not
+ * duplicate the primary repo.
+ */
+export function getOptionalUserAgentsDir(): string | null {
+  if (!fs.existsSync(OPTIONAL_USER_AGENTS_DIR)) return null;
+  const stat = fs.lstatSync(OPTIONAL_USER_AGENTS_DIR);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) return null;
+  try {
+    if (fs.realpathSync(OPTIONAL_USER_AGENTS_DIR) === fs.realpathSync(AGENTS_DIR)) return null;
+  } catch {
+    return null;
+  }
+  return OPTIONAL_USER_AGENTS_DIR;
+}
+
 /** Walk up from startPath to find a project-scoped .agents/ directory (skipping ~/.agents-system/). */
 export function getProjectAgentsDir(startPath: string = process.cwd()): string | null {
   let dir = path.resolve(startPath);
@@ -56,8 +77,8 @@ export function getProjectAgentsDir(startPath: string = process.cwd()): string |
   while (true) {
     const agentsPath = path.join(dir, '.agents');
     if (fs.existsSync(agentsPath) && fs.statSync(agentsPath).isDirectory()) {
-      // Skip if this is ~/.agents-system (user scope, not project scope)
-      if (agentsPath !== AGENTS_DIR) {
+      // Skip user/system scope; this function only returns project-scoped dirs.
+      if (agentsPath !== AGENTS_DIR && agentsPath !== OPTIONAL_USER_AGENTS_DIR) {
         return agentsPath;
       }
     }
@@ -320,7 +341,7 @@ function applyRegistrySeeds(meta: Meta): boolean {
   return changed;
 }
 
-/** Read and cache ~/.agents/agents.yaml, migrating from the legacy meta.yaml format if needed. */
+/** Read and cache ~/.agents-system/agents.yaml, migrating from the legacy meta.yaml format if needed. */
 export function readMeta(): Meta {
   ensureAgentsDir();
 

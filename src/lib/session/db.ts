@@ -8,13 +8,12 @@
  */
 
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 import Database from '../sqlite.js';
 import type { SessionAgentId, SessionMeta } from './types.js';
+import { getAgentsDir } from '../state.js';
 
-const HOME = os.homedir();
-const SESSIONS_DIR = path.join(HOME, '.agents', 'sessions');
+const SESSIONS_DIR = path.join(getAgentsDir(), 'sessions');
 const DB_PATH = path.join(SESSIONS_DIR, 'sessions.db');
 
 /** Current schema version; bumped when migrations are added. */
@@ -24,7 +23,7 @@ const SCHEMA_VERSION = 5;
  * Canonicalize a file path for use as a scan_ledger key. The same physical
  * session file is reachable via multiple aliases — `~/.claude/projects/x.jsonl`
  * (when `~/.claude` is a symlink to a versioned home) and
- * `~/.agents/versions/claude/<v>/home/.claude/projects/x.jsonl`. Keying the
+ * `~/.agents-system/versions/claude/<v>/home/.claude/projects/x.jsonl`. Keying the
  * ledger by the raw path means switching between these aliases (e.g. via
  * `agents use`) misses the cache and forces a full re-parse. Realpath collapses
  * all aliases to one stable key.
@@ -270,7 +269,7 @@ export function getScanStampsForPaths(filePaths: string[]): Map<string, ScanStam
   const db = getDB();
 
   // Multiple input paths can resolve to the same canonical key (e.g. the same
-  // session JSONL reachable via `~/.claude/...` and `~/.agents/versions/...`).
+  // session JSONL reachable via `~/.claude/...` and `~/.agents-system/versions/...`).
   // We query DB by canonical key, then fan results back out to every original
   // alias so callers can `.get(filePath)` with the path they passed in.
   const canonicalToOriginals = new Map<string, string[]>();
