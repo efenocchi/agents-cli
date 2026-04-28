@@ -8,8 +8,7 @@
  *   teams/<team_id>/artifacts/<task_id>/<filename>
  *   teams/<team_id>/bugs/<task_id>.md
  *
- * Credentials come from the AGENTS_R2_* env vars (or `agents.yaml.ledger`
- * when we add that later). Two patterns are supported:
+ * Credentials come from the AGENTS_R2_* env vars. Two patterns are supported:
  *
  *   1. Cloudflare R2:  set endpoint to https://<account>.r2.cloudflarestorage.com
  *                       and AGENTS_R2_ACCESS_KEY_ID / AGENTS_R2_SECRET_ACCESS_KEY.
@@ -26,31 +25,16 @@ import {
   ListObjectsV2Command,
   type S3ClientConfig,
 } from '@aws-sdk/client-s3';
-import type {
-  ArtifactKind,
-  LedgerArtifact,
-  LedgerRegistry,
-  LedgerSearchHit,
-  LedgerStore,
-  LedgerTaskView,
+import {
+  artifactFilename,
+  kindFromFilename,
+  type ArtifactKind,
+  type LedgerArtifact,
+  type LedgerRegistry,
+  type LedgerSearchHit,
+  type LedgerStore,
+  type LedgerTaskView,
 } from './types.js';
-
-function artifactFilename(kind: ArtifactKind): string {
-  switch (kind) {
-    case 'diff': return 'diff.patch';
-    case 'test-output': return 'test-output.txt';
-    case 'notes': return 'notes.md';
-    default: return `${String(kind)}.txt`;
-  }
-}
-
-function kindFromFilename(filename: string): ArtifactKind {
-  if (filename === 'diff.patch') return 'diff';
-  if (filename === 'test-output.txt') return 'test-output';
-  if (filename === 'notes.md') return 'notes';
-  const dot = filename.lastIndexOf('.');
-  return dot > 0 ? filename.slice(0, dot) : filename;
-}
 
 export interface R2LedgerConfig {
   bucket: string;

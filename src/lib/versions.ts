@@ -1530,14 +1530,18 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
 
       if (hooksToSync.length > 0) {
         const centralHooks = getHooksDir();
-        const projectHooksDir = projectAgentsDir ? path.join(projectAgentsDir, 'hooks') : null;
         const hooksTarget = path.join(agentDir, 'hooks');
         fs.mkdirSync(hooksTarget, { recursive: true });
 
         const syncedHooks: string[] = [];
         for (const hook of hooksToSync) {
+          // Hooks are executable shell scripts that run on agent events. We
+          // intentionally do NOT pull from the project's own .agents/hooks/
+          // directory: that would let any cloned public repo plant an
+          // executable that fires the next time the user runs `agents use`
+          // inside that repo. Hooks must come from the user's central
+          // ~/.agents/hooks/ or an explicitly enabled extra repo.
           const candidates: Array<string | null> = [
-            projectHooksDir ? safeJoin(projectHooksDir, hook) : null,
             safeJoin(centralHooks, hook),
             ...extraRepos.map((e) => safeJoin(path.join(e.dir, 'hooks'), hook)),
           ];

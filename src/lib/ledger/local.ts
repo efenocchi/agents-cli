@@ -13,34 +13,18 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { homedir } from 'os';
-import type {
-  ArtifactKind,
-  LedgerArtifact,
-  LedgerRegistry,
-  LedgerSearchHit,
-  LedgerStore,
-  LedgerTaskView,
+import {
+  artifactFilename,
+  kindFromFilename,
+  type ArtifactKind,
+  type LedgerArtifact,
+  type LedgerRegistry,
+  type LedgerSearchHit,
+  type LedgerStore,
+  type LedgerTaskView,
 } from './types.js';
 
 const DEFAULT_ROOT = path.join(homedir(), '.agents', 'ledger');
-
-/** Artifact kind → file name within artifacts/<task_id>/. */
-function artifactFilename(kind: ArtifactKind): string {
-  switch (kind) {
-    case 'diff': return 'diff.patch';
-    case 'test-output': return 'test-output.txt';
-    case 'notes': return 'notes.md';
-    default: return `${String(kind)}.txt`;
-  }
-}
-
-function kindFromFilename(filename: string): ArtifactKind {
-  if (filename === 'diff.patch') return 'diff';
-  if (filename === 'test-output.txt') return 'test-output';
-  if (filename === 'notes.md') return 'notes';
-  const dot = filename.lastIndexOf('.');
-  return dot > 0 ? filename.slice(0, dot) : filename;
-}
 
 async function pathExists(p: string): Promise<boolean> {
   try { await fs.access(p); return true; } catch { return false; }
