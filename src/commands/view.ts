@@ -477,7 +477,7 @@ async function showAgentResources(agentId: AgentId, requestedVersion: string): P
   const commandsSync = hasGitRepo ? await getGitSyncStatus(agentsDir, 'commands') : null;
   const skillsSync = hasGitRepo ? await getGitSyncStatus(agentsDir, 'skills') : null;
   const hooksSync = hasGitRepo ? await getGitSyncStatus(agentsDir, 'hooks') : null;
-  const memorySync = hasGitRepo ? await getGitSyncStatus(agentsDir, 'memory') : null;
+  const memorySync = hasGitRepo ? await getGitSyncStatus(agentsDir, 'rules') : null;
 
   // Helper to determine sync state for a resource
   const getSyncState = (
@@ -495,9 +495,9 @@ async function showAgentResources(agentId: AgentId, requestedVersion: string): P
     } else if (resourceType === 'hooks') {
       relativePath = `hooks/${resourceName}`;
     } else {
-      // Memory files: map agent-specific name (CLAUDE.md) back to canonical (AGENTS.md)
+      // Rules files: map agent-specific name (CLAUDE.md) back to canonical (AGENTS.md)
       const centralName = getCentralMemoryFileName(agentId);
-      relativePath = `memory/${centralName}`;
+      relativePath = `rules/${centralName}`;
     }
 
     const matchesPath = (f: string) => f === relativePath || f.startsWith(relativePath + '/');
@@ -956,6 +956,36 @@ async function pruneDuplicates(filterAgentId: AgentId | undefined, yes: boolean)
   }
 }
 
+export async function pruneAction(
+  agentArg?: string,
+  options?: { yes?: boolean }
+): Promise<void> {
+  const yes = options?.yes === true;
+
+  if (!agentArg) {
+    await pruneDuplicates(undefined, yes);
+    return;
+  }
+
+  const parts = agentArg.split('@');
+  const agentName = parts[0];
+  const requestedVersion = parts[1] || null;
+
+  const agentId = resolveAgentName(agentName);
+  if (!agentId) {
+    console.log(chalk.red(formatAgentError(agentName)));
+    process.exit(1);
+  }
+
+  if (requestedVersion) {
+    console.log(chalk.red('prune does not take a @version suffix.'));
+    console.log(chalk.gray(`Run: agents prune ${agentId}`));
+    process.exit(1);
+  }
+
+  await pruneDuplicates(agentId, yes);
+}
+
 /**
  * Main view action handler.
  * Exported for use by deprecated aliases.
@@ -1068,4 +1098,31 @@ Output:
   - With --prune: plan of which older versions will be removed, then confirm
 `)
     .action((agentArg: string | undefined, options: { json?: boolean; prune?: boolean; yes?: boolean }) => viewAction(agentArg, options));
+}
+
+/** Register the `agents prune` command. */
+export function registerPruneCommand(program: Command): void {
+  program
+    .command('prune [agent]')
+    .description('Remove older installed versions that share an account with a newer installed version. Skips the global default.')
+    .option('-y, --yes', 'Skip the prune confirmation prompt.')
+    .addHelpText('after', `
+Examples:
+  # Prune older duplicate versions across all installed agents
+  agents prune
+
+  # Prune older duplicate versions for one agent
+  agents prune claude
+
+  # Skip confirmation (for scripts)
+  agents prune claude -y
+
+Notes:
+  - Prune works at the version level, not per resource.
+  - To prune orphan resources from version homes, use:
+    agents commands prune
+    agents skills prune
+    agents hooks prune
+`)
+    .action((agentArg: string | undefined, options: { yes?: boolean }) => pruneAction(agentArg, options));
 }

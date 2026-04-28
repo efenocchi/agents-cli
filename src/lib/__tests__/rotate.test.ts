@@ -25,6 +25,40 @@ function usage(usedPercent: number): UsageSnapshot {
   };
 }
 
+function claudeUsage(sessionUsedPercent: number, weekUsedPercent: number, sonnetWeekUsedPercent = 0): UsageSnapshot {
+  return {
+    source: 'live',
+    sourceLabel: 'test',
+    capturedAt: new Date('2026-04-20T00:00:00Z'),
+    windows: [
+      {
+        key: 'session',
+        label: 'Session',
+        shortLabel: 'S',
+        usedPercent: sessionUsedPercent,
+        resetsAt: null,
+        windowMinutes: 300,
+      },
+      {
+        key: 'week',
+        label: 'Week',
+        shortLabel: 'W',
+        usedPercent: weekUsedPercent,
+        resetsAt: null,
+        windowMinutes: 10080,
+      },
+      {
+        key: 'sonnet_week',
+        label: 'Sonnet week',
+        shortLabel: 'So',
+        usedPercent: sonnetWeekUsedPercent,
+        resetsAt: null,
+        windowMinutes: 10080,
+      },
+    ],
+  };
+}
+
 function cand(overrides: Partial<RotateCandidate>): RotateCandidate {
   return {
     agent: 'claude',
@@ -119,6 +153,27 @@ describe('pickRotateCandidate', () => {
     expect(result!.excluded.map((c) => c.version)).toContain('2.1.113');
   });
 
+  it('prefers live usage windows over stale local out-of-credits flags', () => {
+    const staleFlag = cand({
+      version: '2.1.121',
+      email: 'icloud@example.com',
+      usageStatus: 'out_of_credits',
+      usageSnapshot: usage(15),
+      lastActive: new Date('2026-04-20T10:00:00Z'),
+    });
+    const busier = cand({
+      version: '2.1.118',
+      email: 'trp@example.com',
+      usageStatus: 'available',
+      usageSnapshot: usage(30),
+      lastActive: new Date('2026-04-15T00:00:00Z'),
+    });
+
+    const result = pickRotateCandidate([staleFlag, busier]);
+    expect(result!.picked.version).toBe('2.1.121');
+    expect(result!.healthy.map((c) => c.version)).toEqual(['2.1.121', '2.1.118']);
+  });
+
   it('picks the account with the most usage headroom before last-active', () => {
     const oldest = cand({
       version: '2.1.113',
@@ -136,6 +191,25 @@ describe('pickRotateCandidate', () => {
     const result = pickRotateCandidate([oldest, newest]);
     expect(result!.picked.version).toBe('2.1.112');
     expect(result!.healthy.map((c) => c.version)).toEqual(['2.1.112', '2.1.113']);
+  });
+
+  it('does not let a full session window outweigh lower weekly usage', () => {
+    const icloud = cand({
+      version: '2.1.112',
+      email: 'muqsitnawaz@icloud.com',
+      usageSnapshot: claudeUsage(100, 15, 0),
+      lastActive: new Date('2026-04-20T10:00:00Z'),
+    });
+    const trp = cand({
+      version: '2.1.110',
+      email: 'muqsit@trp.so',
+      usageSnapshot: claudeUsage(15, 19, 7),
+      lastActive: new Date('2026-04-15T00:00:00Z'),
+    });
+
+    const result = pickRotateCandidate([icloud, trp]);
+    expect(result!.picked.version).toBe('2.1.112');
+    expect(result!.healthy.map((c) => c.version)).toEqual(['2.1.112', '2.1.110']);
   });
 
   it('excludes accounts whose live usage windows are exhausted', () => {
@@ -242,6 +316,25 @@ describe('pickAvailableCandidate', () => {
     const result = pickAvailableCandidate([preferred, available], '2.1.113');
     expect(result!.picked.version).toBe('2.1.112');
     expect(result!.excluded.map((candidate) => candidate.version)).toContain('2.1.113');
+  });
+
+  it('keeps the pinned version when live usage still has headroom', () => {
+    const preferred = cand({
+      version: '2.1.121',
+      email: 'icloud@example.com',
+      usageStatus: 'out_of_credits',
+      usageSnapshot: usage(15),
+    });
+    const alternative = cand({
+      version: '2.1.118',
+      email: 'trp@example.com',
+      usageStatus: 'available',
+      usageSnapshot: usage(30),
+    });
+
+    const result = pickAvailableCandidate([preferred, alternative], '2.1.121');
+    expect(result!.picked.version).toBe('2.1.121');
+    expect(result!.excluded).toHaveLength(0);
   });
 
   it('returns null when no signed-in account has usage available', () => {

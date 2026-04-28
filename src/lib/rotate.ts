@@ -98,22 +98,28 @@ function isAvailableEligible(candidate: RotateCandidate): boolean {
 }
 
 function hasUsageAvailable(candidate: RotateCandidate): boolean {
+  const usedPercent = getRoutingUsedPercent(candidate.usageSnapshot);
+  if (usedPercent !== null) {
+    return usedPercent < 100;
+  }
+
   if (candidate.usageStatus === 'out_of_credits' || candidate.usageStatus === 'rate_limited') {
     return false;
   }
 
-  const usedPercent = getMaxUsedPercent(candidate.usageSnapshot);
-  return usedPercent === null || usedPercent < 100;
+  return true;
 }
 
-function getMaxUsedPercent(snapshot: UsageSnapshot | null | undefined): number | null {
+function getRoutingUsedPercent(snapshot: UsageSnapshot | null | undefined): number | null {
   if (!snapshot || snapshot.windows.length === 0) return null;
-  return Math.max(...snapshot.windows.map((window) => window.usedPercent));
+  const routingWindows = snapshot.windows.filter((window) => window.key !== 'session');
+  const windows = routingWindows.length > 0 ? routingWindows : snapshot.windows;
+  return Math.max(...windows.map((window) => window.usedPercent));
 }
 
 function compareCandidates(a: RotateCandidate, b: RotateCandidate): number {
-  const au = getMaxUsedPercent(a.usageSnapshot);
-  const bu = getMaxUsedPercent(b.usageSnapshot);
+  const au = getRoutingUsedPercent(a.usageSnapshot);
+  const bu = getRoutingUsedPercent(b.usageSnapshot);
 
   if (au !== null || bu !== null) {
     if (au === null) return 1;

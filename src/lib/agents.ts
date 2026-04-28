@@ -16,7 +16,7 @@ import * as os from 'os';
 import * as TOML from 'smol-toml';
 import chalk from 'chalk';
 import type { AgentConfig, AgentId } from './types.js';
-import { walkForFiles } from './session/discover.js';
+import { walkForFiles } from './fs-walk.js';
 import { getVersionsDir, getShimsDir } from './state.js';
 import { resolveVersion, getVersionHomePath, getBinaryPath } from './versions.js';
 import { loadClaudeOauth } from './usage.js';

@@ -2,7 +2,7 @@
  * Config pull command.
  *
  * Registers the `agents pull` command which clones or updates the
- * user's ~/.agents/ git repo and syncs CLI versions, MCP servers,
+ * system ~/.agents/ git repo and syncs CLI versions, MCP servers,
  * resources, and hooks to installed agent versions.
  */
 
@@ -16,7 +16,6 @@ import {
   MCP_CAPABLE_AGENTS,
   getAllCliStates,
   registerMcpToTargets,
-  getAccountEmail,
   isAgentName,
   resolveAgentName,
   agentLabel,
@@ -29,21 +28,15 @@ import {
   getAgentsDir,
   ensureAgentsDir,
   getEnabledExtraRepos,
-  readMeta,
   updateMeta,
 } from '../lib/state.js';
 import type { AgentId } from '../lib/types.js';
-import { DEFAULT_SYSTEM_REPO, LEGACY_SYSTEM_REPO, systemRepoSlug } from '../lib/types.js';
+import { DEFAULT_SYSTEM_REPO, systemRepoSlug } from '../lib/types.js';
 import {
   isGitRepo,
   cloneIntoExisting,
   pullRepo,
-  pullFromUpstream,
-  parseSource,
-  getGitHubUsername,
-  checkGitHubRepoExists,
-  hasUpstreamRemote,
-  getUpstreamUrl,
+  isSystemRepoOrigin,
 } from '../lib/git.js';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -103,21 +96,14 @@ function migratePromptcutsToRoot(agentsDir: string): void {
 /** Register the `agents pull` command. */
 export function registerPullCommand(program: Command): void {
   program
-    .command('pull [source] [agent]')
-    .description('Sync your config from a git repo. Clones on first run, pulls updates thereafter.')
+    .command('pull [agent]')
+    .description('Sync the system repo at ~/.agents/ and refresh installed agent versions.')
     .option('-y, --yes', 'Auto-sync all resources without prompting')
     .option('--skip-clis', 'Pull config changes but do not install or upgrade agent CLIs')
-    .option('--upstream', 'Pull from the upstream remote instead of origin (for forked repos)')
     .addHelpText('after', `
 Examples:
-  # First time: clone from your repo (also works if ~/.agents/ is empty)
-  agents pull gh:yourname/.agents
-
-  # Update your config from origin (GitHub)
+  # First time: clone the system repo into ~/.agents/
   agents pull
-
-  # Pull updates from the upstream default repo (after you've forked)
-  agents pull --upstream
 
   # Sync only one agent's config
   agents pull claude
@@ -126,9 +112,8 @@ Examples:
   agents pull -y
 
 When to use:
-  - Initial setup: clone your config repo to a new machine
-  - Daily sync: pull changes you or teammates pushed to the repo
-  - Upstream updates: get new skills, commands, or MCP servers from the default repo
+  - Initial setup: clone the system repo to a new machine
+  - Daily sync: pull the latest system skills, commands, or MCP servers
   - Per-agent: sync just one agent's config without touching others
 
 What it syncs:
@@ -140,107 +125,37 @@ What it syncs:
 
 Skip CLI installs with --skip-clis when you only want config updates, not version changes.
 `)
-    .action(async (arg1: string | undefined, arg2: string | undefined, options) => {
+    .action(async (arg1: string | undefined, options) => {
       const skipPrompts = options.yes || !isInteractiveTerminal();
-      // Parse source and agent filter from positional args
-      let targetSource: string | undefined;
       let agentFilter: AgentId | undefined;
 
       if (arg1) {
         if (isAgentName(arg1)) {
-          // agents pull claude
           agentFilter = resolveAgentName(arg1)!;
         } else {
-          // agents pull gh:user/repo [agent]
-          targetSource = arg1;
-          if (arg2 && isAgentName(arg2)) {
-            agentFilter = resolveAgentName(arg2)!;
-          }
+          console.log(chalk.red(`Invalid agent: ${arg1}`));
+          console.log(chalk.gray(`Available: ${ALL_AGENT_IDS.join(', ')}`));
+          return;
         }
       }
 
       const agentsDir = getAgentsDir();
       ensureAgentsDir();
 
-      // Handle --upstream: pull from upstream remote
-      if (options.upstream) {
-        if (!isGitRepo(agentsDir)) {
-          console.log(chalk.red('~/.agents/ is not a git repository.'));
-          console.log(chalk.gray('\nInitialize first: agents pull'));
-          return;
-        }
-
-        if (!await hasUpstreamRemote(agentsDir)) {
-          console.log(chalk.red('No upstream remote configured.'));
-          console.log(chalk.gray('\nIf you forked from the system repo, run: agents fork'));
-          console.log(chalk.gray('This will set up the upstream remote automatically.'));
-          return;
-        }
-
-        // Migration nudge: one-time notice if upstream still points at the legacy personal repo.
-        const legacySlug = systemRepoSlug(LEGACY_SYSTEM_REPO).toLowerCase();
-        const currentSlug = systemRepoSlug(DEFAULT_SYSTEM_REPO);
-        const nudgeMarker = path.join(agentsDir, '.migration-nudge-shown');
-        const upstreamUrl = await getUpstreamUrl(agentsDir);
-        if (upstreamUrl && upstreamUrl.toLowerCase().includes(legacySlug) && !fs.existsSync(nudgeMarker)) {
-          console.log(chalk.yellow(`\nYour upstream points at a personal repo (${legacySlug}).`));
-          console.log(chalk.yellow(`The curated upstream is now ${currentSlug}.`));
-          console.log(chalk.gray('To switch:'));
-          console.log(chalk.cyan(`  cd ~/.agents && git remote set-url upstream git@github.com:${currentSlug}.git\n`));
-          try { fs.writeFileSync(nudgeMarker, new Date().toISOString() + '\n'); } catch { /* best-effort */ }
-        }
-
-        const spinner = ora('Pulling from upstream...').start();
-        const result = await pullFromUpstream(agentsDir);
-        if (!result.success) {
-          spinner.fail(`Failed: ${result.error}`);
-          return;
-        }
-        spinner.succeed(`Merged upstream changes (${result.commit})`);
-
-        // Continue with the rest of the sync (CLI versions, MCP, resources)
-        // Skip the source determination since we already pulled
-        targetSource = 'existing';
-      }
-
-      // Determine source
-      const meta = readMeta();
-      if (!targetSource) {
-        // Check if ~/.agents/ is already a git repo
-        if (isGitRepo(agentsDir)) {
-          targetSource = 'existing';
-        } else {
-          // Try to infer from GitHub username
-          const spinner = ora('Checking GitHub...').start();
-          const username = await getGitHubUsername();
-
-          if (username) {
-            const repoExists = await checkGitHubRepoExists(username, '.agents');
-            if (repoExists) {
-              targetSource = `gh:${username}/.agents`;
-              spinner.succeed(`Found ${username}/.agents`);
-            } else {
-              spinner.info(`No .agents repo found for ${username}`);
-              console.log(chalk.gray('\nTo create one:'));
-              console.log(chalk.cyan('  gh repo create .agents --public'));
-              console.log(chalk.gray('\nThen run: agents pull'));
-              return;
-            }
-          } else {
-            // Fall back to system default repo
-            targetSource = DEFAULT_SYSTEM_REPO;
-            spinner.info(`Using default: ${DEFAULT_SYSTEM_REPO}`);
-          }
-        }
-      }
-
       const spinner = ora('Syncing...').start();
 
       try {
         let commit: string;
 
-        if (targetSource === 'existing') {
-          // Just pull updates
+        if (isGitRepo(agentsDir)) {
+          if (!await isSystemRepoOrigin(agentsDir)) {
+            spinner.fail('~/.agents/ is not tracking the system repo.');
+            console.log(chalk.gray('\nMove your custom repo out of ~/.agents/, then register it as an extra:'));
+            console.log(chalk.cyan('  mv ~/.agents ~/.agents-mine'));
+            console.log(chalk.cyan('  agents repo add ~/.agents-mine --as mine'));
+            console.log(chalk.cyan('  agents pull'));
+            return;
+          }
           spinner.text = 'Pulling updates...';
           const result = await pullRepo(agentsDir);
           if (!result.success) {
@@ -250,36 +165,19 @@ Skip CLI installs with --skip-clis when you only want config updates, not versio
           commit = result.commit;
           spinner.succeed(`Updated to ${commit}`);
         } else {
-          // Clone or update
-          const parsed = parseSource(targetSource);
-
-          if (isGitRepo(agentsDir)) {
-            // Already a repo, just pull
-            spinner.text = 'Pulling updates...';
-            const result = await pullRepo(agentsDir);
-            if (!result.success) {
-              spinner.fail(`Pull failed: ${result.error}`);
-              return;
-            }
-            commit = result.commit;
-            spinner.succeed(`Updated to ${commit}`);
-          } else {
-            // Clone into existing ~/.agents/
-            spinner.text = `Cloning ${targetSource}...`;
-            const result = await cloneIntoExisting(targetSource, agentsDir);
-            if (!result.success) {
-              spinner.fail(`Clone failed: ${result.error}`);
-              return;
-            }
-            commit = result.commit;
-            spinner.succeed(`Initialized from ${targetSource}`);
+          spinner.text = `Cloning ${DEFAULT_SYSTEM_REPO}...`;
+          const result = await cloneIntoExisting(DEFAULT_SYSTEM_REPO, agentsDir);
+          if (!result.success) {
+            spinner.fail(`Clone failed: ${result.error}`);
+            return;
           }
-
-          // Save source to meta
-          updateMeta({
-            source: parsed.url,
-          });
+          commit = result.commit;
+          spinner.succeed(`Initialized from ${DEFAULT_SYSTEM_REPO}`);
         }
+
+        updateMeta({
+          source: `https://github.com/${systemRepoSlug(DEFAULT_SYSTEM_REPO)}.git`,
+        });
 
         // Pull extra DotAgent repos before resource sync so any new skills /
         // commands they ship land in the version homes on this same run.

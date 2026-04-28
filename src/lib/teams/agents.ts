@@ -891,7 +891,50 @@ export class AgentProcess {
   }
 
   async updateStatusFromProcess(): Promise<void> {
-    if (!this.pid) return;
+    if (!this.pid) {
+      await this.readNewEvents();
+
+      // Cloud-backed teammates have no local PID by design; their lifecycle
+      // is driven by the remote provider instead of a local process.
+      if (this.cloudProvider) {
+        if (!this.completedAt && this.status !== AgentStatus.RUNNING) {
+          const fallbackCompletion =
+            this.getLatestEventTime() || this.startedAt || new Date();
+          this.completedAt = fallbackCompletion;
+          await this.saveMeta();
+        }
+        return;
+      }
+
+      // Pending teammates with unresolved --after deps also have no PID yet.
+      // Leave them alone until startReady() launches them.
+      if (this.status === AgentStatus.PENDING) {
+        return;
+      }
+
+      // A local teammate marked RUNNING without a PID is an impossible state:
+      // launch never produced a durable process identity, so it cannot still
+      // be doing work. Keep any terminal event parsed from stdout; otherwise
+      // fail it and stamp completion so team rollups stop showing it as live.
+      if (this.status === AgentStatus.RUNNING) {
+        const fallbackCompletion =
+          this.getLatestEventTime() || this.startedAt || new Date();
+        if (this.status === AgentStatus.RUNNING) {
+          this.status = AgentStatus.FAILED;
+          this.completedAt = fallbackCompletion;
+        }
+        await this.saveMeta();
+        return;
+      }
+
+      if (!this.completedAt) {
+        const fallbackCompletion =
+          this.getLatestEventTime() || this.startedAt || new Date();
+        this.completedAt = fallbackCompletion;
+        await this.saveMeta();
+      }
+      return;
+    }
 
     if (this.isProcessAlive()) {
       await this.readNewEvents();
@@ -1214,6 +1257,10 @@ export type CompletionHook = (agent: AgentProcess) => Promise<void>;
     const agentId = randomUUID();
     const isStaged = cleanAfter.length > 0;
 
+    const initialStatus = isStaged || !isCloudBacked
+      ? AgentStatus.PENDING
+      : AgentStatus.RUNNING;
+
     const agent = new AgentProcess(
       agentId,
       taskName,
@@ -1222,7 +1269,7 @@ export type CompletionHook = (agent: AgentProcess) => Promise<void>;
       resolvedCwd,
       resolvedMode,
       null,
-      isStaged ? AgentStatus.PENDING : AgentStatus.RUNNING,
+      initialStatus,
       new Date(),
       null,
       this.agentsDir,
@@ -1249,14 +1296,15 @@ export type CompletionHook = (agent: AgentProcess) => Promise<void>;
     } catch (err: any) {
       throw new Error(`Failed to create agent directory: ${err.message}`);
     }
-    await agent.saveMeta();
     this.agents.set(agentId, agent);
 
     if (isStaged) {
+      await agent.saveMeta();
       debug(`Staged ${agentType} teammate '${name}' in team '${taskName}' (after: ${cleanAfter.join(', ')})`);
     } else if (isCloudBacked) {
       // Cloud-backed teammate: the provider already dispatched a remote task.
       // No local process to launch; status polling walks the provider instead.
+      await agent.saveMeta();
       debug(`Cloud-backed ${agentType} teammate via ${cloudProvider} (session=${cloudSessionId})`);
     } else {
       await this.launchProcess(agent);

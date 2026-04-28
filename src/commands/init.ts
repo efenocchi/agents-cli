@@ -1,40 +1,20 @@
 /**
  * First-run initialization command.
  *
- * Registers the `agents init` command which walks the user through
- * initial setup: choosing a config source (default repo or personal),
- * cloning it, and installing agent CLIs with resource syncing.
+ * Registers the `agents init` command which clones the system repo into
+ * ~/.agents/ and installs agent CLIs with resource syncing.
  */
 
 import type { Command } from 'commander';
 import chalk from 'chalk';
 import * as fs from 'fs';
 import * as path from 'path';
-import { select, input } from '@inquirer/prompts';
-
 import { DEFAULT_SYSTEM_REPO, systemRepoSlug } from '../lib/types.js';
 import { getAgentsDir } from '../lib/state.js';
 import { isGitRepo } from '../lib/git.js';
-import { isInteractiveTerminal, isPromptCancelled } from './utils.js';
+import { isPromptCancelled } from './utils.js';
 
-/** Validate a repo source input (gh:owner/repo, URL, or owner/repo shorthand). */
-function isValidSourceInput(value: string): true | string {
-  const trimmed = value.trim();
-  if (!trimmed) return 'Repo is required';
-  // Accept gh:owner/repo, owner/repo, github.com/..., https://github.com/...
-  if (
-    trimmed.startsWith('gh:') ||
-    trimmed.startsWith('github.com') ||
-    trimmed.startsWith('https://github.com/') ||
-    trimmed.startsWith('git@github.com:') ||
-    /^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+$/.test(trimmed)
-  ) {
-    return true;
-  }
-  return 'Format: gh:owner/repo';
-}
-
-/** Interactive init wizard. Prompts for config source then delegates to `agents pull`. */
+/** First-run setup. Delegates to `agents pull`, which clones the system repo if needed. */
 export async function runInit(program: Command, options: { force?: boolean } = {}): Promise<void> {
   const agentsDir = getAgentsDir();
   const metaFile = path.join(agentsDir, 'agents.yaml');
@@ -47,46 +27,11 @@ export async function runInit(program: Command, options: { force?: boolean } = {
     return;
   }
 
-  if (!isInteractiveTerminal()) {
-    console.error(chalk.red('agents init requires an interactive terminal.'));
-    console.error(chalk.gray('\nNon-interactive setup:'));
-    console.error(chalk.cyan(`  agents pull ${DEFAULT_SYSTEM_REPO}   # use the default config`));
-    console.error(chalk.cyan(`  agents pull gh:you/.agents           # use your own repo`));
-    process.exit(1);
-  }
-
   console.log(chalk.bold('\nWelcome to agents-cli.'));
-  console.log(chalk.gray('Let\'s pick where your agent config comes from.\n'));
-
-  const choice = await select({
-    message: "Where's your config?",
-    choices: [
-      {
-        name: `Use default  (${systemRepoSlug(DEFAULT_SYSTEM_REPO)})`,
-        value: 'default',
-        description: 'Clones the curated config. Push later with `agents fork`.',
-      },
-      {
-        name: 'Pull mine    (from GitHub)',
-        value: 'mine',
-        description: 'Use an existing .agents repo you own.',
-      },
-    ],
-  });
-
-  let source: string;
-  if (choice === 'default') {
-    source = DEFAULT_SYSTEM_REPO;
-  } else {
-    const answer = await input({
-      message: 'Your repo (e.g. gh:you/.agents):',
-      validate: isValidSourceInput,
-    });
-    source = answer.trim();
-  }
+  console.log(chalk.gray(`Cloning the system repo from ${systemRepoSlug(DEFAULT_SYSTEM_REPO)} into ~/.agents/.\n`));
 
   console.log();
-  await program.parseAsync(['node', 'agents', 'pull', source]);
+  await program.parseAsync(['node', 'agents', 'pull']);
 
   // `agents pull` prints its own error but doesn't throw — verify the clone actually
   // landed before claiming success. Without this check the wizard would celebrate even
@@ -100,10 +45,8 @@ export async function runInit(program: Command, options: { force?: boolean } = {
   console.log(chalk.bold('\nSetup complete. Try:'));
   console.log(chalk.cyan('  agents view                 ') + chalk.gray(' # see what\'s installed'));
   console.log(chalk.cyan('  agents run <agent> "hello"  ') + chalk.gray(' # run an agent'));
-  if (choice === 'default') {
-    console.log(chalk.gray('\nWhen you want to save your own changes, run:'));
-    console.log(chalk.cyan('  agents fork'));
-  }
+  console.log(chalk.gray('\nWhen you want your own editable repo, scaffold one with:'));
+  console.log(chalk.cyan('  agents repo init --path ~/.agents-mine'));
 }
 
 /** Register the `agents init` command. */
@@ -114,26 +57,25 @@ export function registerInitCommand(program: Command): void {
     .option('-f, --force', 'Reinitialize even if ~/.agents/ already exists (use with caution)')
     .addHelpText('after', `
 Examples:
-  # Interactive setup (asks where to pull config from)
+  # First-time setup (clones the system repo into ~/.agents/)
   agents init
 
-  # Re-initialize after corruption or to switch config sources
+  # Re-initialize after corruption
   agents init --force
 
 When to use:
   - First time running agents-cli: this is your starting point
-  - Onboarding a new machine: sync your existing setup from GitHub
-  - Switching to a different config repo
+  - Onboarding a new machine: restore the system repo and installed CLIs
+  - Repairing ~/.agents/ after accidental deletion or corruption
 
 What it does:
-  1. Asks if you want the default config or your own GitHub repo
-  2. Clones the chosen repo into ~/.agents/
-  3. Installs agent CLIs based on agents.yaml in the repo
-  4. Syncs commands, skills, hooks, and MCP servers to each version
+  1. Clones the system repo into ~/.agents/
+  2. Installs agent CLIs based on agents.yaml in that repo
+  3. Syncs commands, skills, hooks, and MCP servers to each version
 
 Non-interactive alternative:
-  If you're scripting or know your repo already, skip 'init' and use 'agents pull' directly:
-    agents pull gh:yourname/.agents
+  Skip 'init' and run:
+    agents pull
 `)
     .action(async (options) => {
       try {

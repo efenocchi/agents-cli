@@ -313,7 +313,7 @@ agents repo disable acme  # Stop merging without deleting
 agents repo remove acme   # Unregister and delete the clone
 ```
 
-Extras clone into `~/.agents/.repos/<alias>/` and ship the same layout as the primary (`skills/`, `commands/`, `hooks/`, `memory/`). Their contents merge into agent version homes after the primary's — so `~/.agents/` always wins on name collisions. `agents skills list` shows which repo each skill came from.
+Extras clone into `~/.agents/.repos/<alias>/` and ship the same layout as the primary (`skills/`, `commands/`, `hooks/`, `rules/`). Their contents merge into agent version homes after the primary's — so `~/.agents/` always wins on name collisions. `agents skills list` shows which repo each skill came from.
 
 ---
 
@@ -365,7 +365,7 @@ Yes -- `agents run` is non-interactive by default. `--yes` auto-accepts prompts,
 
 ### Can I add support for a new agent?
 
-Agents are defined in [src/lib/agents.ts](src/lib/agents.ts) -- each is a config object declaring commands dir, memory file, and capabilities. PRs welcome.
+Agents are defined in [src/lib/agents.ts](src/lib/agents.ts) -- each is a config object declaring commands dir, rules file, and capabilities. PRs welcome.
 
 ### What's the relationship to Phoenix Labs / Rush?
 

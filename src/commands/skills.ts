@@ -518,7 +518,7 @@ skills prune'.
 
   skillsCmd
     .command('prune')
-    .description('Remove orphan skills from version homes (skills present locally but not in central)')
+    .description('Remove orphan skills from version homes (skills present locally but missing from configured sources)')
     .option('-a, --agent <agent>', 'Scope to a specific agent or agent@version')
     .option('--dry-run', 'Show orphans without deleting')
     .option('-y, --yes', 'Skip confirmation prompt')
@@ -536,9 +536,10 @@ Examples:
   # Skip confirmation (for scripts)
   agents skills prune -y
 
-Orphans are skills that exist inside a version home but are missing from the
-central ~/.agents/skills/ source of truth. Usually they are leftovers from a
-skill that was deleted centrally but never removed from the version install.
+Orphans are skills that exist inside a version home but are missing from every
+configured source: project .agents/skills/, central ~/.agents/skills/, and any
+enabled extra repos. Usually they are leftovers from a skill that was
+deleted or moved but never removed from the version install.
 `)
     .action(async (options) => {
       let filter: { agent?: AgentId; version?: string } | undefined;
@@ -563,7 +564,7 @@ skill that was deleted centrally but never removed from the version install.
       }
 
       const total = diffs.reduce((n, d) => n + d.orphans.length, 0);
-      console.log(chalk.bold(`Orphans (in version home, not in central)\n`));
+      console.log(chalk.bold(`Orphans (in version home, missing from configured sources)\n`));
       for (const d of diffs) {
         console.log(`  ${chalk.cyan(`${d.agent}@${d.version}`)}  ${d.orphans.join(', ')}`);
       }

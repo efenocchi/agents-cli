@@ -7,6 +7,7 @@
  * and launches the first-run interactive init when appropriate.
  */
 
+import './lib/_silence-sqlite-warning.js';
 import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
@@ -31,12 +32,10 @@ const VERSION = packageJson.version;
 
 // Import command registrations
 import { registerPullCommand } from './commands/pull.js';
-import { registerPushCommand } from './commands/push.js';
-import { registerForkCommand } from './commands/fork.js';
 import { registerRepoCommands } from './commands/repo.js';
 import { registerInitCommand, runInit } from './commands/init.js';
 import { registerStatusCommand } from './commands/status.js';
-import { registerViewCommand } from './commands/view.js';
+import { registerPruneCommand, registerViewCommand } from './commands/view.js';
 import { registerCommandsCommands } from './commands/commands.js';
 import { registerHooksCommands } from './commands/hooks.js';
 import { registerSkillsCommands } from './commands/skills.js';
@@ -53,13 +52,10 @@ import { registerSubagentsCommands } from './commands/subagents.js';
 import { registerPluginsCommands } from './commands/plugins.js';
 import { registerSyncCommand } from './commands/sync.js';
 import { registerRefreshMemoryCommand } from './commands/refresh-memory.js';
-import { registerSessionsCommands } from './commands/sessions.js';
 import { registerDriveCommands } from './commands/drive.js';
 import { registerPtyCommands } from './commands/pty.js';
-import { registerTeamsCommands } from './commands/teams.js';
 import { registerProfilesCommands } from './commands/profiles.js';
 import { registerSecretsCommands } from './commands/secrets.js';
-import { registerCloudCommands } from './commands/cloud.js';
 import { registerFactoryCommands } from './commands/factory.js';
 import { registerUsageCommand } from './commands/usage.js';
 import { registerAliasCommand } from './commands/alias.js';
@@ -94,6 +90,7 @@ Agent versions:
   add <agent>[@version]           Install an agent CLI (e.g. agents add codex)
   remove <agent>[@version]        Uninstall a version
   use <agent>@<version>           Set the default version
+  prune [agent]                   Remove older duplicate versions for one agent or all agents
   view [agent[@version]]          List versions, or inspect one in detail
 
 Agent configuration (synced across versions):
@@ -131,9 +128,9 @@ Automation tips:
   Non-TTY shells apply defaults   Omitted required selections fail with a plain hint
 
 Config sync (portable setup via git):
-  pull [gh:user/repo]             Clone or pull a shared .agents config repo
-  push                            Commit and push your local config
-  fork                            Fork the default config repo to your GitHub
+  pull                            Clone or pull the system repo at ~/.agents/
+  repo init --path <dir>          Scaffold your own editable repo from the system template
+  repo add <path|gh:user/repo>    Merge an extra repo after the system repo
 
 Options:
   -V, --version                   Show version number
@@ -330,6 +327,7 @@ async function checkForUpdates(): Promise<void> {
 
 // Register all commands
 registerViewCommand(program);
+registerPruneCommand(program);
 registerStatusCommand(program);
 registerCommandsCommands(program);
 registerHooksCommands(program);
@@ -383,14 +381,11 @@ program
     await program.parseAsync(['node', 'agents', ...args]);
   });
 
-registerTeamsCommands(program);
 registerProfilesCommands(program);
 registerSecretsCommands(program);
-registerSessionsCommands(program);
 registerSyncCommand(program);
 registerRefreshMemoryCommand(program);
 registerDriveCommands(program);
-registerCloudCommands(program);
 registerFactoryCommands(program);
 registerUsageCommand(program);
 registerAliasCommand(program);
@@ -451,8 +446,6 @@ program
     });
 
 registerPullCommand(program);
-registerPushCommand(program);
-registerForkCommand(program);
 registerRepoCommands(program);
 registerInitCommand(program);
 
@@ -513,6 +506,36 @@ await checkForUpdates();
 // First-run experience: no args + no config yet + TTY -> launch interactive init.
 // Skipped when stdin/stdout isn't a terminal (CI, pipes) or when user passes any args.
 const passedArgs = process.argv.slice(2);
+const requestedCommand = passedArgs.find((arg) => !arg.startsWith('-'));
+
+/**
+ * Lazily register command trees that pull in the SQLite session/cloud stack.
+ * This keeps lightweight commands like `agents view` from loading `node:sqlite`
+ * during CLI startup.
+ */
+async function registerLazyCommands(): Promise<void> {
+  switch (requestedCommand) {
+    case 'sessions': {
+      const { registerSessionsCommands } = await import('./commands/sessions.js');
+      registerSessionsCommands(program);
+      break;
+    }
+    case 'teams': {
+      const { registerTeamsCommands } = await import('./commands/teams.js');
+      registerTeamsCommands(program);
+      break;
+    }
+    case 'cloud': {
+      const { registerCloudCommands } = await import('./commands/cloud.js');
+      registerCloudCommands(program);
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+await registerLazyCommands();
 const metaFilePath = path.join(os.homedir(), '.agents', 'agents.yaml');
 const firstRun =
   passedArgs.length === 0 &&
