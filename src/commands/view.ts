@@ -57,6 +57,7 @@ import { getAgentResources } from '../lib/resources.js';
 import { getAgentsDir, getPromptcutsPath } from '../lib/state.js';
 import { isGitRepo, getGitSyncStatus } from '../lib/git.js';
 import { getCentralMemoryFileName } from '../lib/memory.js';
+import { getConfiguredRunStrategy } from '../lib/rotate.js';
 import { confirm } from '@inquirer/prompts';
 import { formatPath, isInteractiveTerminal, isPromptCancelled } from './utils.js';
 
@@ -272,14 +273,16 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
     }
 
     for (const agentId of versionManaged) {
-      const agent = AGENTS[agentId];
-      const versions = listInstalledVersions(agentId);
-      const globalDefault = getGlobalDefault(agentId);
+	      const agent = AGENTS[agentId];
+	      const versions = listInstalledVersions(agentId);
+	      const globalDefault = getGlobalDefault(agentId);
+	      const runStrategy = getConfiguredRunStrategy(agentId);
 
-      const noDefaultLabel = !globalDefault ? chalk.yellow(' (no default)') : '';
-      console.log(`  ${chalk.bold(agentLabel(agentId))}${noDefaultLabel}`);
+	      const strategyLabel = chalk.gray(` (${runStrategy})`);
+	      const noDefaultLabel = !globalDefault ? chalk.yellow(' (no default)') : '';
+	      console.log(`  ${chalk.bold(agentLabel(agentId))}${strategyLabel}${noDefaultLabel}`);
 
-      // Sort versions with default first, then by semver descending
+	      // Sort versions with default first, then by semver descending
       const sortedVersions = [...versions].sort((a, b) => {
         if (a === globalDefault) return -1;
         if (b === globalDefault) return 1;
@@ -890,7 +893,11 @@ function printPrunePlan(plan: AgentPrunePlan, isFirst: boolean): void {
  * each agent, offers the next agent with duplicates. User answering "no"
  * stops the chain.
  */
-async function pruneDuplicates(filterAgentId: AgentId | undefined, yes: boolean): Promise<void> {
+async function pruneDuplicates(
+  filterAgentId: AgentId | undefined,
+  yes: boolean,
+  dryRun: boolean
+): Promise<void> {
   const ordered: AgentId[] = filterAgentId
     ? [filterAgentId, ...ALL_AGENT_IDS.filter((a) => a !== filterAgentId)]
     : [...ALL_AGENT_IDS];
@@ -906,6 +913,7 @@ async function pruneDuplicates(filterAgentId: AgentId | undefined, yes: boolean)
     return;
   }
 
+  const totalCandidates = actionable.reduce((n, plan) => n + plan.toPrune.length, 0);
   let totalRemoved = 0;
   let isFirst = true;
   let processedAny = false;
@@ -919,10 +927,20 @@ async function pruneDuplicates(filterAgentId: AgentId | undefined, yes: boolean)
       continue;
     }
 
+    if (dryRun) {
+      processedAny = true;
+      isFirst = false;
+      continue;
+    }
+
     if (!yes) {
       if (!isInteractiveTerminal()) {
         console.log(chalk.red('Refusing to prune in a non-interactive shell without --yes.'));
-        console.log(chalk.gray('Re-run with: agents view' + (filterAgentId ? ` ${filterAgentId}` : '') + ' --prune -y'));
+        if (filterAgentId) {
+          console.log(chalk.gray(`Re-run with: agents prune ${filterAgentId} --dry-run`));
+        } else {
+          console.log(chalk.gray('Re-run with: agents prune --dry-run'));
+        }
         process.exit(1);
       }
       const n = plan.toPrune.length;
@@ -951,6 +969,11 @@ async function pruneDuplicates(filterAgentId: AgentId | undefined, yes: boolean)
     console.log();
   }
 
+  if (dryRun) {
+    console.log(chalk.gray(`${totalCandidates} version${totalCandidates === 1 ? '' : 's'} would be pruned. Run without --dry-run to delete.`));
+    return;
+  }
+
   if (processedAny) {
     console.log(chalk.bold(`Pruned ${totalRemoved} version${totalRemoved === 1 ? '' : 's'}.`));
   }
@@ -958,12 +981,13 @@ async function pruneDuplicates(filterAgentId: AgentId | undefined, yes: boolean)
 
 export async function pruneAction(
   agentArg?: string,
-  options?: { yes?: boolean }
+  options?: { yes?: boolean; dryRun?: boolean }
 ): Promise<void> {
   const yes = options?.yes === true;
+  const dryRun = options?.dryRun === true;
 
   if (!agentArg) {
-    await pruneDuplicates(undefined, yes);
+    await pruneDuplicates(undefined, yes, dryRun);
     return;
   }
 
@@ -983,7 +1007,7 @@ export async function pruneAction(
     process.exit(1);
   }
 
-  await pruneDuplicates(agentId, yes);
+  await pruneDuplicates(agentId, yes, dryRun);
 }
 
 /**
@@ -992,15 +1016,16 @@ export async function pruneAction(
  */
 export async function viewAction(
   agentArg?: string,
-  options?: { json?: boolean; prune?: boolean; yes?: boolean }
+  options?: { json?: boolean; prune?: boolean; yes?: boolean; dryRun?: boolean }
 ): Promise<void> {
   const json = options?.json === true;
   const prune = options?.prune === true;
   const yes = options?.yes === true;
+  const dryRun = options?.dryRun === true;
 
   if (!agentArg) {
     if (prune) {
-      await pruneDuplicates(undefined, yes);
+      await pruneDuplicates(undefined, yes, dryRun);
       return;
     }
     if (json) {
@@ -1034,7 +1059,7 @@ export async function viewAction(
       console.log(chalk.gray(`Run: agents view ${agentId} --prune`));
       process.exit(1);
     }
-    await pruneDuplicates(agentId, yes);
+    await pruneDuplicates(agentId, yes, dryRun);
     return;
   }
 
@@ -1062,6 +1087,7 @@ export function registerViewCommand(program: Command): void {
     .description('Show what agent CLIs are installed and which versions you have. Inspect resources when you pass agent@version.')
     .option('--json', 'Emit machine-readable JSON (version list, usage, signed-in status).')
     .option('--prune', 'Remove older installed versions that share an account with a newer installed version. Skips the global default.')
+    .option('--dry-run', 'With --prune, show duplicate versions without deleting')
     .option('-y, --yes', 'Skip the prune confirmation prompt.')
     .addHelpText('after', `
 Examples:
@@ -1079,6 +1105,7 @@ Examples:
   agents view claude --json
 
   # Prune older versions that duplicate an account already used by a newer version
+  agents view --prune --dry-run
   agents view claude --prune
   agents view claude --prune -y
 
@@ -1096,8 +1123,9 @@ Output:
   - With --json: structured JSON with version, isDefault, signedIn, email, plan,
     usageStatus, per-window usedPercent, lastActive, and path
   - With --prune: plan of which older versions will be removed, then confirm
+  - With --prune --dry-run: preview only, no deletions
 `)
-    .action((agentArg: string | undefined, options: { json?: boolean; prune?: boolean; yes?: boolean }) => viewAction(agentArg, options));
+    .action((agentArg: string | undefined, options: { json?: boolean; prune?: boolean; yes?: boolean; dryRun?: boolean }) => viewAction(agentArg, options));
 }
 
 /** Register the `agents prune` command. */
@@ -1105,11 +1133,15 @@ export function registerPruneCommand(program: Command): void {
   program
     .command('prune [agent]')
     .description('Remove older installed versions that share an account with a newer installed version. Skips the global default.')
+    .option('--dry-run', 'Show duplicate versions without deleting')
     .option('-y, --yes', 'Skip the prune confirmation prompt.')
     .addHelpText('after', `
 Examples:
   # Prune older duplicate versions across all installed agents
   agents prune
+
+  # Preview what would be pruned
+  agents prune --dry-run
 
   # Prune older duplicate versions for one agent
   agents prune claude
@@ -1124,5 +1156,5 @@ Notes:
     agents skills prune
     agents hooks prune
 `)
-    .action((agentArg: string | undefined, options: { yes?: boolean }) => pruneAction(agentArg, options));
+    .action((agentArg: string | undefined, options: { yes?: boolean; dryRun?: boolean }) => pruneAction(agentArg, options));
 }
