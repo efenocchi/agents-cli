@@ -57,7 +57,6 @@ const SHIMS_DIR = path.join(SYSTEM_AGENTS_DIR, 'shims');
 const BACKUPS_DIR = path.join(SYSTEM_AGENTS_DIR, 'backups');
 const PLUGINS_DIR = path.join(SYSTEM_AGENTS_DIR, 'plugins');
 const DRIVE_DIR = path.join(SYSTEM_AGENTS_DIR, 'drive');
-const EXTRA_REPOS_DIR = path.join(SYSTEM_AGENTS_DIR, '.repos');
 
 // ─── User resource dirs ───────────────────────────────────────────────────────
 
@@ -268,12 +267,14 @@ export function getPluginsDir(): string { return PLUGINS_DIR; }
 /** Path to synced remote session data (~/.agents-system/drive/). */
 export function getDriveDir(): string { return DRIVE_DIR; }
 
-/** Path to managed extra DotAgent repo clones (~/.agents-system/.repos/). */
-export function getExtraReposDir(): string { return EXTRA_REPOS_DIR; }
-
-/** Path to a single managed extra DotAgent repo clone (~/.agents-system/.repos/<alias>/). */
+/**
+ * Path to a single user-level extra DotAgent repo clone (~/.agents-<alias>/).
+ *
+ * Extra repos are user-defined config — they live as peer dirs to ~/.agents/,
+ * not under the system repo. `agents repo add` clones here by default.
+ */
 export function getExtraRepoDir(alias: string): string {
-  return path.join(EXTRA_REPOS_DIR, alias);
+  return path.join(HOME, `.agents-${alias}`);
 }
 
 /** Resolve the on-disk path for an extra repo, whether managed or user-owned. */
@@ -328,7 +329,6 @@ export function ensureAgentsDir(): void {
   if (!fs.existsSync(SYSTEM_PERMISSIONS_DIR)) fs.mkdirSync(SYSTEM_PERMISSIONS_DIR, opts);
   if (!fs.existsSync(SYSTEM_SUBAGENTS_DIR)) fs.mkdirSync(SYSTEM_SUBAGENTS_DIR, opts);
   if (!fs.existsSync(DRIVE_DIR)) fs.mkdirSync(DRIVE_DIR, opts);
-  if (!fs.existsSync(EXTRA_REPOS_DIR)) fs.mkdirSync(EXTRA_REPOS_DIR, opts);
   try { fs.chmodSync(SYSTEM_AGENTS_DIR, 0o700); } catch {}
 }
 

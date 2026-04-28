@@ -39,6 +39,7 @@ import {
   getVersionHomePath,
   getVersionDir,
   resolveVersion,
+  resolveVersionAlias,
   getAvailableResources,
   getActuallySyncedResources,
   getNewResources,
@@ -1009,13 +1010,13 @@ export async function pruneAction(
 
   const parts = agentArg.split('@');
   const agentName = parts[0];
-  const requestedVersion = parts[1] || null;
 
   const agentId = resolveAgentName(agentName);
   if (!agentId) {
     console.log(chalk.red(formatAgentError(agentName)));
     process.exit(1);
   }
+  const requestedVersion = resolveVersionAlias(agentId, parts[1]) ?? null;
 
   if (requestedVersion) {
     console.log(chalk.red('prune does not take a @version suffix.'));
@@ -1057,7 +1058,6 @@ export async function viewAction(
   // Parse agent@version syntax
   const parts = agentArg.split('@');
   const agentName = parts[0];
-  const requestedVersion = parts[1] || null;
 
   const agentId = resolveAgentName(agentName);
   if (!agentId) {
@@ -1068,6 +1068,7 @@ export async function viewAction(
     console.log(chalk.red(formatAgentError(agentName)));
     process.exit(1);
   }
+  const requestedVersion = resolveVersionAlias(agentId, parts[1]) ?? null;
 
   if (prune) {
     if (requestedVersion) {

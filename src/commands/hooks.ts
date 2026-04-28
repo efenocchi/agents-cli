@@ -40,6 +40,7 @@ import {
 import {
   listInstalledVersions,
   getGlobalDefault,
+  resolveVersionAlias,
   syncResourcesToVersion,
   promptAgentVersionSelection,
   getVersionHomePath,
@@ -101,7 +102,6 @@ When to use:
       if (agentInput) {
         const parts = agentInput.split('@');
         const agentName = parts[0];
-        requestedVersion = parts[1] || null;
 
         agentId = resolveAgentName(agentName);
         if (!agentId) {
@@ -109,6 +109,7 @@ When to use:
           console.log(chalk.red(formatAgentError(agentName, [...HOOKS_CAPABLE_AGENTS])));
           process.exit(1);
         }
+        requestedVersion = resolveVersionAlias(agentId, parts[1]) ?? null;
       }
 
       // Load hook manifest for event display
@@ -575,7 +576,7 @@ Sync is additive: to remove orphan scripts, use 'agents hooks prune'.
           console.log(chalk.red(formatAgentError(name, HOOKS_CAPABLE_AGENTS as unknown as AgentId[])));
           process.exit(1);
         }
-        filter = { agent: agentId, version: version || undefined };
+        filter = { agent: agentId, version: resolveVersionAlias(agentId, version) };
       }
 
       const pairs = iterHooksCapableVersions(filter);
@@ -660,7 +661,7 @@ the source of truth.
           console.log(chalk.red(formatAgentError(name, HOOKS_CAPABLE_AGENTS as unknown as AgentId[])));
           process.exit(1);
         }
-        filter = { agent: agentId, version: version || undefined };
+        filter = { agent: agentId, version: resolveVersionAlias(agentId, version) };
       }
 
       const pairs = iterHooksCapableVersions(filter);

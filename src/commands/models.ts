@@ -17,7 +17,7 @@ import {
   agentLabel,
 } from '../lib/agents.js';
 import type { AgentId } from '../lib/types.js';
-import { listInstalledVersions, getGlobalDefault, resolveVersion } from '../lib/versions.js';
+import { listInstalledVersions, getGlobalDefault, resolveVersion, resolveVersionAlias } from '../lib/versions.js';
 import { getModelCatalog, locateModelSource } from '../lib/models.js';
 
 const MODEL_CAPABLE_AGENTS: AgentId[] = ['claude', 'codex', 'gemini', 'opencode', 'cursor', 'openclaw'];
@@ -117,7 +117,8 @@ async function resolveTargets(agentSpec: string | undefined): Promise<Target[]> 
     }));
   }
 
-  let version: string | null = versionSpec || resolveVersion(agent, process.cwd()) || getGlobalDefault(agent);
+  const aliasedVersion = resolveVersionAlias(agent, versionSpec);
+  let version: string | null = aliasedVersion || resolveVersion(agent, process.cwd()) || getGlobalDefault(agent);
   if (!version && PATH_ONLY_AGENTS.has(agent)) {
     version = fallbackPathVersion(agent);
   }
