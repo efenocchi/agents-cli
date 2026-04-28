@@ -615,9 +615,9 @@ export function installSkillToVersion(
 
   try {
     if (method === 'symlink') {
-      fs.symlinkSync(centralPath, target, 'dir');
+      fs.symlinkSync(sourcePath, target, 'dir');
     } else {
-      fs.cpSync(centralPath, target, { recursive: true });
+      fs.cpSync(sourcePath, target, { recursive: true });
     }
   } catch (err) {
     return { success: false, error: `Failed to ${method}: ${(err as Error).message}` };
@@ -861,12 +861,12 @@ export function listInstalledSkillsWithScope(
 }
 
 export function getSkillInfo(skillName: string): DiscoveredSkill | null {
-  const centralPath = path.join(getSkillsDir(), skillName);
-  if (!fs.existsSync(centralPath)) {
+  const sourcePath = resolveSkillSourcePath(skillName);
+  if (!sourcePath) {
     return null;
   }
 
-  const metadata = parseSkillMetadata(centralPath);
+  const metadata = parseSkillMetadata(sourcePath);
   const validation = validateSkillMetadata(metadata, skillName);
   if (!metadata) {
     return null;
@@ -874,16 +874,19 @@ export function getSkillInfo(skillName: string): DiscoveredSkill | null {
 
   return {
     name: skillName,
-    path: centralPath,
+    path: sourcePath,
     metadata,
-    ruleCount: countSkillRules(centralPath),
+    ruleCount: countSkillRules(sourcePath),
     validation,
   };
 }
 
 export function getSkillRules(skillName: string): string[] {
-  const centralPath = path.join(getSkillsDir(), skillName);
-  const rulesDir = path.join(centralPath, 'rules');
+  const sourcePath = resolveSkillSourcePath(skillName);
+  if (!sourcePath) {
+    return [];
+  }
+  const rulesDir = path.join(sourcePath, 'rules');
 
   if (!fs.existsSync(rulesDir)) {
     return [];
