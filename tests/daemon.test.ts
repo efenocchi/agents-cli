@@ -104,7 +104,7 @@ describe('generateLaunchdPlist', () => {
   it('generates valid plist XML', () => {
     const plist = generateLaunchdPlist();
     expect(plist).toContain('<?xml version="1.0"');
-    expect(plist).toContain('co.swarmify.agents-daemon');
+    expect(plist).toContain('com.phnx-labs.agents-daemon');
     expect(plist).toContain('daemon');
     expect(plist).toContain('_run');
     expect(plist).toContain('<key>KeepAlive</key>');
