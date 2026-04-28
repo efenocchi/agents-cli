@@ -8,6 +8,7 @@
  * Requires Node >= 22.5.0 for `node:sqlite`.
  */
 
+import './_silence-sqlite-warning.js';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 
 export interface RunResult {
