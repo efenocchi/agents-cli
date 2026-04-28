@@ -35,7 +35,7 @@ import {
   removeTeam,
   teamExists,
 } from '../lib/teams/registry.js';
-import { isVersionInstalled, resolveVersionAlias } from '../lib/versions.js';
+import { isVersionInstalled, resolveVersionAlias, resolveVersionAliasLoose } from '../lib/versions.js';
 import type { AgentId } from '../lib/types.js';
 import { discoverSessions, parseTimeFilter, resolveSessionById } from '../lib/session/discover.js';
 import type { SessionMeta } from '../lib/session/types.js';
@@ -688,7 +688,7 @@ Name teammates with --name alice to refer to them as 'alice' instead of a UUID.
       if (opts.agent) {
         const [wantType, rawVersion] = opts.agent.split('@');
         const wantVersion = VALID_AGENTS.includes(wantType as AgentType)
-          ? resolveVersionAlias(wantType as AgentId, rawVersion)
+          ? resolveVersionAliasLoose(wantType as AgentId, rawVersion)
           : rawVersion;
         merged = merged.filter((t) => {
           const teammates = byTeam.get(t.task_name) || [];
