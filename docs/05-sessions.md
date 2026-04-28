@@ -54,17 +54,17 @@ active sessions get refreshed each call because their mtime keeps advancing.
   "shortId": "c07ec355",
   "agent": "claude",
   "version": "2.1.112",
-  "account": "muqsitnawaz@gmail.com",
+  "account": "you@example.com",
   "timestamp": "2026-04-22T13:37:14.047Z",
   "project": "agents",
-  "cwd": "/Users/muqsit/src/github.com/muqsitnawaz/agents",
+  "cwd": "/Users/you/src/github.com/phnx-labs/agents",
   "gitBranch": "main",
   "topic": "We integrated gpt-image-2 with quality-tiered pricing. Check the image-studio agent",
   "label": null,
   "messageCount": 9,
   "tokenCount": 537397,
   "isTeamOrigin": false,
-  "filePath": "/Users/muqsit/.claude/projects/-Users-.../c07ec355-....jsonl"
+  "filePath": "/Users/you/.claude/projects/-Users-.../c07ec355-....jsonl"
 }
 ```
 
