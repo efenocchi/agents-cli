@@ -12,7 +12,7 @@
  */
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { homedir } from 'os';
+import { getAgentsDir } from '../state.js';
 import {
   artifactFilename,
   kindFromFilename,
@@ -24,7 +24,7 @@ import {
   type LedgerTaskView,
 } from './types.js';
 
-const DEFAULT_ROOT = path.join(homedir(), '.agents', 'ledger');
+const DEFAULT_ROOT = path.join(getAgentsDir(), 'ledger');
 
 async function pathExists(p: string): Promise<boolean> {
   try { await fs.access(p); return true; } catch { return false; }

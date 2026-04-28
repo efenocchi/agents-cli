@@ -51,7 +51,7 @@ export function normalizeRunStrategy(value: unknown): RunStrategy | null {
 /** Read project-local run strategy from the nearest agents.yaml, if present. */
 export function getProjectRunStrategy(agent: AgentId, startPath: string): RunStrategy | null {
   let dir = path.resolve(startPath);
-  const userAgentsYaml = path.join(os.homedir(), '.agents', 'agents.yaml');
+  const userAgentsYaml = path.join(getAgentsDir(), 'agents.yaml');
 
   while (dir !== path.dirname(dir)) {
     const manifestPath = path.join(dir, 'agents.yaml');
@@ -70,7 +70,7 @@ export function getProjectRunStrategy(agent: AgentId, startPath: string): RunStr
   return null;
 }
 
-/** Resolve the configured strategy: project agents.yaml, then ~/.agents/agents.yaml, then pinned. */
+/** Resolve the configured strategy: project agents.yaml, then ~/.agents-system/agents.yaml, then pinned. */
 export function getConfiguredRunStrategy(agent: AgentId, startPath: string = process.cwd()): RunStrategy {
   return getProjectRunStrategy(agent, startPath)
     ?? normalizeRunStrategy(readMeta().run?.[agent]?.strategy)

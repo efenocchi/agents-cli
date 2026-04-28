@@ -6,7 +6,7 @@
  * across multiple CLI invocations. Each session holds a real PTY (via node-pty)
  * and a headless terminal emulator (via @xterm/headless) for screen rendering.
  *
- * Protocol: newline-delimited JSON over ~/.agents/pty.sock
+ * Protocol: newline-delimited JSON over ~/.agents-system/pty.sock
  */
 
 import * as net from 'net';
@@ -523,7 +523,7 @@ export async function runPtyServer(): Promise<void> {
     conn.on('error', () => {});
   });
 
-  // Lock down ~/.agents/ before opening the socket — without this, any local
+  // Lock down ~/.agents-system/ before opening the socket — without this, any local
   // user with execute on the parent dir could connect to the socket during
   // the listen()-to-chmod() window. macOS BSD AF_UNIX semantics make socket
   // mode advisory only, so the parent dir is the real boundary.

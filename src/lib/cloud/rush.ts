@@ -10,6 +10,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
 import * as yaml from 'yaml';
+import { getAgentsDir } from '../state.js';
 import type {
   CloudProvider,
   CloudTask,
@@ -30,7 +31,7 @@ const USER_YAML = path.join(os.homedir(), '.rush', 'user.yaml');
 // Persistent consent record for uploading Claude OAuth blobs to Rush Cloud.
 // Created on first explicit consent (env var or flag); subsequent dispatches
 // see it and proceed without re-prompting.
-const RUSH_CONSENT_PATH = path.join(os.homedir(), '.agents', 'cloud', 'rush-consent.json');
+const RUSH_CONSENT_PATH = path.join(getAgentsDir(), 'cloud', 'rush-consent.json');
 const RUSH_CONSENT_ENV = 'AGENTS_RUSH_UPLOAD_TOKENS';
 
 interface RushConsentFile {

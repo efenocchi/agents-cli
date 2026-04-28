@@ -18,6 +18,7 @@ import { normalizeEvents, AgentType } from './parsers.js';
 import { debug } from './debug.js';
 import { buildReasoningFlags } from '../models.js';
 import type { AgentId } from '../types.js';
+import { getAgentsDir as getSystemAgentsDir } from '../state.js';
 
 let lastMemoryWarnAt = 0;
 
@@ -1475,7 +1476,7 @@ export type CompletionHook = (agent: AgentProcess) => Promise<void>;
       // which write to ~/.agents/. Grant that root so subprocess-issued
       // `agents teams add` calls hit the real store instead of the tmp
       // fallback (which the supervisor does not watch).
-      cmd.push('--add-dir', path.join(os.homedir(), '.agents'));
+      cmd.push('--add-dir', getSystemAgentsDir());
     }
 
     // Add model flag for each agent type only when the teammate has a pinned

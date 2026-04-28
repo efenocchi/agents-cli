@@ -14,6 +14,7 @@ import * as crypto from 'crypto';
 import * as readline from 'readline';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { getAgentsDir } from '../state.js';
 
 const execFileAsync = promisify(execFile);
 import type { SessionAgentId, SessionMeta } from './types.js';
@@ -38,7 +39,7 @@ import {
 } from './db.js';
 
 const HOME = os.homedir();
-const AGENTS_DIR = path.join(HOME, '.agents');
+const AGENTS_DIR = getAgentsDir();
 const RUSH_SESSIONS_DIR = path.join(HOME, '.rush', 'sessions');
 const HERMES_SESSIONS_DIR = path.join(HOME, '.hermes', 'sessions');
 
@@ -1671,12 +1672,12 @@ function normalizeVersion(version?: string | null): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
-/** Extract the version number from a managed ~/.agents/versions/<agent>/<version>/... path. */
+/** Extract the version number from a managed ~/.agents-system/versions/<agent>/<version>/... path. */
 function extractVersionFromManagedPath(agent: SessionAgentId, sourcePath?: string): string | undefined {
   if (!sourcePath) return undefined;
 
   const candidates = [sourcePath, safeRealpathSync(sourcePath) || ''];
-  const marker = `/.agents/versions/${agent}/`;
+  const marker = `/.agents-system/versions/${agent}/`;
 
   for (const candidate of candidates) {
     if (!candidate) continue;

@@ -13,6 +13,7 @@ import * as os from 'os';
 import { execFileSync } from 'child_process';
 import type { AgentId } from './types.js';
 import { getVersionDir } from './versions.js';
+import { getAgentsDir } from './state.js';
 
 /** Model identifiers per cloud provider (used by Claude's multi-cloud routing). */
 export interface ModelPerCloud {
@@ -58,7 +59,7 @@ export interface ModelCatalog {
   aliases: Record<string, string>;
 }
 
-const CACHE_PATH = path.join(os.homedir(), '.agents', '.models-cache.json');
+const CACHE_PATH = path.join(getAgentsDir(), '.models-cache.json');
 
 /**
  * Bump when the extractor logic changes shape in an incompatible way so cached
