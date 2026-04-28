@@ -2,6 +2,8 @@
 
 How agents-cli syncs resources (commands, skills, hooks, memory, MCP, permissions) between central storage and version homes.
 
+For the conceptual model — what a DotAgents repo is, what resources are, and how layered resolution works — see [00-concepts.md](00-concepts.md).
+
 ## Resource Types
 
 | Resource | Source layers (resolved project > user > system) | Version Home Location | Sync Method |
