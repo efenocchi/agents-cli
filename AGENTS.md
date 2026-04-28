@@ -11,6 +11,8 @@ CLI for managing AI coding agent versions, config, sessions, and cloud dispatch 
 
 Same shape in both. Resources resolve **project > user > system** at sync time. Operational state always lives in the system repo.
 
+These `$HOME`-level directories (plus an optional `.agents/` at project root) are called **DotAgents repos** — they live outside this codebase and are managed by the CLI. Each has a canonical layout: `commands/`, `skills/`, `hooks/`, `rules/`, `mcp/`, `permissions/`, `profiles/`, `subagents/`. The typed items inside are called **resources**. Resolution order is project > user > extra repos > system; same-named resource at a higher layer wins, everything else unions in. See `docs/00-concepts.md` for the full model.
+
 ## Source layout
 
 ```
@@ -69,6 +71,7 @@ bun install && bun run build && bun test
 ## Detailed design
 
 See `docs/`:
+- `00-concepts.md` — DotAgents repos, resource kinds, layered resolution model
 - `01-version-management.md` — install, switching, isolation
 - `02-resource-sync.md` — layered resource resolution and sync
 - `03-routines.md` — scheduled jobs with sandboxed permissions
