@@ -20,8 +20,10 @@ afterEach(() => {
 });
 
 function runVersionSync(home: string, expression: string): unknown {
+  // tsx (Node) — not bun. The CLI ships against Node, and `versions.ts`
+  // transitively imports `node:sqlite`, which bun 1.2.x doesn't expose.
   const moduleUrl = pathToFileURL(path.resolve('src/lib/versions.ts')).href;
-  const child = spawnSync('bun', ['--input-type=module', '-e', `
+  const child = spawnSync('npx', ['--no-install', 'tsx', '-e', `
     import { syncResourcesToVersion } from ${JSON.stringify(moduleUrl)};
     const home = ${JSON.stringify(home)};
     const result = ${expression};
