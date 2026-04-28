@@ -1,10 +1,10 @@
 /**
- * Memory file management -- reading, writing, and syncing agent instructions.
+ * Rules file management -- reading, writing, and syncing agent instructions.
  *
- * The "memory" is the main instructions file (AGENTS.md) that gets symlinked
+ * The canonical rules file (AGENTS.md) gets synced
  * into each agent's config directory under their native name (CLAUDE.md,
  * GEMINI.md, etc.). This module handles reading, managing includes, and
- * refreshing memory files across version homes.
+ * refreshing rules files across version homes.
  */
 
 import * as fs from 'fs';
@@ -31,13 +31,34 @@ export interface DiscoveredInstructions {
 }
 
 /**
- * Central memory filename constant.
- * All agents map to this file in ~/.agents/memory/, renamed per-agent when synced.
+ * Central rules filename constant.
+ * All agents map to this file in ~/.agents/rules/, renamed per-agent when synced.
  */
 export const CENTRAL_MEMORY_FILENAME = 'AGENTS.md';
+const RULES_DOC_FILENAME = 'README.md';
+
+function isSyncableRuleMarkdown(filename: string): boolean {
+  return filename.endsWith('.md') && filename !== RULES_DOC_FILENAME;
+}
+
+function walkRuleMarkdownFiles(baseDir: string, currentDir: string = baseDir): string[] {
+  const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+  const files: string[] = [];
+  for (const entry of entries) {
+    const abs = path.join(currentDir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...walkRuleMarkdownFiles(baseDir, abs));
+      continue;
+    }
+    if (entry.isFile() && isSyncableRuleMarkdown(entry.name)) {
+      files.push(path.relative(baseDir, abs));
+    }
+  }
+  return files.sort();
+}
 
 /**
- * Get the canonical central memory filename for an agent's instructionsFile.
+ * Get the canonical central rules filename for an agent's instructionsFile.
  * Central storage uses AGENTS.md, which gets renamed per-agent when syncing:
  *   - Claude: AGENTS.md → CLAUDE.md
  *   - Gemini: AGENTS.md → GEMINI.md
@@ -77,11 +98,11 @@ export function getInstructionsPath(agentId: AgentId, scope: InstructionsScope, 
   }
   const projectAgentsDir = getProjectAgentsDir(cwd);
   if (projectAgentsDir) {
-    const projectMemoryDir = path.join(projectAgentsDir, 'memory');
+    const projectRulesDir = path.join(projectAgentsDir, 'rules');
     const centralName = getCentralMemoryFileName(agentId);
     const candidates = [
-      path.join(projectMemoryDir, centralName),
-      path.join(projectMemoryDir, agent.instructionsFile),
+      path.join(projectRulesDir, centralName),
+      path.join(projectRulesDir, agent.instructionsFile),
     ];
     for (const candidate of candidates) {
       if (fs.existsSync(candidate)) {
@@ -104,22 +125,22 @@ export function instructionsExists(agentId: AgentId, scope: InstructionsScope = 
 export function discoverInstructionsFromRepo(repoPath: string): DiscoveredInstructions[] {
   const instructions: DiscoveredInstructions[] = [];
 
-  const memoryDir = path.join(repoPath, 'memory');
-  if (!fs.existsSync(memoryDir)) {
+  const rulesDir = path.join(repoPath, 'rules');
+  if (!fs.existsSync(rulesDir)) {
     return instructions;
   }
 
   for (const agentId of ALL_AGENT_IDS) {
     const agent = AGENTS[agentId];
-    // AGENTS.md is the canonical central memory file - don't claim it per-agent.
-    // It gets installed centrally to ~/.agents/memory/ and shims symlink it per-agent.
+    // AGENTS.md is the canonical central rules file - don't claim it per-agent.
+    // It gets installed centrally to ~/.agents/rules/ and synced per-agent.
     const possibleNames = [
       `${agentId}.md`,
       agent.instructionsFile,
     ].filter(name => name !== 'AGENTS.md');
 
     for (const filename of possibleNames) {
-      const sourcePath = path.join(memoryDir, filename);
+      const sourcePath = path.join(rulesDir, filename);
       if (fs.existsSync(sourcePath)) {
         instructions.push({
           agentId,
@@ -136,9 +157,9 @@ export function discoverInstructionsFromRepo(repoPath: string): DiscoveredInstru
 
 export function resolveInstructionsSource(repoPath: string, agentId: AgentId): string | null {
   const agent = AGENTS[agentId];
-  const memoryDir = path.join(repoPath, 'memory');
+  const rulesDir = path.join(repoPath, 'rules');
 
-  if (!fs.existsSync(memoryDir)) {
+  if (!fs.existsSync(rulesDir)) {
     return null;
   }
 
@@ -148,7 +169,7 @@ export function resolveInstructionsSource(repoPath: string, agentId: AgentId): s
   ].filter(name => name !== 'AGENTS.md');
 
   for (const filename of possibleNames) {
-    const sourcePath = path.join(memoryDir, filename);
+    const sourcePath = path.join(rulesDir, filename);
     if (fs.existsSync(sourcePath)) {
       return sourcePath;
     }
@@ -158,16 +179,13 @@ export function resolveInstructionsSource(repoPath: string, agentId: AgentId): s
 }
 
 export function discoverMemoryFilesFromRepo(repoPath: string): string[] {
-  const memoryDir = path.join(repoPath, 'memory');
-  if (!fs.existsSync(memoryDir)) {
+  const rulesDir = path.join(repoPath, 'rules');
+  if (!fs.existsSync(rulesDir)) {
     return [];
   }
 
   try {
-    return fs
-      .readdirSync(memoryDir, { withFileTypes: true })
-      .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
-      .map((entry) => entry.name);
+    return walkRuleMarkdownFiles(rulesDir);
   } catch {
     return [];
   }
@@ -284,8 +302,8 @@ export function getInstructionsContent(agentId: AgentId, scope: InstructionsScop
 }
 
 /**
- * Install memory files from repo memory/ to central ~/.agents/memory/ directory.
- * Shims will symlink these to per-agent directories for synced agents.
+ * Install rules files from repo rules/ to central ~/.agents/rules/ directory.
+ * Nested presets/ and rules/ fragments are preserved so @imports keep working.
  */
 export function installInstructionsCentrally(
   repoPath: string,
@@ -299,21 +317,22 @@ export function installInstructionsCentrally(
     fs.mkdirSync(centralDir, { recursive: true });
   }
 
-  const memoryDir = path.join(repoPath, 'memory');
-  if (!fs.existsSync(memoryDir)) {
+  const rulesDir = path.join(repoPath, 'rules');
+  if (!fs.existsSync(rulesDir)) {
     return { installed, errors };
   }
 
   try {
-    const files = filesToInstall ?? fs.readdirSync(memoryDir);
+    const files = filesToInstall ?? walkRuleMarkdownFiles(rulesDir);
     for (const file of files) {
-      if (!file.endsWith('.md')) continue;
+      if (!isSyncableRuleMarkdown(path.basename(file))) continue;
 
-      const sourcePath = path.join(memoryDir, file);
+      const sourcePath = path.join(rulesDir, file);
       const stat = fs.statSync(sourcePath);
       if (!stat.isFile()) continue;
 
       const targetPath = path.join(centralDir, file);
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
 
       try {
         fs.copyFileSync(sourcePath, targetPath);
@@ -323,14 +342,14 @@ export function installInstructionsCentrally(
       }
     }
   } catch (err) {
-    errors.push(`Failed to read memory directory: ${(err as Error).message}`);
+    errors.push(`Failed to read rules directory: ${(err as Error).message}`);
   }
 
   return { installed, errors };
 }
 
 /**
- * List memory files from central ~/.agents/memory/ directory.
+ * List top-level rules files from central ~/.agents/rules/ directory.
  */
 export function listCentralMemory(): string[] {
   const centralDir = getMemoryDir();
@@ -340,5 +359,5 @@ export function listCentralMemory(): string[] {
 
   return fs
     .readdirSync(centralDir)
-    .filter((f) => f.endsWith('.md'));
+    .filter((f) => isSyncableRuleMarkdown(f));
 }

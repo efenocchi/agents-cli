@@ -1,13 +1,14 @@
 /**
  * Extra DotAgent repo management.
  *
- * Registers `agents repo add|list|remove|enable|disable` which clone
+ * Registers `agents repo add|init|list|remove|enable|disable` which manage
  * additional DotAgent repos alongside the primary ~/.agents/ repo so
  * private, work, or team skills can ship separately from public ones.
  *
- * Extras live at ~/.agents/.repos/<alias>/ and are registered in
- * meta.extraRepos. Sync functions merge their resources into agent
- * version homes after the primary's (primary-wins on name collisions).
+ * Managed extras live at ~/.agents/.repos/<alias>/, while user-owned repos
+ * may live anywhere. All extras are registered in meta.extraRepos. Sync
+ * functions merge their resources into agent version homes after the
+ * primary's (primary-wins on name collisions).
  */
 import type { Command } from 'commander';
 import chalk from 'chalk';
@@ -21,9 +22,11 @@ import {
   getAgentsDir,
   getExtraRepoDir,
   readMeta,
+  resolveExtraRepoDir,
   updateMeta,
 } from '../lib/state.js';
 import { parseSource, pullRepo } from '../lib/git.js';
+import { DEFAULT_SYSTEM_REPO } from '../lib/types.js';
 import type { ExtraRepoConfig } from '../lib/types.js';
 
 const ALIAS_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
@@ -78,11 +81,15 @@ export function registerRepoCommands(program: Command): void {
     .command('repo')
     .description('Manage extra DotAgent repos alongside the primary ~/.agents/ (for private or team skills)')
     .addHelpText('after', `
-Extras live at ~/.agents/.repos/<alias>/ and can be public or private. Their skills,
-commands, and hooks merge into agent version homes after the primary repo's — so
-the primary (~/.agents/) wins on name collisions.
+Managed extras live at ~/.agents/.repos/<alias>/. User-owned repos can also live
+anywhere and be registered by path. Their skills, commands, and hooks merge into
+agent version homes after the primary repo's — so the primary (~/.agents/) wins
+on name collisions.
 
 Examples:
+  # Scaffold your own editable repo from the system template
+  agents repo init --path ~/.agents-mine --as mine
+
   # Add a private repo for work-only skills
   agents repo add gh:yourname/.agents-work
 
@@ -95,13 +102,63 @@ Examples:
   # Temporarily disable without deleting
   agents repo disable acme
 
-  # Permanently remove
+  # Unregister it
   agents repo remove acme
 `);
 
   repoCmd
+    .command('init')
+    .description('Create a user-owned repo from the system template and register it as an extra')
+    .requiredOption('--path <path>', 'Target directory for your editable repo')
+    .option('--as <alias>', 'Alias to register under (defaults to the directory name)')
+    .action(async (options: { path: string; as?: string }) => {
+      const targetDir = path.resolve(options.path.trim());
+      const alias = options.as ? options.as.trim() : (path.basename(targetDir).replace(/^\.+/, '') || 'repo');
+      if (!ALIAS_PATTERN.test(alias)) {
+        console.log(chalk.red(`Invalid alias "${alias}".`));
+        process.exitCode = 1;
+        return;
+      }
+
+      const meta = readMeta();
+      const extras: Record<string, ExtraRepoConfig> = { ...(meta.extraRepos || {}) };
+      if (extras[alias]) {
+        console.log(chalk.red(`Alias "${alias}" is already registered.`));
+        process.exitCode = 1;
+        return;
+      }
+      if (fs.existsSync(targetDir)) {
+        console.log(chalk.red(`Path already exists: ${targetDir}`));
+        process.exitCode = 1;
+        return;
+      }
+
+      const parsed = parseSource(DEFAULT_SYSTEM_REPO);
+      const spinner = ora(`Cloning ${DEFAULT_SYSTEM_REPO} into ${targetDir}...`).start();
+      try {
+        fs.mkdirSync(path.dirname(targetDir), { recursive: true });
+        await simpleGit().clone(parsed.url, targetDir);
+        await simpleGit(targetDir).removeRemote('origin');
+        const log = await simpleGit(targetDir).log({ maxCount: 1 });
+        const commit = log.latest?.hash.slice(0, 8) || 'unknown';
+        extras[alias] = { url: targetDir, path: targetDir, enabled: true };
+        updateMeta({ extraRepos: extras });
+        spinner.succeed(`Created ${targetDir} (${commit})`);
+        console.log(chalk.gray(`\nRegistered as "${alias}". Edit files there, then add your own git remote when ready.`));
+      } catch (err) {
+        spinner.fail(`Init failed: ${(err as Error).message}`);
+        try {
+          fs.rmSync(targetDir, { recursive: true, force: true });
+        } catch {
+          /* best-effort cleanup */
+        }
+        process.exitCode = 1;
+      }
+    });
+
+  repoCmd
     .command('add <source>')
-    .description('Clone a DotAgent repo into ~/.agents/.repos/<alias>/ and register it for sync')
+    .description('Register an existing local repo or clone a remote repo into ~/.agents/.repos/<alias>/')
     .option('--as <alias>', 'Override the auto-derived alias (letters, digits, _ or -)')
     .action(async (source: string, options: { as?: string }) => {
       const meta = readMeta();
@@ -131,6 +188,13 @@ Examples:
         return;
       }
 
+      if (parsed.type === 'local') {
+        extras[alias] = { url: parsed.url, path: parsed.url, enabled: true };
+        updateMeta({ extraRepos: extras });
+        console.log(chalk.green(`Registered local repo "${alias}" -> ${parsed.url}`));
+        return;
+      }
+
       ensureExtraReposDir(getAgentsDir());
       const targetDir = getExtraRepoDir(alias);
       if (fs.existsSync(targetDir)) {
@@ -142,10 +206,6 @@ Examples:
 
       const spinner = ora(`Cloning ${source}...`).start();
       try {
-        // Use git clone directly so both remote and local sources land as a
-        // real working tree under ~/.agents/.repos/<alias>/. (lib/git's
-        // cloneOrPull short-circuits for local sources, which we don't want
-        // here — we always want a clone so pulls work later.)
         fs.mkdirSync(path.dirname(targetDir), { recursive: true });
         await simpleGit().clone(parsed.url, targetDir);
         if (parsed.ref) {
@@ -178,7 +238,7 @@ Examples:
     .description('Show the primary ~/.agents/ repo and every registered extra')
     .action(async () => {
       const meta = readMeta();
-      const primaryUrl = meta.source || '(no remote configured)';
+      const primaryUrl = meta.source || DEFAULT_SYSTEM_REPO;
       console.log(chalk.bold('\nPrimary:'));
       console.log(`  ${chalk.cyan('(primary)')}  ${primaryUrl}`);
 
@@ -192,7 +252,7 @@ Examples:
 
       for (const alias of aliases) {
         const config = extras[alias];
-        const dir = getExtraRepoDir(alias);
+        const dir = resolveExtraRepoDir(alias, config);
         const onDisk = fs.existsSync(dir);
         const commit = onDisk ? await getShortCommit(dir) : null;
 
@@ -210,7 +270,7 @@ Examples:
   repoCmd
     .command('remove <alias>')
     .alias('rm')
-    .description('Unregister an extra repo and delete its local clone')
+    .description('Unregister an extra repo. Managed clones are deleted; external paths are kept.')
     .action(async (alias: string) => {
       const meta = readMeta();
       const extras: Record<string, ExtraRepoConfig> = { ...(meta.extraRepos || {}) };
@@ -220,9 +280,9 @@ Examples:
         return;
       }
 
-      const dir = getExtraRepoDir(alias);
+      const dir = resolveExtraRepoDir(alias, extras[alias]);
       try {
-        if (fs.existsSync(dir)) {
+        if (!extras[alias].path && fs.existsSync(dir)) {
           fs.rmSync(dir, { recursive: true, force: true });
         }
       } catch (err) {
@@ -269,7 +329,7 @@ Examples:
       }
 
       for (const a of targets) {
-        const dir = getExtraRepoDir(a);
+        const dir = resolveExtraRepoDir(a, extras[a]);
         if (!fs.existsSync(dir)) {
           console.log(chalk.yellow(`  ${a}: clone missing, skipping`));
           continue;

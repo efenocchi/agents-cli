@@ -9,27 +9,27 @@ How agents-cli syncs resources (commands, skills, hooks, memory, MCP, permission
 | Commands | `~/.agents/commands/*.md` | `.{agent}/commands/` | Symlink (copy+convert for Gemini) |
 | Skills | `~/.agents/skills/{name}/` | `.{agent}/skills/` | Symlink |
 | Hooks | `~/.agents/hooks/*.sh` | `.{agent}/hooks/` | Symlink |
-| Memory | `~/.agents/memory/AGENTS.md` | `.{agent}/{instructionsFile}` | Symlink |
+| Rules | `~/.agents/rules/AGENTS.md` | `.{agent}/{instructionsFile}` | Symlink |
 | MCP | `~/.agents/mcp/*.yaml` | `.{agent}/settings.json` | Merge into JSON |
 | Permissions | `~/.agents/permissions/groups/*.yaml` | `.{agent}/settings.json` | Merge into JSON |
 
 ### Extra repos
 
-Users can register additional DotAgent repos via `agents repo add <source>`. Extras clone into `~/.agents/.repos/<alias>/` and ship the same layout (`skills/`, `commands/`, `hooks/`, `memory/`). During sync, each resource lookup searches project → primary (`~/.agents/`) → extras in insertion order, and the first hit wins — so primary always overrides extras on name collisions. Registrations live in `meta.extraRepos` in `~/.agents/agents.yaml`; `~/.agents/.gitignore` auto-excludes `.repos/` so extras never leak into a primary `agents push`.
+Users can register additional DotAgent repos via `agents repo add <source>`. Extras clone into `~/.agents/.repos/<alias>/` and ship the same layout (`skills/`, `commands/`, `hooks/`, `rules/`). During sync, each resource lookup searches project → primary (`~/.agents/`) → extras in insertion order, and the first hit wins — so primary always overrides extras on name collisions. Registrations live in `meta.extraRepos` in `~/.agents/agents.yaml`; `~/.agents/.gitignore` auto-excludes `.repos/` so extras never leak into a primary `agents push`.
 
 ## Memory File Mapping
 
 Central `AGENTS.md` maps to agent-specific filenames:
 
 ```
-~/.agents/memory/AGENTS.md  ───▶  ~/.claude/CLAUDE.md
+~/.agents/rules/AGENTS.md  ───▶  ~/.claude/CLAUDE.md
                             ───▶  ~/.codex/AGENTS.md
                             ───▶  ~/.gemini/GEMINI.md
                             ───▶  ~/.cursor/.cursorrules
                             ───▶  ~/.opencode/OPENCODE.md
 ```
 
-Symlinks in `~/.agents/memory/`:
+Symlinks in `~/.agents/rules/`:
 ```
 AGENTS.md       # Real file (source of truth)
 CLAUDE.md -> AGENTS.md

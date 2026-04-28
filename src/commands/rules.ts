@@ -3,7 +3,7 @@
  *
  * Implements `agents rules` -- list, add, view, and remove markdown rule files
  * (AGENTS.md, CLAUDE.md, .cursorrules, etc.) that guide agent behavior across
- * sessions. Central storage lives in ~/.agents/memory/ and rules are synced
+ * sessions. Central storage lives in ~/.agents/rules/ and rules are synced
  * to individual version homes.
  */
 import type { Command } from 'commander';
@@ -237,11 +237,11 @@ When to use:
     .command('add [source]')
     .description('Install rule files from a source (GitHub, local path) or pick from central storage')
     .option('-a, --agents <list>', 'Targets: claude, codex@0.116.0, or gemini@default')
-    .option('--names <list>', 'Rule file names from ~/.agents/memory/ (comma-separated)')
+    .option('--names <list>', 'Rule file names from ~/.agents/rules/ (comma-separated)')
     .option('-y, --yes', 'Skip all prompts and use defaults')
     .addHelpText('after', `
 Examples:
-  # Interactive: pick from ~/.agents/memory/ and select agents
+  # Interactive: pick from ~/.agents/rules/ and select agents
   agents rules add
 
   # Install AGENTS.md to codex version 0.116.0
@@ -260,7 +260,7 @@ Examples:
         if (!source) {
           const centralRules = listCentralMemory();
           if (centralRules.length === 0) {
-            console.log(chalk.yellow('No rule files in ~/.agents/memory/'));
+            console.log(chalk.yellow('No rule files in ~/.agents/rules/'));
             console.log(chalk.gray('\nTo add rule files from a repo:'));
             console.log(chalk.cyan('  agents rules add gh:user/repo'));
             return;
@@ -277,7 +277,7 @@ Examples:
             ruleNames = requestedNames;
           } else {
             if (!isInteractiveTerminal()) {
-              requireInteractiveSelection('Selecting rule files from ~/.agents/memory/', [
+              requireInteractiveSelection('Selecting rule files from ~/.agents/rules/', [
                 'agents rules add --names AGENTS.md --agents codex',
                 'agents rules add gh:team/rules --agents codex',
               ]);
@@ -358,8 +358,10 @@ Examples:
             installSpinner.start();
           }
 
-          installSpinner.succeed(`Installed ${centralResult.installed.length} rule files to ~/.agents/memory/`);
-          ruleNames = centralResult.installed.map((p) => path.basename(p));
+          installSpinner.succeed(`Installed ${centralResult.installed.length} rule file(s) to ~/.agents/rules/`);
+          ruleNames = centralResult.installed
+            .filter((p) => path.dirname(p) === '.')
+            .map((p) => path.basename(p));
         }
 
         let selectedAgents: AgentId[];

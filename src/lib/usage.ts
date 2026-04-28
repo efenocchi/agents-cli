@@ -16,9 +16,9 @@ import { promisify } from 'util';
 import chalk from 'chalk';
 
 import type { AccountInfo } from './agents.js';
+import { walkForFiles } from './fs-walk.js';
 import { getAgentsDir } from './state.js';
 import type { AgentId } from './types.js';
-import { walkForFiles } from './session/discover.js';
 
 const execFileAsync = promisify(execFile);
 

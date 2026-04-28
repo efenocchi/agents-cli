@@ -19,7 +19,8 @@ const META_FILE = path.join(AGENTS_DIR, 'agents.yaml');
 const COMMANDS_DIR = path.join(AGENTS_DIR, 'commands');
 const HOOKS_DIR = path.join(AGENTS_DIR, 'hooks');
 const SKILLS_DIR = path.join(AGENTS_DIR, 'skills');
-const MEMORY_DIR = path.join(AGENTS_DIR, 'memory');
+const RULES_DIR = path.join(AGENTS_DIR, 'rules');
+const LEGACY_MEMORY_DIR = path.join(AGENTS_DIR, 'memory');
 const INSTRUCTIONS_FILE = path.join(AGENTS_DIR, 'instructions.md');
 const PROMPTCUTS_FILE = path.join(AGENTS_DIR, 'promptcuts.yaml');
 const MCP_CONFIG_FILE = path.join(AGENTS_DIR, 'mcp.json');
@@ -41,6 +42,21 @@ const META_HEADER = `# agents-cli metadata
 # Auto-generated - do not edit manually
 # https://github.com/phnx-labs/agents-cli
 
+`;
+
+const RULES_README = `# Rules
+
+This directory stores the persistent instruction files that agents-cli syncs into each agent runtime.
+
+Files and folders:
+- AGENTS.md: Canonical root rules file. Synced as CLAUDE.md, GEMINI.md, .cursorrules, or AGENTS.md depending on the agent.
+- presets/: Optional bundles of reusable rule fragments.
+- rules/: Optional reusable rule fragments imported from AGENTS.md or a preset.
+
+How it works:
+- Keep AGENTS.md if you want one flat instruction file.
+- Use @presets/proactive.md or @rules/some-rule.md if you want modular composition.
+- Agents that do not support native @imports get a compiled copy at sync time.
 `;
 
 /** Root of the agents-cli data directory (~/.agents/). */
@@ -157,6 +173,14 @@ export function getExtraRepoDir(alias: string): string {
   return path.join(EXTRA_REPOS_DIR, alias);
 }
 
+/** Resolve the on-disk path for an extra repo, whether managed or user-owned. */
+export function resolveExtraRepoDir(alias: string, config?: { path?: string }): string {
+  if (config?.path) {
+    return path.resolve(config.path);
+  }
+  return getExtraRepoDir(alias);
+}
+
 /**
  * Return enabled extra repos that exist on disk, in insertion order.
  * Primary (~/.agents/) is intentionally excluded — callers decide order.
@@ -167,7 +191,7 @@ export function getEnabledExtraRepos(): Array<{ alias: string; dir: string; url:
   const out: Array<{ alias: string; dir: string; url: string }> = [];
   for (const [alias, config] of Object.entries(extras)) {
     if (!config.enabled) continue;
-    const dir = path.join(EXTRA_REPOS_DIR, alias);
+    const dir = resolveExtraRepoDir(alias, config);
     if (!fs.existsSync(dir)) continue;
     out.push({ alias, dir, url: config.url });
   }
@@ -189,9 +213,27 @@ export function getSkillsDir(): string {
   return SKILLS_DIR;
 }
 
-/** Path to memory/rules files (~/.agents/memory/). */
+/** Path to the canonical rules directory (~/.agents/rules/). */
+export function getRulesDir(): string {
+  return RULES_DIR;
+}
+
+/** Back-compat export for older internals; now resolves to ~/.agents/rules/. */
 export function getMemoryDir(): string {
-  return MEMORY_DIR;
+  return RULES_DIR;
+}
+
+function ensureRulesReadme(): void {
+  const readmePath = path.join(RULES_DIR, 'README.md');
+  if (!fs.existsSync(readmePath)) {
+    fs.writeFileSync(readmePath, RULES_README, 'utf-8');
+  }
+}
+
+function migrateLegacyRulesDir(): void {
+  if (fs.existsSync(RULES_DIR)) return;
+  if (!fs.existsSync(LEGACY_MEMORY_DIR)) return;
+  fs.renameSync(LEGACY_MEMORY_DIR, RULES_DIR);
 }
 
 /** Path to the global instructions file (~/.agents/instructions.md). */
@@ -243,8 +285,9 @@ export function ensureAgentsDir(): void {
   if (!fs.existsSync(SKILLS_DIR)) {
     fs.mkdirSync(SKILLS_DIR, opts);
   }
-  if (!fs.existsSync(MEMORY_DIR)) {
-    fs.mkdirSync(MEMORY_DIR, opts);
+  migrateLegacyRulesDir();
+  if (!fs.existsSync(RULES_DIR)) {
+    fs.mkdirSync(RULES_DIR, opts);
   }
   if (!fs.existsSync(PERMISSIONS_DIR)) {
     fs.mkdirSync(PERMISSIONS_DIR, opts);
@@ -258,6 +301,7 @@ export function ensureAgentsDir(): void {
   if (!fs.existsSync(EXTRA_REPOS_DIR)) {
     fs.mkdirSync(EXTRA_REPOS_DIR, opts);
   }
+  ensureRulesReadme();
   try { fs.chmodSync(AGENTS_DIR, 0o700); } catch {}
 }
 

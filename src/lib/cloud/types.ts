@@ -9,11 +9,18 @@
 /** Identifier for a supported cloud dispatch backend. */
 export type CloudProviderId = 'rush' | 'codex' | 'factory';
 
-/** Lifecycle state of a cloud-dispatched task. */
+/**
+ * Lifecycle state of a cloud-dispatched task.
+ *
+ * `idle` represents a long-lived session that has stopped between turns and
+ * can be resumed via `message()`. Distinct from the terminal `completed |
+ * failed | cancelled` states, which cannot transition back to `running`.
+ */
 export type CloudTaskStatus =
   | 'queued'
   | 'allocating'
   | 'running'
+  | 'idle'
   | 'input_required'
   | 'completed'
   | 'failed'
@@ -44,12 +51,40 @@ export interface CloudTask {
   summary?: string;
 }
 
-/** A single event emitted by a running cloud task (status change, output line, completion, or error). */
-export interface CloudEvent {
-  type: 'status' | 'output' | 'done' | 'error';
-  data: string;
-  timestamp?: string;
+/**
+ * Single event emitted by a running cloud task.
+ *
+ * Discriminated union mirroring the local `SessionEvent` taxonomy so cloud
+ * streams can be rendered with the same UI primitives as local sessions. The
+ * `unknown` variant catches event names the provider emits that the client
+ * doesn't recognize — surfacing them rather than silently dropping is the
+ * point.
+ */
+export type CloudEvent =
+  | { type: 'text'; content: string; timestamp?: string }
+  | { type: 'thinking'; content: string; timestamp?: string }
+  | { type: 'tool_use'; tool: string; input: unknown; timestamp?: string }
+  | { type: 'tool_result'; tool: string; output: unknown; timestamp?: string }
+  | { type: 'status'; status: CloudTaskStatus; timestamp?: string }
+  | { type: 'usage'; model?: string; inputTokens?: number; outputTokens?: number; timestamp?: string }
+  | { type: 'done'; status?: CloudTaskStatus; prUrl?: string; summary?: string; timestamp?: string }
+  | { type: 'error'; message: string; timestamp?: string }
+  | { type: 'unknown'; name: string; data: string; timestamp?: string };
+
+/** Reference to a skill that should ride along with a cloud dispatch. */
+export interface SkillRef {
+  id: string;
+  version?: string;
 }
+
+/** A vision attachment carried along with a prompt (base64-encoded image bytes). */
+export interface ImageAttachment {
+  data: string;
+  mimeType: 'image/png' | 'image/jpeg' | 'image/webp';
+}
+
+/** Maximum images allowed per dispatch (matches Cursor Background Agents). */
+export const MAX_IMAGES_PER_DISPATCH = 5;
 
 /** Parameters for dispatching a new cloud task. */
 export interface DispatchOptions {
@@ -72,8 +107,19 @@ export interface DispatchOptions {
   branch?: string;
   timeout?: string;
   model?: string;
+  /**
+   * Skills to ship with the dispatch. Providers that support skills mount
+   * them in the pod's skills directory before the agent runs. Providers
+   * without skill support reject via `capabilities().skills === false`.
+   */
+  skills?: SkillRef[];
+  /**
+   * Image attachments for vision-enabled dispatch (e.g., "fix this UI bug,
+   * here's the screenshot"). Capped at MAX_IMAGES_PER_DISPATCH.
+   */
+  images?: ImageAttachment[];
   /** Provider-specific options (e.g., codex env ID, factory computer name). */
-  providerOptions?: Record<string, string>;
+  providerOptions?: Record<string, unknown>;
 }
 
 /**
@@ -99,17 +145,39 @@ export function resolveDispatchRepos(options: DispatchOptions): string[] {
 }
 
 /**
+ * What a provider can actually do. Replaces the single-bool `supports()` so
+ * callers can ask "does this provider support cancel?" without trying and
+ * catching. The CLI gates feature-specific calls on these flags and surfaces
+ * a typed error instead of letting throws bubble.
+ */
+export interface ProviderCapabilities {
+  /** Configured + reachable (auth present, binary installed, etc.). */
+  available: boolean;
+  dispatch: boolean;
+  status: boolean;
+  list: boolean;
+  stream: boolean;
+  cancel: boolean;
+  message: boolean;
+  multiRepo: boolean;
+  skills: boolean;
+  images: boolean;
+}
+
+/**
  * Contract that every cloud backend must implement.
  *
  * Each provider translates between the unified dispatch interface and its
  * backend-specific API (Rush Factory Floor, Codex Cloud CLI, Droid daemon).
+ *
+ * `message()` may transition a task from `idle` back to `running`.
  */
 export interface CloudProvider {
   id: CloudProviderId;
   name: string;
 
-  /** Whether the provider is configured and can handle this dispatch. */
-  supports(options: DispatchOptions): boolean;
+  /** Static capability map for this provider. Read before calling feature methods. */
+  capabilities(): ProviderCapabilities;
 
   dispatch(options: DispatchOptions): Promise<CloudTask>;
   status(taskId: string): Promise<CloudTask>;
@@ -120,7 +188,7 @@ export interface CloudProvider {
 
   cancel(taskId: string): Promise<void>;
 
-  /** Send a follow-up message to a finished/needs_review task. */
+  /** Send a follow-up message to a finished/idle/needs_review task. */
   message(taskId: string, content: string): Promise<void>;
 }
 

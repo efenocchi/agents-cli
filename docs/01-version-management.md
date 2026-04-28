@@ -15,7 +15,7 @@ How agents-cli installs, switches, and isolates multiple versions of agent CLIs.
           .claude/                      # Isolated config for this version
             commands/  -> ~/.agents/commands/   (symlink)
             skills/    -> ~/.agents/skills/     (symlink)
-            CLAUDE.md  -> ~/.agents/memory/AGENTS.md (symlink)
+            CLAUDE.md  -> ~/.agents/rules/AGENTS.md (symlink)
       2.0.70/
         node_modules/.bin/claude
         home/.claude/
@@ -102,7 +102,7 @@ Key behaviors:
 ```
 ~/.agents/commands/foo.md  ──symlink──▶  ~/.agents/versions/claude/2.0.65/home/.claude/commands/foo.md
 ~/.agents/skills/bar/      ──symlink──▶  ~/.agents/versions/claude/2.0.65/home/.claude/skills/bar/
-~/.agents/memory/AGENTS.md ──symlink──▶  ~/.agents/versions/claude/2.0.65/home/.claude/CLAUDE.md
+~/.agents/rules/AGENTS.md ──symlink──▶  ~/.agents/versions/claude/2.0.65/home/.claude/CLAUDE.md
 ```
 
 Special case: Gemini requires TOML format, so commands are converted (not symlinked).
