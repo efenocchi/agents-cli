@@ -19,8 +19,6 @@ import {
 } from '../lib/teams/agents.js';
 import { resolveProvider } from '../lib/cloud/registry.js';
 import type { CloudProviderId, DispatchOptions } from '../lib/cloud/types.js';
-import { resolveLedger, syncTeammate } from '../lib/ledger/index.js';
-import { maybeFileBugfix } from '../lib/teams/oracle.js';
 import { runSupervisor } from '../lib/teams/supervisor.js';
 import {
   handleSpawn,
@@ -145,14 +143,9 @@ function shortId(id: string): string {
 }
 
 /**
- * Preamble injected into every factory worker's prompt. Tells the worker:
- *  - which team + teammate name + task-type it is
- *  - the 4 Ledger MCP tools it has access to
- *  - how to file more tasks via `agents teams add`
- *
- * The actual how-to lives in the /factory-worker skill; this preamble just
- * summarises and points at it so workers get the dynamic-DAG pattern even
- * when the spawning agent forgets to mention it.
+ * Preamble injected into every factory worker's prompt. Tells the worker
+ * which team + teammate name + task-type it is, and how to file new tasks.
+ * The actual how-to lives in the /factory-worker skill.
  */
 function factoryWorkerPreamble(
   team: string,
@@ -166,36 +159,17 @@ function factoryWorkerPreamble(
     `FACTORY WORKER — team="${team}", name="${n}", task_type="${taskType}", after=${deps}`,
     `You are a teammate in a Software Factory. Read the /factory-worker skill for the full pattern.`,
     `Key rules:`,
-    ` - Other teammates may be running now. Coordinate via git, tests, and the Team Ledger (never peer-to-peer).`,
-    ` - Read dependency outputs via MCP: LedgerRead(team_id="${team}", task_id=<dep-agent-id>).`,
+    ` - Other teammates may be running now. Coordinate via git and tests only — no direct peer communication.`,
     ` - If you discover work beyond your task, file a new teammate via Bash:`,
     `     agents teams add "${team}" claude "<ask>" --name <slug> --task-type <implement|test|review|bugfix|docs> [--after <dep>]`,
     `   A background supervisor picks up new tasks every wave.`,
-    ` - Before exiting, call LedgerNote(team_id="${team}", task_id=<your-agent-id>, teammate="${n}", text="...") with what you tried, what failed, what worked.`,
-    ` - test-type teammates: print "TESTS: N passed, M failed" as your last line. Failed tests auto-file a bugfix.`,
     ``,
     `YOUR TASK:`,
   ].join('\n');
 }
 
-/**
- * Build an AgentManager with the Ledger sync hook pre-wired. Every `teams`
- * command call path that touches status goes through this so completions
- * automatically land in the Ledger.
- */
 function mkManager(): AgentManager {
-  const mgr = new AgentManager();
-  const ledger = resolveLedger();
-  mgr.setCompletionHook(async (agent) => {
-    // 1. Push teammate outputs to the Ledger so other teammates can read
-    //    them via MCP tools.
-    const snap = await agent.toSnapshot();
-    await syncTeammate(snap, ledger);
-    // 2. Run the test-oracle: failed test-type teammates auto-file a
-    //    bugfix teammate.
-    await maybeFileBugfix(agent, mgr);
-  });
-  return mgr;
+  return new AgentManager();
 }
 
 /**

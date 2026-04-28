@@ -51,23 +51,16 @@ describe('getProjectVersion', () => {
     expect(getProjectVersion('claude', tmpDir)).toBeNull();
   });
 
-  it('ignores ~/.agents-system/agents.yaml (user file) when walking up', () => {
-    // Simulate the user agents.yaml path being encountered during the walk.
-    // We cannot mutate os.homedir(), but we CAN verify that passing the
-    // actual user file path returns null (no version extracted from it).
-    const userAgentsYaml = path.join(os.homedir(), '.agents-system', 'agents.yaml');
-    // If the file actually exists on this machine, starting from its directory
-    // must NOT return its contents as a project version.
-    if (fs.existsSync(userAgentsYaml)) {
-      const result = getProjectVersion('claude', path.dirname(userAgentsYaml));
-      // The function should skip ~/.agents-system/agents.yaml itself
-      // so result is null (no sibling agents.yaml) or a version from a
-      // higher-up project agents.yaml — either way it must not come from the
-      // user file at ~/.agents-system/agents.yaml.
-      // We just confirm no error is thrown and type is correct.
+  it('ignores ~/.agents-system/ root when walking up', () => {
+    // getProjectAgentsDir must skip both the system root (~/.agents-system/) and the
+    // user root (~/.agents/) so they are never returned as project-scoped dirs.
+    // We cannot mutate os.homedir(), but we CAN verify that starting the search
+    // from inside ~/.agents-system/ returns null (no project version).
+    const systemAgentsYaml = path.join(os.homedir(), '.agents-system', 'agents.yaml');
+    if (fs.existsSync(systemAgentsYaml)) {
+      const result = getProjectVersion('claude', path.dirname(systemAgentsYaml));
       expect(typeof result === 'string' || result === null).toBe(true);
     } else {
-      // If the file doesn't exist, the test is vacuously satisfied.
       expect(true).toBe(true);
     }
   });

@@ -15,7 +15,7 @@ import * as TOML from 'smol-toml';
 import { execFileSync } from 'child_process';
 import * as os from 'os';
 import type { AgentId } from './types.js';
-import { getMcpDir, getProjectAgentsDir, getVersionsDir } from './state.js';
+import { getMcpDir, getUserMcpDir, getProjectAgentsDir, getVersionsDir } from './state.js';
 import { MCP_CAPABLE_AGENTS, AGENTS } from './agents.js';
 
 /**
@@ -83,6 +83,8 @@ export function listMcpServerConfigs(cwd: string = process.cwd()): InstalledMcpS
   if (projectAgentsDir) {
     dirs.push({ scope: 'project', dir: path.join(projectAgentsDir, 'mcp') });
   }
+  // User dir first (wins on name collision), then system
+  dirs.push({ scope: 'user', dir: getUserMcpDir() });
   dirs.push({ scope: 'user', dir: getMcpDir() });
 
   const results = new Map<string, InstalledMcpServer>();
@@ -361,7 +363,7 @@ export function installMcpServers(
  * Write an MCP server config to ~/.agents/mcp/.
  */
 export function writeMcpServerConfig(config: McpYamlConfig): string {
-  const mcpDir = getMcpDir();
+  const mcpDir = getUserMcpDir();
   fs.mkdirSync(mcpDir, { recursive: true });
 
   const fileName = `${config.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}.yaml`;

@@ -13,17 +13,18 @@ import * as os from 'os';
 import * as yaml from 'yaml';
 import type { AgentId, SkillMetadata, InstalledSkill } from './types.js';
 import { AGENTS, SKILLS_CAPABLE_AGENTS, ensureSkillsDir } from './agents.js';
-import { getAgentsDir, getProjectAgentsDir, getEnabledExtraRepos } from './state.js';
+import { getAgentsDir, getUserSkillsDir, getSkillsDir as getSystemSkillsDir, getProjectAgentsDir, getEnabledExtraRepos } from './state.js';
 import { getEffectiveHome, getVersionHomePath, listInstalledVersions } from './versions.js';
 
 const HOME = os.homedir();
 
+/** User-scoped skills dir (~/.agents/skills/). Used for installs. */
 export function getSkillsDir(): string {
-  return path.join(getAgentsDir(), 'skills');
+  return getUserSkillsDir();
 }
 
 export function ensureCentralSkillsDir(): void {
-  const dir = getSkillsDir();
+  const dir = getUserSkillsDir();
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -398,27 +399,31 @@ export function skillContentMatches(
 }
 
 /**
- * List skill names in the central ~/.agents/skills/ directory.
+ * List skill names from user (~/.agents/skills/) and system (~/.agents-system/skills/) dirs.
+ * User dir takes priority; deduplication preserves first occurrence.
  */
 export function listCentralSkills(): string[] {
-  const dir = getSkillsDir();
-  if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir, { withFileTypes: true })
-    .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
-    .filter((e) => fs.existsSync(path.join(dir, e.name, 'SKILL.md')))
-    .map((e) => e.name)
-    .sort();
+  const seen = new Set<string>();
+  for (const dir of [getUserSkillsDir(), getSystemSkillsDir()]) {
+    if (!fs.existsSync(dir)) continue;
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (!e.isDirectory() || e.name.startsWith('.')) continue;
+      if (!fs.existsSync(path.join(dir, e.name, 'SKILL.md'))) continue;
+      seen.add(e.name);
+    }
+  }
+  return Array.from(seen).sort();
 }
 
 /**
- * Resolve a skill name to its source directory, searching the primary
- * ~/.agents/skills/ first and then each enabled extra repo. Returns null if
- * no source has a SKILL.md for this name. Primary wins on collision, matching
- * the resolution order used by syncResourcesToVersion in versions.ts.
+ * Resolve a skill name to its source directory. Searches user dir first,
+ * then system dir, then extra repos. Returns null if no source has a SKILL.md.
  */
 export function resolveSkillSourcePath(skillName: string): string | null {
-  const primary = path.join(getSkillsDir(), skillName);
-  if (fs.existsSync(path.join(primary, 'SKILL.md'))) return primary;
+  for (const dir of [getUserSkillsDir(), getSystemSkillsDir()]) {
+    const candidate = path.join(dir, skillName);
+    if (fs.existsSync(path.join(candidate, 'SKILL.md'))) return candidate;
+  }
   for (const extra of getEnabledExtraRepos()) {
     const candidate = path.join(extra.dir, 'skills', skillName);
     if (fs.existsSync(path.join(candidate, 'SKILL.md'))) return candidate;

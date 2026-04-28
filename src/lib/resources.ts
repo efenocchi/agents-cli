@@ -58,10 +58,10 @@ export function resolveResource(
   const extraRepos = getEnabledExtraRepos();
 
   const candidates: Array<[string, 'project' | 'user' | 'system']> = [
-    ...(projectDir ? [[path.join(projectDir, kind), 'project' as const]] : []),
+    ...(projectDir ? [[path.join(projectDir, kind), 'project'] as [string, 'project']] : []),
     [path.join(getUserAgentsDir(), kind), 'user'],
     [path.join(getSystemAgentsDir(), kind), 'system'],
-    ...extraRepos.map((e) => [path.join(e.dir, kind), 'system' as const]),
+    ...extraRepos.map((e): [string, 'system'] => [path.join(e.dir, kind), 'system']),
   ];
 
   for (const [dir, source] of candidates) {
@@ -100,10 +100,10 @@ export function listResources(
   const extraRepos = getEnabledExtraRepos();
 
   const roots: Array<[string, 'project' | 'user' | 'system']> = [
-    ...(projectDir ? [[path.join(projectDir, kind), 'project' as const]] : []),
+    ...(projectDir ? [[path.join(projectDir, kind), 'project'] as [string, 'project']] : []),
     [path.join(getUserAgentsDir(), kind), 'user'],
     [path.join(getSystemAgentsDir(), kind), 'system'],
-    ...extraRepos.map((e) => [path.join(e.dir, kind), 'system' as const]),
+    ...extraRepos.map((e): [string, 'system'] => [path.join(e.dir, kind), 'system']),
   ];
 
   for (const [dir, source] of roots) {
