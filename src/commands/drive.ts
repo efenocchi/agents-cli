@@ -49,7 +49,7 @@ or back up sessions to a server you control.
     .addHelpText('after', `
 Examples:
   # Set remote to a server
-  agents drive remote muqsit@spark
+  agents drive remote user@server
 
   # Set remote to a local machine on your network
   agents drive remote macbook.local
