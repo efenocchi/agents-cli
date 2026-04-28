@@ -39,11 +39,13 @@ import {
   ensureAgentsDir,
   getAgentsDir,
   getExtraRepoDir,
+  getSystemAgentsDir,
+  getUserAgentsDir,
   readMeta,
   resolveExtraRepoDir,
   updateMeta,
 } from '../lib/state.js';
-import { parseSource, pullRepo } from '../lib/git.js';
+import { parseSource, pullRepo, commitAndPush, isGitRepo, isSystemRepoOrigin } from '../lib/git.js';
 import { DEFAULT_SYSTEM_REPO } from '../lib/types.js';
 import type { ExtraRepoConfig } from '../lib/types.js';
 
@@ -334,39 +336,142 @@ Examples:
 
   repoCmd
     .command('pull [alias]')
-    .description('Pull updates for a single extra repo, or all enabled extras when no alias is given')
+    .description('Pull updates. Aliases: "system" (~/.agents-system/), "user" (~/.agents/), or any registered extra. No arg pulls all.')
     .action(async (alias: string | undefined) => {
-      const meta = readMeta();
-      const extras = meta.extraRepos || {};
-      const targets = alias
-        ? (extras[alias] ? [alias] : [])
-        : Object.keys(extras).filter((a) => extras[a].enabled);
-
-      if (alias && targets.length === 0) {
-        console.log(chalk.red(`No extra repo registered as "${alias}".`));
+      const targets = collectRepoTargets(alias);
+      if (!targets) {
         process.exitCode = 1;
         return;
       }
       if (targets.length === 0) {
-        console.log(chalk.gray('No enabled extras to pull.'));
+        console.log(chalk.gray('No repos to pull.'));
         return;
       }
-
-      for (const a of targets) {
-        const dir = resolveExtraRepoDir(a, extras[a]);
-        if (!fs.existsSync(dir)) {
-          console.log(chalk.yellow(`  ${a}: clone missing, skipping`));
+      for (const t of targets) {
+        if (!fs.existsSync(t.dir) || !isGitRepo(t.dir)) {
+          console.log(chalk.yellow(`  ${t.alias}: not a git repo, skipping`));
           continue;
         }
-        const spinner = ora(`Pulling ${a}...`).start();
-        const result = await pullRepo(dir);
+        const spinner = ora(`Pulling ${t.alias}...`).start();
+        const result = await pullRepo(t.dir);
         if (result.success) {
-          spinner.succeed(`${a} -> ${result.commit}`);
+          spinner.succeed(`${t.alias} -> ${result.commit}`);
         } else {
-          spinner.fail(`${a}: ${result.error}`);
+          spinner.fail(`${t.alias}: ${result.error}`);
         }
       }
     });
+
+  repoCmd
+    .command('push [alias]')
+    .description('Commit and push the user repo or a user-owned extra. Refuses to push the system repo.')
+    .option('-m, --message <msg>', 'Commit message', 'Update via agents repo push')
+    .action(async (alias: string | undefined, options: { message: string }) => {
+      const targets = collectRepoTargets(alias);
+      if (!targets) {
+        process.exitCode = 1;
+        return;
+      }
+      // Drop system-repo targets — read-only by design.
+      const pushable: RepoTarget[] = [];
+      for (const t of targets) {
+        if (t.alias === 'system') {
+          console.log(chalk.yellow('Skipping system repo (read-only — managed via the agents-cli upstream).'));
+          continue;
+        }
+        if (!fs.existsSync(t.dir) || !isGitRepo(t.dir)) {
+          console.log(chalk.yellow(`  ${t.alias}: not a git repo, skipping`));
+          continue;
+        }
+        // Defense in depth: refuse if origin happens to be the system upstream.
+        if (await isSystemRepoOrigin(t.dir)) {
+          console.log(chalk.red(`  ${t.alias}: origin tracks the system repo — refusing to push.`));
+          continue;
+        }
+        pushable.push(t);
+      }
+      if (pushable.length === 0) {
+        console.log(chalk.gray('No pushable repos.'));
+        return;
+      }
+      for (const t of pushable) {
+        const spinner = ora(`Pushing ${t.alias}...`).start();
+        const result = await commitAndPush(t.dir, options.message);
+        if (result.success) {
+          spinner.succeed(`${t.alias} pushed`);
+        } else {
+          spinner.fail(`${t.alias}: ${result.error}`);
+        }
+      }
+    });
+
+  repoCmd
+    .command('status')
+    .description('Per-repo summary: branch, ahead/behind upstream, working-tree state')
+    .action(async () => {
+      const targets = collectRepoTargets(undefined) || [];
+      if (targets.length === 0) {
+        console.log(chalk.gray('No git repos found.'));
+        return;
+      }
+      console.log('');
+      for (const t of targets) {
+        if (!fs.existsSync(t.dir)) {
+          console.log(`  ${chalk.cyan(t.alias.padEnd(12))} ${chalk.red('missing')} ${chalk.gray(t.dir)}`);
+          continue;
+        }
+        if (!isGitRepo(t.dir)) {
+          console.log(`  ${chalk.cyan(t.alias.padEnd(12))} ${chalk.gray('not a git repo')} ${chalk.gray(t.dir)}`);
+          continue;
+        }
+        try {
+          const git = simpleGit(t.dir);
+          const status = await git.status();
+          const branch = status.tracking || status.current || '(detached)';
+          const aheadBehind =
+            (status.ahead ?? 0) === 0 && (status.behind ?? 0) === 0
+              ? chalk.green('up to date')
+              : chalk.yellow(`+${status.ahead ?? 0} -${status.behind ?? 0}`);
+          const tree = status.isClean() ? chalk.green('clean') : chalk.yellow('dirty');
+          console.log(`  ${chalk.cyan(t.alias.padEnd(12))} ${branch.padEnd(28)}  ${aheadBehind}  ${tree}`);
+        } catch (err) {
+          console.log(`  ${chalk.cyan(t.alias.padEnd(12))} ${chalk.red('error')} ${(err as Error).message}`);
+        }
+      }
+      console.log('');
+    });
+}
+
+interface RepoTarget {
+  alias: string;
+  dir: string;
+}
+
+/**
+ * Resolve an alias (or undefined for "all") to a list of repo targets.
+ * Returns null when a named alias isn't found (callers should set exit code).
+ */
+function collectRepoTargets(alias: string | undefined): RepoTarget[] | null {
+  const meta = readMeta();
+  const extras = meta.extraRepos || {};
+
+  const all: RepoTarget[] = [
+    { alias: 'system', dir: getSystemAgentsDir() },
+    { alias: 'user', dir: getUserAgentsDir() },
+    ...Object.keys(extras)
+      .filter((a) => extras[a].enabled)
+      .map((a) => ({ alias: a, dir: resolveExtraRepoDir(a, extras[a]) })),
+  ];
+
+  if (!alias) return all;
+  const found = all.find((t) => t.alias === alias) || (extras[alias]
+    ? { alias, dir: resolveExtraRepoDir(alias, extras[alias]) }
+    : null);
+  if (!found) {
+    console.log(chalk.red(`Unknown repo "${alias}". Use "system", "user", or a registered extra alias.`));
+    return null;
+  }
+  return [found];
 }
 
 async function toggle(alias: string, enabled: boolean): Promise<void> {

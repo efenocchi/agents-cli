@@ -57,9 +57,28 @@ function migrateSystemConfigJson(): void {
   } catch { /* best-effort */ }
 }
 
+/**
+ * Move promptcuts.yaml from each repo root into hooks/ subdir.
+ *   ~/.agents-system/promptcuts.yaml -> ~/.agents-system/hooks/promptcuts.yaml
+ *   ~/.agents/promptcuts.yaml        -> ~/.agents/hooks/promptcuts.yaml
+ * Idempotent: skips if dest already exists or src absent.
+ */
+function migratePromptcutsIntoHooks(): void {
+  for (const root of [SYSTEM_DIR, USER_DIR]) {
+    const src = path.join(root, 'promptcuts.yaml');
+    const dest = path.join(root, 'hooks', 'promptcuts.yaml');
+    if (fs.existsSync(dest) || !fs.existsSync(src)) continue;
+    try {
+      fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
+      fs.renameSync(src, dest);
+    } catch { /* best-effort */ }
+  }
+}
+
 /** Run all idempotent migrations. Safe to call multiple times. */
 export function runMigration(): void {
   migrateAgentsYaml();
   deleteSystemPromptsJson();
   migrateSystemConfigJson();
+  migratePromptcutsIntoHooks();
 }

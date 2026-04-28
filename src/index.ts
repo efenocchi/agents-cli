@@ -506,6 +506,14 @@ program.on('command:*', (operands) => {
 // Run update check on EVERY invocation before parsing
 await checkForUpdates();
 
+// Surface any "behind upstream" notices from the previous detached sync, then
+// fire-and-forget the next background sync. System repo gets a real fast-forward
+// pull (read-only locally, safe). User repo and extras get fetch-only + a
+// status marker that we'll print on the *next* invocation.
+const { spawnDetachedSync, printPendingUpdateNotices } = await import('./lib/auto-pull.js');
+printPendingUpdateNotices();
+spawnDetachedSync();
+
 // First-run experience: no args + no config yet + TTY -> launch interactive init.
 // Skipped when stdin/stdout isn't a terminal (CI, pipes) or when user passes any args.
 const passedArgs = process.argv.slice(2);

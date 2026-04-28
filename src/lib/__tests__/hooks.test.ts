@@ -176,7 +176,11 @@ describe('registerHooksToSettings - Codex', () => {
     expect(group.hooks[0]).toEqual(userHook);
   });
 
-  it('skips hooks agent-filtered to other agents', () => {
+  it('ignores the deprecated agents: field — capability table decides registration', () => {
+    // The `agents:` field on a hook entry is deprecated. Registration is
+    // driven by the agent capability table now. So a hook authored as
+    // `agents: ['claude']` still registers on codex if codex supports the
+    // declared event — the field is parsed for back-compat but ignored.
     const versionHome = makeVersionHome();
     makeScript('claude-only.sh');
 
@@ -190,8 +194,8 @@ describe('registerHooksToSettings - Codex', () => {
 
     const result = registerHooksToSettings('codex', versionHome, manifest, agentsDir);
 
-    expect(result.registered).toHaveLength(0);
-    expect(fs.existsSync(path.join(versionHome, '.codex', 'hooks.json'))).toBe(false);
+    expect(result.registered).toHaveLength(1);
+    expect(fs.existsSync(path.join(versionHome, '.codex', 'hooks.json'))).toBe(true);
   });
 
   it('UserPromptSubmit group has no matcher even when manifest defines one', () => {

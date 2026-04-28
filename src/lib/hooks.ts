@@ -601,22 +601,35 @@ export function listCentralHooks(): HookEntry[] {
 }
 
 /**
- * Parse ~/.agents/hooks.yaml manifest.
- * Returns hook definitions with lifecycle event metadata.
+ * Parse hooks.yaml manifests. Reads BOTH system (~/.agents-system/hooks.yaml)
+ * and user (~/.agents/hooks.yaml), merging with user-wins-on-key-collision
+ * precedence. A user entry with `enabled: false` disables the system-shipped
+ * hook of the same name without forking the system file.
+ *
+ * Hooks marked `enabled: false` are dropped from the returned map.
  */
 export function parseHookManifest(): Record<string, ManifestHook> {
-  for (const dir of [getUserAgentsDir(), getAgentsDir()]) {
+  const merged: Record<string, ManifestHook> = {};
+  // System first (lower precedence), user second (overrides).
+  for (const dir of [getAgentsDir(), getUserAgentsDir()]) {
     const manifestPath = path.join(dir, 'hooks.yaml');
     if (!fs.existsSync(manifestPath)) continue;
     try {
       const content = fs.readFileSync(manifestPath, 'utf-8');
       const parsed = yaml.parse(content) as Record<string, ManifestHook> | null;
-      if (parsed) return parsed;
+      if (!parsed) continue;
+      for (const [name, def] of Object.entries(parsed)) {
+        merged[name] = def;
+      }
     } catch {
-      /* continue to next dir */
+      /* skip unreadable manifest, keep going */
     }
   }
-  return {};
+  // Strip disabled hooks so they never reach the registrar.
+  for (const [name, def] of Object.entries(merged)) {
+    if (def.enabled === false) delete merged[name];
+  }
+  return merged;
 }
 
 // Codex events that support a matcher field (matches tool name or session type).
@@ -707,7 +720,6 @@ function registerHooksForClaude(
   const managedHooksPrefix = path.join(agentsDir, 'hooks') + path.sep;
   const currentManifestPaths = new Set<string>();
   for (const hookDef of Object.values(manifest)) {
-    if (hookDef.agents && !hookDef.agents.includes('claude')) continue;
     if (!hookDef.events || hookDef.events.length === 0) continue;
     currentManifestPaths.add(path.join(agentsDir, 'hooks', hookDef.script));
   }
@@ -736,7 +748,6 @@ function registerHooksForClaude(
   }
 
   for (const [name, hookDef] of Object.entries(manifest)) {
-    if (hookDef.agents && !hookDef.agents.includes('claude')) continue;
     if (!hookDef.events || hookDef.events.length === 0) continue;
 
     const commandPath = path.join(agentsDir, 'hooks', hookDef.script);
@@ -827,7 +838,6 @@ function registerHooksForCodex(
   const managedHooksPrefix = path.join(agentsDir, 'hooks') + path.sep;
   const currentManifestPaths = new Set<string>();
   for (const hookDef of Object.values(manifest)) {
-    if (hookDef.agents && !hookDef.agents.includes('codex')) continue;
     if (!hookDef.events || hookDef.events.length === 0) continue;
     currentManifestPaths.add(path.join(agentsDir, 'hooks', hookDef.script));
   }
@@ -846,7 +856,6 @@ function registerHooksForCodex(
   }
 
   for (const [name, hookDef] of Object.entries(manifest)) {
-    if (hookDef.agents && !hookDef.agents.includes('codex')) continue;
     if (!hookDef.events || hookDef.events.length === 0) continue;
 
     const commandPath = path.join(agentsDir, 'hooks', hookDef.script);
@@ -966,7 +975,6 @@ function registerHooksForGemini(
   const managedHooksPrefix = path.join(agentsDir, 'hooks') + path.sep;
   const currentManifestPaths = new Set<string>();
   for (const hookDef of Object.values(manifest)) {
-    if (hookDef.agents && !hookDef.agents.includes('gemini')) continue;
     if (!hookDef.events || hookDef.events.length === 0) continue;
     currentManifestPaths.add(path.join(agentsDir, 'hooks', hookDef.script));
   }
@@ -991,7 +999,6 @@ function registerHooksForGemini(
   }
 
   for (const [name, hookDef] of Object.entries(manifest)) {
-    if (hookDef.agents && !hookDef.agents.includes('gemini')) continue;
     if (!hookDef.events || hookDef.events.length === 0) continue;
 
     const commandPath = path.join(agentsDir, 'hooks', hookDef.script);
