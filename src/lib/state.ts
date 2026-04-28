@@ -57,7 +57,6 @@ const SHIMS_DIR = path.join(SYSTEM_AGENTS_DIR, 'shims');
 const BACKUPS_DIR = path.join(SYSTEM_AGENTS_DIR, 'backups');
 const PLUGINS_DIR = path.join(SYSTEM_AGENTS_DIR, 'plugins');
 const DRIVE_DIR = path.join(SYSTEM_AGENTS_DIR, 'drive');
-const EXTRA_REPOS_DIR = path.join(SYSTEM_AGENTS_DIR, '.repos');
 
 // ─── User resource dirs ───────────────────────────────────────────────────────
 
