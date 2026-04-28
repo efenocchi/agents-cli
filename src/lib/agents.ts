@@ -533,6 +533,37 @@ export function isConfigured(agentId: AgentId): boolean {
   return fs.existsSync(agent.configDir);
 }
 
+/** Info about an existing unmanaged agent installation. */
+export interface UnmanagedInstall {
+  agentId: AgentId;
+  configDir: string;
+  version: string | null;
+}
+
+/**
+ * Detect existing agent installations that are NOT yet managed by agents-cli.
+ * Returns agents whose config dir exists as a real directory (not a symlink).
+ */
+export async function getUnmanagedAgentInstalls(): Promise<UnmanagedInstall[]> {
+  const unmanaged: UnmanagedInstall[] = [];
+  const candidates: AgentId[] = ['claude', 'codex', 'gemini'];
+
+  for (const agentId of candidates) {
+    const agent = AGENTS[agentId];
+    try {
+      const stat = fs.lstatSync(agent.configDir);
+      if (stat.isDirectory() && !stat.isSymbolicLink()) {
+        const version = await getCliVersion(agentId);
+        unmanaged.push({ agentId, configDir: agent.configDir, version });
+      }
+    } catch {
+      // Config dir doesn't exist
+    }
+  }
+
+  return unmanaged;
+}
+
 /** Create the agent's slash-commands directory if it does not exist. */
 export function ensureCommandsDir(agentId: AgentId): void {
   const agent = AGENTS[agentId];
@@ -765,6 +796,34 @@ function getSessionExtension(agentId: AgentId): string | null {
     default:
       return null;
   }
+}
+
+/**
+ * Quick count of session files for an agent (without full DB scan).
+ * Used during init to show approximate session count to user.
+ */
+export function countSessionFiles(agentId: AgentId): number {
+  const sessionDir = getSessionDir(agentId, HOME);
+  const ext = getSessionExtension(agentId);
+  if (!sessionDir || !ext || !fs.existsSync(sessionDir)) return 0;
+
+  let count = 0;
+  const walk = (dir: string): void => {
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          walk(path.join(dir, entry.name));
+        } else if (entry.isFile() && entry.name.endsWith(ext)) {
+          count++;
+        }
+      }
+    } catch {
+      // Permission denied or other error
+    }
+  };
+  walk(sessionDir);
+  return count;
 }
 
 /** Walk a directory for files matching the extension and return the mtime of the most recent one. */

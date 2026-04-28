@@ -12,6 +12,9 @@ export type AgentId = 'claude' | 'codex' | 'gemini' | 'cursor' | 'opencode' | 'o
 /** How `agents run <agent>` chooses an installed version when none is pinned. */
 export type RunStrategy = 'pinned' | 'available' | 'rotate';
 
+/** Preview features that users can opt into via `agents beta`. */
+export type BetaFeatureName = 'drive' | 'factory';
+
 /** Subset of chalk color names used for agent-specific terminal output. */
 export type ChalkColor = 'magenta' | 'green' | 'blue' | 'cyan' | 'yellowBright' | 'redBright' | 'whiteBright' | 'blueBright' | 'greenBright' | 'magentaBright' | 'cyanBright';
 
@@ -118,6 +121,9 @@ export interface InstalledHook {
 export interface Manifest {
   agents?: Partial<Record<AgentId, string>>;
   run?: Partial<Record<AgentId, { strategy?: RunStrategy }>>;
+  beta?: {
+    enabled?: BetaFeatureName[];
+  };
   dependencies?: Record<string, string>;
   mcp?: Record<string, McpServerConfig>;
   defaults?: {
@@ -381,6 +387,9 @@ export interface ExtraRepoConfig {
 export interface Meta {
   agents?: Partial<Record<AgentId, string>>;
   run?: Partial<Record<AgentId, { strategy?: RunStrategy }>>;
+  beta?: {
+    enabled?: BetaFeatureName[];
+  };
   registries?: Record<RegistryType, Record<string, RegistryConfig>>;
   // Per-version resource tracking
   versions?: Partial<Record<AgentId, Record<string, VersionResources>>>;

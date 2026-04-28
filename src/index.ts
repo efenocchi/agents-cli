@@ -58,6 +58,7 @@ import { registerSecretsCommands } from './commands/secrets.js';
 import { registerFactoryCommands } from './commands/factory.js';
 import { registerUsageCommand } from './commands/usage.js';
 import { registerAliasCommand } from './commands/alias.js';
+import { registerBetaCommands } from './commands/beta.js';
 import { applyGlobalHelpConventions } from './lib/help.js';
 import { isPromptCancelled } from './commands/utils.js';
 import { getAgentsDir } from './lib/state.js';
@@ -118,6 +119,7 @@ Credentials:
   secrets                         Keychain-backed env bundles injected at spawn
 
 Helpers:
+  beta                            Enable preview features like drive and factory
   pty                             Drive interactive terminal programs (REPLs, TUIs)
 
 Automation tips:
@@ -383,6 +385,7 @@ program
 
 registerProfilesCommands(program);
 registerSecretsCommands(program);
+registerBetaCommands(program);
 registerSyncCommand(program);
 registerRefreshMemoryCommand(program);
 registerDriveCommands(program);

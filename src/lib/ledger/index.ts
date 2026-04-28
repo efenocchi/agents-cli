@@ -23,7 +23,7 @@ let cachedDefault: LedgerStore | null = null;
  * Return the default ledger for this CLI/MCP process.
  *
  * If AGENTS_R2_BUCKET is set, returns an R2Ledger wired to the configured
- * endpoint. Otherwise falls back to LocalDiskLedger at ~/.agents-system/ledger so
+ * endpoint. Otherwise falls back to LocalDiskLedger at ~/.agents-system/teams/ so
  * non-cloud workflows never require network access.
  */
 export function resolveLedger(): LedgerStore {

@@ -1,0 +1,104 @@
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { spawnSync } from 'child_process';
+import { afterEach, describe, expect, it } from 'vitest';
+
+const cliEntry = path.resolve('src/index.ts');
+const tsxBin = path.resolve('node_modules/.bin/tsx');
+const packageJson = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf-8')) as { version: string };
+
+const tempDirs: string[] = [];
+
+function makeTempHome(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-beta-'));
+  tempDirs.push(dir);
+  return dir;
+}
+
+function writeUpdateCache(home: string): void {
+  const agentsDir = path.join(home, '.agents-system');
+  fs.mkdirSync(agentsDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(agentsDir, '.update-check'),
+    JSON.stringify({ lastCheck: Date.now(), latestVersion: packageJson.version }),
+    'utf-8'
+  );
+}
+
+function runAgents(args: string[], home: string) {
+  return spawnSync(tsxBin, [cliEntry, ...args], {
+    cwd: path.resolve('.'),
+    env: {
+      ...process.env,
+      HOME: home,
+    },
+    encoding: 'utf-8',
+  });
+}
+
+function outputOf(result: { stdout: string; stderr: string }): string {
+  return `${result.stdout}${result.stderr}`;
+}
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+describe('agents beta', () => {
+  it('blocks beta-gated commands until enabled', () => {
+    const home = makeTempHome();
+    writeUpdateCache(home);
+
+    const drive = runAgents(['drive', 'status'], home);
+    const factory = runAgents(['factory', 'submit', 'RUSH-1'], home);
+
+    expect(drive.status).toBe(1);
+    expect(outputOf(drive)).toContain('agents drive is in beta.');
+    expect(outputOf(drive)).toContain('agents beta enable drive');
+
+    expect(factory.status).toBe(1);
+    expect(outputOf(factory)).toContain('agents factory is in beta.');
+    expect(outputOf(factory)).toContain('agents beta enable factory');
+  });
+
+  it('stores beta flags in ~/.agents-system/agents.yaml when no personal repo exists', () => {
+    const home = makeTempHome();
+    writeUpdateCache(home);
+
+    const enable = runAgents(['beta', 'enable', 'drive'], home);
+    const list = runAgents(['beta', 'list'], home);
+    const drive = runAgents(['drive', 'status'], home);
+
+    expect(enable.status).toBe(0);
+    expect(fs.readFileSync(path.join(home, '.agents-system', 'agents.yaml'), 'utf-8')).toContain('beta:');
+    expect(fs.readFileSync(path.join(home, '.agents-system', 'agents.yaml'), 'utf-8')).toContain('- drive');
+    expect(outputOf(list)).toContain(path.join(home, '.agents-system', 'agents.yaml'));
+    expect(drive.status).toBe(0);
+    expect(outputOf(drive)).toContain('Drive');
+  });
+
+  it('stores beta flags in ~/.agents/agents.yaml when a personal repo exists', () => {
+    const home = makeTempHome();
+    writeUpdateCache(home);
+    fs.mkdirSync(path.join(home, '.agents'), { recursive: true });
+
+    const enable = runAgents(['beta', 'enable', 'drive', 'factory'], home);
+    const list = runAgents(['beta', 'list'], home);
+    const drive = runAgents(['drive', 'status'], home);
+    const factory = runAgents(['factory', 'submit', 'RUSH-1'], home);
+
+    expect(enable.status).toBe(0);
+    expect(fs.readFileSync(path.join(home, '.agents', 'agents.yaml'), 'utf-8')).toContain('beta:');
+    expect(fs.readFileSync(path.join(home, '.agents', 'agents.yaml'), 'utf-8')).toContain('- drive');
+    expect(fs.readFileSync(path.join(home, '.agents', 'agents.yaml'), 'utf-8')).toContain('- factory');
+    expect(outputOf(list)).toContain(path.join(home, '.agents', 'agents.yaml'));
+    expect(drive.status).toBe(0);
+    expect(outputOf(drive)).toContain('Drive');
+    expect(factory.status).toBe(1);
+    expect(outputOf(factory)).toContain('Run `rush login` first.');
+  });
+});
+

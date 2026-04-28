@@ -7,12 +7,54 @@
 
 import type { Command } from 'commander';
 import chalk from 'chalk';
+import ora from 'ora';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
+import { confirm } from '@inquirer/prompts';
+import type { AgentId } from '../lib/types.js';
 import { DEFAULT_SYSTEM_REPO, systemRepoSlug } from '../lib/types.js';
-import { getAgentsDir } from '../lib/state.js';
+import { getAgentsDir, getVersionsDir } from '../lib/state.js';
 import { isGitRepo } from '../lib/git.js';
-import { isPromptCancelled } from './utils.js';
+import { isPromptCancelled, isInteractiveTerminal } from './utils.js';
+import { AGENTS, getUnmanagedAgentInstalls, countSessionFiles, agentLabel } from '../lib/agents.js';
+import { setGlobalDefault } from '../lib/versions.js';
+import { ensureShimCurrent, isShimsInPath, addShimsToPath, getPathSetupInstructions } from '../lib/shims.js';
+
+const HOME = os.homedir();
+
+/**
+ * Import an existing unmanaged agent installation into agents-cli.
+ * Moves the config dir into the versions structure and creates a symlink.
+ */
+async function importAgent(agentId: AgentId, version: string): Promise<{ success: boolean; error?: string }> {
+  const agent = AGENTS[agentId];
+  const configDir = agent.configDir;
+  const versionsDir = getVersionsDir();
+  const versionHome = path.join(versionsDir, agentId, version, 'home');
+  const versionConfigDir = path.join(versionHome, `.${agentId}`);
+
+  try {
+    // Create version home directory
+    fs.mkdirSync(versionHome, { recursive: true });
+
+    // Move existing config dir into version home
+    fs.renameSync(configDir, versionConfigDir);
+
+    // Create symlink from original location to version config
+    fs.symlinkSync(versionConfigDir, configDir);
+
+    // Set as global default
+    setGlobalDefault(agentId, version);
+
+    // Ensure shim exists
+    ensureShimCurrent(agentId);
+
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: (err as Error).message };
+  }
+}
 
 /** First-run setup. Delegates to `agents pull`, which clones the system repo if needed. */
 export async function runInit(program: Command, options: { force?: boolean } = {}): Promise<void> {
@@ -25,6 +67,13 @@ export async function runInit(program: Command, options: { force?: boolean } = {
     console.log(chalk.gray('\nTo sync updates:      agents pull'));
     console.log(chalk.gray('To re-initialize:     agents init --force'));
     return;
+  }
+
+  // Detect existing installations BEFORE cloning (they won't exist after if we import)
+  const unmanaged = await getUnmanagedAgentInstalls();
+  const sessionCounts: Partial<Record<AgentId, number>> = {};
+  for (const install of unmanaged) {
+    sessionCounts[install.agentId] = countSessionFiles(install.agentId);
   }
 
   console.log(chalk.bold('\nWelcome to agents-cli.'));
@@ -42,11 +91,69 @@ export async function runInit(program: Command, options: { force?: boolean } = {
     process.exit(1);
   }
 
+  // Offer to import existing unmanaged installations
+  if (unmanaged.length > 0 && isInteractiveTerminal()) {
+    console.log(chalk.bold('\nFound existing installations:\n'));
+
+    const maxAgentLen = Math.max(...unmanaged.map(i => agentLabel(i.agentId).length));
+    for (const install of unmanaged) {
+      const label = agentLabel(install.agentId).padEnd(maxAgentLen);
+      const sessions = sessionCounts[install.agentId] || 0;
+      const sessionStr = sessions > 0 ? `${sessions} sessions` : 'no sessions';
+      const versionStr = install.version ? `v${install.version}` : '';
+      console.log(`  ${chalk.cyan(label)}  ${install.configDir}  ${chalk.gray(sessionStr)}  ${chalk.gray(versionStr)}`);
+    }
+
+    console.log();
+    const shouldImport = await confirm({
+      message: 'Import these under agents-cli management?',
+      default: true,
+    });
+
+    if (shouldImport) {
+      console.log();
+      for (const install of unmanaged) {
+        const version = install.version || 'unknown';
+        const spinner = ora(`Importing ${agentLabel(install.agentId)} v${version}...`).start();
+
+        const result = await importAgent(install.agentId, version);
+        if (result.success) {
+          spinner.succeed(`${agentLabel(install.agentId)} imported`);
+        } else {
+          spinner.fail(`${agentLabel(install.agentId)}: ${result.error}`);
+        }
+      }
+
+      // Ensure shims are in PATH
+      if (!isShimsInPath()) {
+        const pathResult = addShimsToPath();
+        if (pathResult.success && !pathResult.alreadyPresent) {
+          console.log(chalk.green(`\nAdded shims to ~/${pathResult.rcFile}`));
+          console.log(chalk.gray('Restart your shell or run: source ~/' + pathResult.rcFile));
+        } else if (!pathResult.success) {
+          console.log(chalk.yellow('\nTo enable version switching, add shims to PATH:'));
+          console.log(chalk.gray(getPathSetupInstructions()));
+        }
+      }
+
+      // Show total session count
+      const totalSessions = Object.values(sessionCounts).reduce((a, b) => a + (b || 0), 0);
+      if (totalSessions > 0) {
+        const breakdown = unmanaged
+          .filter(i => (sessionCounts[i.agentId] || 0) > 0)
+          .map(i => `${agentLabel(i.agentId)} (${sessionCounts[i.agentId] || 0})`)
+          .join(', ');
+        console.log(chalk.gray(`\n${totalSessions} sessions available across ${breakdown}`));
+        console.log(chalk.cyan('  agents sessions') + chalk.gray('  # browse them'));
+      }
+    }
+  }
+
   console.log(chalk.bold('\nSetup complete. Try:'));
   console.log(chalk.cyan('  agents view                 ') + chalk.gray(' # see what\'s installed'));
   console.log(chalk.cyan('  agents run <agent> "hello"  ') + chalk.gray(' # run an agent'));
   console.log(chalk.gray('\nWhen you want your own editable repo, scaffold one with:'));
-  console.log(chalk.cyan('  agents repo init --path ~/.agents'));
+  console.log(chalk.cyan('  agents repo init'));
 }
 
 /** Register the `agents init` command. */

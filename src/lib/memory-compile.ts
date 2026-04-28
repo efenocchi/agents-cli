@@ -12,7 +12,7 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { AGENTS } from './agents.js';
 import type { AgentId } from './types.js';
-import { getMemoryDir, getVersionsDir } from './state.js';
+import { getResolvedRulesDir, getVersionsDir } from './state.js';
 
 // Match `@path` preceded by start-of-string or whitespace. This avoids
 // matching emails ("foo@bar.com") and the middle of words. The leading
@@ -171,7 +171,7 @@ export function compileMemoryForAgent(
     return { compiled: false, compiledPath: '', sources: 0 };
   }
 
-  const memoryDir = getMemoryDir();
+  const memoryDir = getResolvedRulesDir();
   const sourceAgents = path.join(memoryDir, 'AGENTS.md');
   if (!fs.existsSync(sourceAgents)) {
     return { compiled: false, compiledPath: '', sources: 0 };
