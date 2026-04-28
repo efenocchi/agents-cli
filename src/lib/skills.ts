@@ -411,6 +411,40 @@ export function listCentralSkills(): string[] {
 }
 
 /**
+ * Resolve a skill name to its source directory, searching the primary
+ * ~/.agents/skills/ first and then each enabled extra repo. Returns null if
+ * no source has a SKILL.md for this name. Primary wins on collision, matching
+ * the resolution order used by syncResourcesToVersion in versions.ts.
+ */
+export function resolveSkillSourcePath(skillName: string): string | null {
+  const primary = path.join(getSkillsDir(), skillName);
+  if (fs.existsSync(path.join(primary, 'SKILL.md'))) return primary;
+  for (const extra of getEnabledExtraRepos()) {
+    const candidate = path.join(extra.dir, 'skills', skillName);
+    if (fs.existsSync(path.join(candidate, 'SKILL.md'))) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Union of skill names available across the primary and all enabled extras.
+ * Primary wins on name collision.
+ */
+export function listAllSkills(): string[] {
+  const seen = new Set<string>(listCentralSkills());
+  for (const extra of getEnabledExtraRepos()) {
+    const dir = path.join(extra.dir, 'skills');
+    if (!fs.existsSync(dir)) continue;
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (!e.isDirectory() || e.name.startsWith('.')) continue;
+      if (!fs.existsSync(path.join(dir, e.name, 'SKILL.md'))) continue;
+      seen.add(e.name);
+    }
+  }
+  return Array.from(seen).sort();
+}
+
+/**
  * Path to the skills dir of a specific version home (not the active one).
  */
 export function getVersionSkillsDir(agent: AgentId, version: string): string {
