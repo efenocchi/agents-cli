@@ -58,6 +58,10 @@ import { getAgentsDir, getPromptcutsPath } from '../lib/state.js';
 import { isGitRepo, getGitSyncStatus } from '../lib/git.js';
 import { getCentralMemoryFileName } from '../lib/memory.js';
 import { getConfiguredRunStrategy } from '../lib/rotate.js';
+import {
+  formatNewerDuplicateNotice,
+  getNewerDuplicateVersions,
+} from '../lib/version-duplicates.js';
 import { confirm } from '@inquirer/prompts';
 import { formatPath, isInteractiveTerminal, isPromptCancelled } from './utils.js';
 
@@ -335,6 +339,15 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
       const projectVersion = getProjectVersionFromCwd(agentId);
       if (projectVersion && projectVersion !== globalDefault) {
         console.log(chalk.cyan(`    -> ${projectVersion} (project)`));
+      }
+
+      if (globalDefault) {
+        const duplicates = await getNewerDuplicateVersions(agentId, globalDefault);
+        const notice = formatNewerDuplicateNotice(agentId, globalDefault, duplicates, 'default');
+        if (notice) {
+          console.log();
+          console.log(notice);
+        }
       }
 
       console.log();
