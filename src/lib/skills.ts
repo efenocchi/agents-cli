@@ -470,23 +470,23 @@ export function listSkillsInVersionHome(agent: AgentId, version: string): string
  */
 function versionSkillMatches(agent: AgentId, version: string, skillName: string): boolean {
   const installedPath = path.join(getVersionSkillsDir(agent, version), skillName);
-  const centralPath = path.join(getSkillsDir(), skillName);
-  if (!fs.existsSync(installedPath) || !fs.existsSync(centralPath)) return false;
+  const sourcePath = resolveSkillSourcePath(skillName);
+  if (!fs.existsSync(installedPath) || !sourcePath) return false;
 
   const installedSkillMd = path.join(installedPath, 'SKILL.md');
-  const centralSkillMd = path.join(centralPath, 'SKILL.md');
-  if (!fs.existsSync(installedSkillMd) || !fs.existsSync(centralSkillMd)) return false;
+  const sourceSkillMd = path.join(sourcePath, 'SKILL.md');
+  if (!fs.existsSync(installedSkillMd) || !fs.existsSync(sourceSkillMd)) return false;
 
   try {
     if (normalizeContent(fs.readFileSync(installedSkillMd, 'utf-8')) !==
-        normalizeContent(fs.readFileSync(centralSkillMd, 'utf-8'))) {
+        normalizeContent(fs.readFileSync(sourceSkillMd, 'utf-8'))) {
       return false;
     }
   } catch {
     return false;
   }
 
-  return directoriesMatch(path.join(installedPath, 'rules'), path.join(centralPath, 'rules'));
+  return directoriesMatch(path.join(installedPath, 'rules'), path.join(sourcePath, 'rules'));
 }
 
 export interface VersionSkillDiff {
@@ -502,7 +502,7 @@ export interface VersionSkillDiff {
  * Compare a version home's skills against central. Returns the reconciliation diff.
  */
 export function diffVersionSkills(agent: AgentId, version: string): VersionSkillDiff {
-  const central = new Set(listCentralSkills());
+  const available = new Set(listAllSkills());
   const installed = new Set(listSkillsInVersionHome(agent, version));
 
   const toAdd: string[] = [];
@@ -510,7 +510,7 @@ export function diffVersionSkills(agent: AgentId, version: string): VersionSkill
   const matched: string[] = [];
   const orphans: string[] = [];
 
-  for (const name of central) {
+  for (const name of available) {
     if (!installed.has(name)) {
       toAdd.push(name);
     } else if (!versionSkillMatches(agent, version, name)) {
@@ -521,7 +521,7 @@ export function diffVersionSkills(agent: AgentId, version: string): VersionSkill
   }
 
   for (const name of installed) {
-    if (!central.has(name)) orphans.push(name);
+    if (!available.has(name)) orphans.push(name);
   }
 
   return { agent, version, toAdd: toAdd.sort(), toUpdate: toUpdate.sort(), matched, orphans: orphans.sort() };
@@ -570,9 +570,9 @@ export function installSkillToVersion(
   skillName: string,
   method: 'symlink' | 'copy' = 'copy'
 ): { success: boolean; error?: string } {
-  const centralPath = path.join(getSkillsDir(), skillName);
-  if (!fs.existsSync(centralPath)) {
-    return { success: false, error: `Skill '${skillName}' not found in central` };
+  const sourcePath = resolveSkillSourcePath(skillName);
+  if (!sourcePath) {
+    return { success: false, error: `Skill '${skillName}' not found in central or any extra repo` };
   }
 
   const skillsDir = getVersionSkillsDir(agent, version);
@@ -583,15 +583,15 @@ export function installSkillToVersion(
   const target = path.join(skillsDir, skillName);
 
   // Snapshot files unique to the version home so we can restore them after
-  // the fresh copy (copy mode only; symlink shares central so there's nothing
-  // local to preserve — and writing a .env into a symlinked skill would
-  // pollute the git-tracked central dir anyway).
+  // the fresh copy (copy mode only; symlink shares the source so there's
+  // nothing local to preserve — and writing a .env into a symlinked skill
+  // would pollute the git-tracked source dir anyway).
   const preserved: Array<{ rel: string; buf: Buffer; mode: number }> = [];
   if (method === 'copy' && fs.existsSync(target) && !fs.lstatSync(target).isSymbolicLink()) {
-    const centralFiles = walkRelativeFiles(centralPath);
+    const sourceFiles = walkRelativeFiles(sourcePath);
     const installedFiles = walkRelativeFiles(target);
     for (const rel of installedFiles) {
-      if (centralFiles.has(rel)) continue;
+      if (sourceFiles.has(rel)) continue;
       try {
         const abs = path.join(target, rel);
         preserved.push({
