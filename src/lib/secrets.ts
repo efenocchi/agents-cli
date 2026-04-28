@@ -50,7 +50,7 @@ export function serializeRef(ref: SecretRef): string {
 
 function assertMacOS(): void {
   if (process.platform !== 'darwin') {
-    throw new Error('Keychain auth is macOS-only for now. Linux/Windows support is planned.');
+    throw new Error('Keychain-based secrets require macOS. On Linux, use environment variables or .env files instead. Native Linux credential store support is planned.');
   }
 }
 

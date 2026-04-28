@@ -296,12 +296,17 @@ Examples:
     .command('logout <provider>')
     .description('Remove a stored provider key from keychain')
     .action((provider: string) => {
-      const item = keychainItemName(provider);
-      const existed = deleteKeychainToken(item);
-      if (!existed) {
-        console.error(chalk.yellow(`No keychain item '${item}' to remove.`));
+      try {
+        const item = keychainItemName(provider);
+        const existed = deleteKeychainToken(item);
+        if (!existed) {
+          console.error(chalk.yellow(`No keychain item '${item}' to remove.`));
+          process.exit(1);
+        }
+        console.log(chalk.green(`Removed keychain item: ${item}`));
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
         process.exit(1);
       }
-      console.log(chalk.green(`Removed keychain item: ${item}`));
     });
 }
