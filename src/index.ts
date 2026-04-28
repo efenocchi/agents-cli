@@ -510,8 +510,7 @@ await checkForUpdates();
 // fire-and-forget the next background sync. System repo gets a real fast-forward
 // pull (read-only locally, safe). User repo and extras get fetch-only + a
 // status marker that we'll print on the *next* invocation.
-const { spawnDetachedSync, printPendingUpdateNotices } = await import('./lib/auto-pull.js');
-printPendingUpdateNotices();
+const { spawnDetachedSync } = await import('./lib/auto-pull.js');
 spawnDetachedSync();
 
 // First-run experience: no args + no config yet + TTY -> launch interactive init.

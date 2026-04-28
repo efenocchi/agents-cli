@@ -352,6 +352,23 @@ Examples:
           console.log(chalk.yellow(`  ${t.alias}: not a git repo, skipping`));
           continue;
         }
+        if (t.alias === 'system') {
+          // System repo is read-only; report status instead of pulling
+          try {
+            const git = simpleGit(t.dir);
+            await git.fetch();
+            const status = await git.status();
+            const behind = status.behind ?? 0;
+            if (behind === 0) {
+              console.log(chalk.green(`  system: up to date`));
+            } else {
+              console.log(chalk.yellow(`  system: ${behind} commit${behind === 1 ? '' : 's'} behind (auto-syncs in background)`));
+            }
+          } catch (err) {
+            console.log(chalk.red(`  system: ${(err as Error).message}`));
+          }
+          continue;
+        }
         const spinner = ora(`Pulling ${t.alias}...`).start();
         const result = await pullRepo(t.dir);
         if (result.success) {
@@ -406,10 +423,10 @@ Examples:
     });
 
   repoCmd
-    .command('status')
+    .command('status [alias]')
     .description('Per-repo summary: branch, ahead/behind upstream, working-tree state')
-    .action(async () => {
-      const targets = collectRepoTargets(undefined) || [];
+    .action(async (alias: string | undefined) => {
+      const targets = collectRepoTargets(alias) || [];
       if (targets.length === 0) {
         console.log(chalk.gray('No git repos found.'));
         return;

@@ -243,14 +243,15 @@ agents refresh-memory --agent "$AGENT" --agent-version "$VERSION" --quiet 2>/dev
 # Shim for ${agentConfig.name}
 # ${SHIM_VERSION_MARKER} ${SHIM_SCHEMA_VERSION}
 
-AGENTS_DIR="$HOME/.agents-system"
+AGENTS_SYSTEM_DIR="$HOME/.agents-system"
+AGENTS_USER_DIR="$HOME/.agents"
 AGENT="${agent}"
 CLI_COMMAND="${cliCommand}"
 
-# Find project agents.yaml walking up from cwd (skip ~/.agents-system/agents.yaml)
+# Find project agents.yaml walking up from cwd (skip user agents.yaml)
 find_project_version() {
   local dir="$PWD"
-  local user_agents_yaml="$HOME/.agents-system/agents.yaml"
+  local user_agents_yaml="$AGENTS_USER_DIR/agents.yaml"
   while [ "$dir" != "/" ]; do
     local candidate="$dir/agents.yaml"
     if [ -f "$candidate" ] && [ "$candidate" != "$user_agents_yaml" ]; then
@@ -273,7 +274,7 @@ find_project_version() {
 
 # Resolve version from agents.yaml (user default)
 resolve_default_version() {
-  local meta="$AGENTS_DIR/agents.yaml"
+  local meta="$AGENTS_USER_DIR/agents.yaml"
   if [ -f "$meta" ]; then
     awk -v agent="$AGENT" '
       /^agents:/ { in_agents=1; next }
@@ -313,7 +314,7 @@ if [ -z "$VERSION" ]; then
   exit 1
 fi
 
-VERSION_DIR="$AGENTS_DIR/versions/$AGENT/$VERSION"
+VERSION_DIR="$AGENTS_SYSTEM_DIR/versions/$AGENT/$VERSION"
 BINARY="$VERSION_DIR/node_modules/.bin/$CLI_COMMAND"
 
 # Auto-install if not present

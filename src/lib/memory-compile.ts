@@ -179,10 +179,17 @@ export function compileMemoryForAgent(
 
   const rootContent = fs.readFileSync(sourceAgents, 'utf8');
   const { content, sources } = resolveImports(rootContent, memoryDir);
+  const newContent = COMPILED_HEADER + content;
 
   const compiledPath = getCompiledMemoryPath(agentId, version);
   fs.mkdirSync(path.dirname(compiledPath), { recursive: true });
-  fs.writeFileSync(compiledPath, COMPILED_HEADER + content);
+
+  const existing = fs.existsSync(compiledPath) ? fs.readFileSync(compiledPath, 'utf8') : null;
+  if (existing === newContent) {
+    return { compiled: false, compiledPath, sources: 0 };
+  }
+
+  fs.writeFileSync(compiledPath, newContent);
 
   const allSources = [sourceAgents, ...sources];
   const manifest: CompileManifest = {

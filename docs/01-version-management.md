@@ -37,7 +37,7 @@ User runs: claude --help
            │
            ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  ~/.agents/shims/claude (bash script)                               │
+│  ~/.agents-system/shims/claude (bash script)                               │
 │                                                                     │
 │  1. Walk up from $PWD looking for project agents.yaml               │
 │     └─ Parse agents.claude: "2.0.70" (skips ~/.agents/agents.yaml)  │
@@ -47,7 +47,7 @@ User runs: claude --help
 │                                                                     │
 │  3. If version not installed, auto-install (project versions only)  │
 │                                                                     │
-│  4. exec ~/.agents/versions/claude/{version}/node_modules/.bin/claude │
+│  4. exec ~/.agents-system/versions/claude/{version}/node_modules/.bin/claude │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -61,12 +61,12 @@ agents add claude@2.0.65
 │  installVersion(agent, version)                                     │
 │  src/lib/versions.ts:installVersion()                               │
 │                                                                     │
-│  1. Create ~/.agents/versions/claude/2.0.65/                        │
+│  1. Create ~/.agents-system/versions/claude/2.0.65/                        │
 │  2. npm install @anthropic-ai/claude-code@2.0.65                    │
 │  3. Create home dir: versions/claude/2.0.65/home/.claude/           │
 │  4. syncResourcesToVersion() - symlink central resources            │
-│  5. createShim() - generate ~/.agents/shims/claude                  │
-│  6. createVersionedAlias() - generate ~/.agents/shims/claude@2.0.65 │
+│  5. createShim() - generate ~/.agents-system/shims/claude                  │
+│  6. createVersionedAlias() - generate ~/.agents-system/shims/claude@2.0.65 │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -82,8 +82,8 @@ BEFORE (first use):
   CLAUDE.md
 
 AFTER:
-~/.claude/ -> ~/.agents/versions/claude/2.0.65/home/.claude/   (symlink)
-~/.agents/backups/claude/1709856000000/                        (backup)
+~/.claude/ -> ~/.agents-system/versions/claude/2.0.65/home/.claude/   (symlink)
+~/.agents-system/backups/claude/1709856000000/                        (backup)
   settings.json
   commands/
   CLAUDE.md
@@ -100,9 +100,9 @@ Key behaviors:
 `syncResourcesToVersion()` links central `~/.agents/` resources into version homes:
 
 ```
-~/.agents/commands/foo.md  ──symlink──▶  ~/.agents/versions/claude/2.0.65/home/.claude/commands/foo.md
-~/.agents/skills/bar/      ──symlink──▶  ~/.agents/versions/claude/2.0.65/home/.claude/skills/bar/
-~/.agents/rules/AGENTS.md ──symlink──▶  ~/.agents/versions/claude/2.0.65/home/.claude/CLAUDE.md
+~/.agents/commands/foo.md  ──symlink──▶  ~/.agents-system/versions/claude/2.0.65/home/.claude/commands/foo.md
+~/.agents/skills/bar/      ──symlink──▶  ~/.agents-system/versions/claude/2.0.65/home/.claude/skills/bar/
+~/.agents/rules/AGENTS.md ──symlink──▶  ~/.agents-system/versions/claude/2.0.65/home/.claude/CLAUDE.md
 ```
 
 Special case: Gemini requires TOML format, so commands are converted (not symlinked).

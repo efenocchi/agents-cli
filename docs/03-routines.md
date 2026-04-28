@@ -70,7 +70,7 @@ Temporal sequence from cron fire to report saved.
 
 ```
 croner            JobScheduler          runner.ts           sandbox.ts       spawned agent       filesystem
-(library)         scheduler.ts:20       executeJob          prepareJobHome   (claude/codex/      ~/.agents/runs/
+(library)         scheduler.ts:20       executeJob          prepareJobHome   (claude/codex/      ~/.agents-system/runs/
                                                                               gemini)
 
      │                  │                  │                    │                │                    │
