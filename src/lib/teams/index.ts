@@ -1,7 +1,7 @@
 /**
  * Public library surface for the teams subsystem.
  *
- * Consumers (e.g. @swarmify/agents-mcp) import from '@swarmify/agents-cli/teams'
+ * Consumers (e.g. @phnx-labs/agents-mcp) import from '@phnx-labs/agents-cli/teams'
  * to reuse the same agent lifecycle, parsing, summarization, and persistence
  * layer that powers the `agents teams` CLI.
  */
