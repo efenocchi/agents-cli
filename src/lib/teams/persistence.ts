@@ -296,10 +296,10 @@ async function migrateLegacyConfig(): Promise<SwarmConfig | null> {
   const legacyConfigPath = await resolveLegacyConfigPath();
   let config = await tryReadLegacyConfig(legacyConfigPath);
 
-  // Try ~/.companion/agents/config.json
+  // Try ~/.companion/agents/config.json (legacy pre-OSS brand path)
   if (!config) {
-    const companionConfigPath = await resolveLegacyCompanionConfigPath();
-    config = await tryReadLegacyConfig(companionConfigPath);
+    const legacyBrandConfigPath = await resolveLegacyCompanionConfigPath();
+    config = await tryReadLegacyConfig(legacyBrandConfigPath);
   }
 
   if (!config) return null;
