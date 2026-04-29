@@ -1,0 +1,3 @@
+export PATH="/tmp/.agents-system/shims-backup:$PATH"
+# export PATH="/tmp/.agents-system/shims:$PATH"
+export NVM_DIR="$HOME/.nvm"
