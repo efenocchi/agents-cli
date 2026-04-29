@@ -8,20 +8,21 @@ import { cleanOrphanedPluginSkills } from '../plugins.js';
 
 describe('Bug Fix: Path traversal in sandbox.ts', () => {
   let overlayHome: string;
+  let allowedDir: string;
 
   beforeEach(() => {
     overlayHome = fs.mkdtempSync(path.join(os.tmpdir(), 'sandbox-test-'));
+    allowedDir = fs.mkdtempSync(path.join(os.homedir(), '.agents-system', 'agents-cli-sandbox-allowed-'));
   });
 
   afterEach(() => {
     fs.rmSync(overlayHome, { recursive: true, force: true });
+    fs.rmSync(allowedDir, { recursive: true, force: true });
   });
 
   it('should block path traversal via .. components', () => {
-    // ~/../../../etc should resolve outside HOME and be rejected
     symlinkAllowedDirs(overlayHome, ['~/../../../etc']);
 
-    // No symlink should be created for the traversal path
     const entries = fs.readdirSync(overlayHome);
     const hasEtc = entries.some(e => e === 'etc' || e.includes('etc'));
     expect(hasEtc).toBe(false);
@@ -35,15 +36,15 @@ describe('Bug Fix: Path traversal in sandbox.ts', () => {
   });
 
   it('should allow valid paths under HOME', () => {
-    const validDir = path.join(os.homedir(), '.agents');
-    if (!fs.existsSync(validDir)) return; // skip if doesn't exist
+    symlinkAllowedDirs(
+      overlayHome,
+      [`~/.agents-system/${path.basename(allowedDir)}`],
+    );
 
-    symlinkAllowedDirs(overlayHome, ['~/.agents']);
-
-    // Should create symlink for .agents
-    const symlinkPath = path.join(overlayHome, '.agents');
+    const symlinkPath = path.join(overlayHome, '.agents-system', path.basename(allowedDir));
     expect(fs.existsSync(symlinkPath)).toBe(true);
     expect(fs.lstatSync(symlinkPath).isSymbolicLink()).toBe(true);
+    expect(fs.realpathSync(symlinkPath)).toBe(allowedDir);
   });
 
   it('should block absolute paths outside HOME', () => {
@@ -130,7 +131,6 @@ describe('Bug Fix: Timezone day resolution', () => {
     };
 
     const resolved = resolveJobPrompt(config);
-    // Verify it's a valid day name (not empty or broken)
     const validDays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     expect(validDays).toContain(resolved);
   });
@@ -185,26 +185,21 @@ describe('Bug Fix: Plugin orphan cleanup', () => {
   });
 
   it('should remove orphaned plugin skill dirs', () => {
-    // Create a fake version home with plugin skills
     const skillsDir = path.join(tempDir, '.claude', 'skills');
     fs.mkdirSync(skillsDir, { recursive: true });
 
-    // Active plugin skill
     fs.mkdirSync(path.join(skillsDir, 'active-plugin--skill1'));
     fs.writeFileSync(path.join(skillsDir, 'active-plugin--skill1', 'SKILL.md'), 'test');
 
-    // Orphaned plugin skill (plugin no longer exists)
     fs.mkdirSync(path.join(skillsDir, 'deleted-plugin--skill1'));
     fs.writeFileSync(path.join(skillsDir, 'deleted-plugin--skill1', 'SKILL.md'), 'test');
 
-    // Regular skill (not a plugin)
     fs.mkdirSync(path.join(skillsDir, 'regular-skill'));
     fs.writeFileSync(path.join(skillsDir, 'regular-skill', 'SKILL.md'), 'test');
 
     const activePlugins = new Set(['active-plugin']);
     const removed = cleanOrphanedPluginSkills('claude', tempDir, activePlugins);
 
-    // Should remove deleted-plugin--skill1 but keep others
     expect(removed).toEqual(['deleted-plugin--skill1']);
     expect(fs.existsSync(path.join(skillsDir, 'active-plugin--skill1'))).toBe(true);
     expect(fs.existsSync(path.join(skillsDir, 'deleted-plugin--skill1'))).toBe(false);
