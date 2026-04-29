@@ -1,4 +1,24 @@
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+type WatchCallback = (
+  eventType: string,
+  filename: string | Buffer | null,
+) => void;
+
+const watchState = vi.hoisted(() => ({
+  callbacks: [] as WatchCallback[],
+}));
+
+vi.mock('fs', async () => {
+  const actual = await vi.importActual<typeof import('fs')>('fs');
+  return {
+    ...actual,
+    watch: ((_: fs.PathLike, __: fs.WatchOptions | undefined, listener?: WatchCallback) => {
+      if (listener) watchState.callbacks.push(listener);
+      return { close() {} } as fs.FSWatcher;
+    }) as typeof actual.watch,
+  };
+});
+
 import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as os from 'os';
@@ -23,6 +43,16 @@ async function waitFor(
   }
 }
 
+function triggerWatch(filename: string | null): void {
+  for (const cb of watchState.callbacks) {
+    cb('change', filename);
+  }
+}
+
+beforeEach(() => {
+  watchState.callbacks = [];
+});
+
 describe('tailFile', () => {
   it('emits each line exactly once across multiple appends', async () => {
     const dir = mkTempDir();
@@ -37,17 +67,21 @@ describe('tailFile', () => {
     await new Promise((r) => setTimeout(r, 50));
 
     await fsp.appendFile(filePath, 'one\n');
+    triggerWatch(path.basename(filePath));
     await waitFor(() => lines.length >= 1);
 
     await fsp.appendFile(filePath, 'two\nthree\n');
+    triggerWatch(path.basename(filePath));
     await waitFor(() => lines.length >= 3);
 
     // Partial line: should NOT emit until newline arrives
     await fsp.appendFile(filePath, 'partial');
+    triggerWatch(path.basename(filePath));
     await new Promise((r) => setTimeout(r, 80));
     expect(lines).toEqual(['one', 'two', 'three']);
 
     await fsp.appendFile(filePath, '-done\n');
+    triggerWatch(path.basename(filePath));
     await waitFor(() => lines.length >= 4);
 
     ac.abort();
@@ -70,6 +104,7 @@ describe('tailFile', () => {
     await new Promise((r) => setTimeout(r, 80));
 
     await fsp.appendFile(filePath, 'new\n');
+    triggerWatch(path.basename(filePath));
     await waitFor(() => lines.length >= 1);
 
     ac.abort();
@@ -109,6 +144,7 @@ describe('tailFile', () => {
 
     await new Promise((r) => setTimeout(r, 60));
     fs.writeFileSync(filePath, 'hello\n');
+    triggerWatch(path.basename(filePath));
     await waitFor(() => lines.length >= 1);
 
     expect(lines).toEqual(['hello']);
@@ -131,10 +167,12 @@ describe('tailFile', () => {
     await new Promise((r) => setTimeout(r, 50));
 
     await fsp.appendFile(filePath, 'first\nsecond\n');
+    triggerWatch(path.basename(filePath));
     await waitFor(() => lines.length >= 2);
 
     // Truncate + write new content
     fs.writeFileSync(filePath, 'after-trunc\n');
+    triggerWatch(path.basename(filePath));
     await waitFor(() => lines.length >= 3, 3000);
 
     ac.abort();
