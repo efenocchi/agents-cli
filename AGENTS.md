@@ -6,7 +6,7 @@ CLI for managing AI coding agent versions, config, sessions, and cloud dispatch 
 
 | Path | Role | Edited by |
 |---|---|---|
-| `~/.agents/` | **User repo** — your authored commands, skills, hooks, rules, mcp configs, permissions, profiles, secrets, and `agents.yaml`. `agents push`/`pull` target. | You |
+| `~/.agents/` | **User repo** — your authored commands, skills, hooks, rules, mcp configs, permissions, profiles, secrets, and `agents.yaml`. `agents repo push`/`pull` target. | You |
 | `~/.agents-system/` | **System repo** — npm-shipped defaults + operational state (versions, shims, backups, runs, sessions, cloud, drive, caches, `.repos/`). | Maintainers (resources) / agents-cli (state) |
 
 Same shape in both. Resources resolve **project > user > system** at sync time. Operational state always lives in the system repo.
@@ -84,4 +84,4 @@ See `docs/`:
 - Memory file is `AGENTS.md`; `CLAUDE.md` and `GEMINI.md` are symlinks.
 - Tests in codebase as `*.test.ts` next to source; integration tests in `tests/`.
 - Don't add fallback logic for the legacy single-root model — the migrator handles it once at install.
-- `agents push`/`pull` operates on `~/.agents/` only; system updates ride `npm update -g agents-cli`.
+- `agents repo push`/`pull` operates on `~/.agents/` only; system updates ride `npm update -g agents-cli`.

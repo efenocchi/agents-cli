@@ -159,6 +159,8 @@ Works today with claude, codex, gemini, cursor, opencode, openclaw. Other harnes
 
 ## Sessions across agents
 
+When you run multiple agents, conversations scatter across tools. Session search brings them together.
+
 ```bash
 # Where was that auth conversation? Search Claude Code, Codex, Gemini CLI, OpenCode at once.
 agents sessions "auth middleware"
@@ -216,7 +218,7 @@ auth:
   keychainItem: agents-cli.ollama.token
 ```
 
-Profile YAML has no secrets -- safe to `agents push` to a shared repo. `agents profiles presets` lists the full catalog.
+Profile YAML has no secrets -- safe to `agents repo push` to a shared repo. `agents profiles presets` lists the full catalog.
 
 ---
 
@@ -297,12 +299,12 @@ A sidecar server holds sessions alive between CLI calls. `screen` renders via xt
 
 ```bash
 # New machine? One command.
-agents pull
+agents init
 
 # Installs CLIs, registers MCP servers, syncs skills/commands/rules/hooks,
 # sets up shims, configures defaults. Done.
 
-agents push     # Snapshot your config to git
+agents repo push     # Snapshot your config to git
 ```
 
 ### How config is layered
@@ -312,7 +314,7 @@ Two repos with the same shape, different roles:
 | Repo | Role | Owner |
 |---|---|---|
 | `~/.agents-system/` | **System repo** — core/built-in skills, commands, hooks, rules, MCP configs, permissions, and profiles that ship with `agents-cli`. The defaults every install gets. | Maintained upstream at [phnx-labs/.agents-system](https://github.com/phnx-labs/.agents-system) |
-| `~/.agents/` | **User repo** — your personal additions and overrides. This is what `agents push`/`pull` syncs. | You |
+| `~/.agents/` | **User repo** — your personal additions and overrides. This is what `agents repo push`/`pull` syncs. | You |
 
 **Version pinning:** `agents.yaml` at project root pins which agent version to use (like `.nvmrc` for Node).
 
@@ -376,6 +378,10 @@ Yes. This developer tool is entirely free because we believe developers should h
 ### Is this like `nvm` / `mise` / `asdf` for AI agents?
 
 For version management, yes. `agents-cli` reads `agents.yaml` from the project root, walks up the directory tree, and routes to the correct binary per project. But it also manages agent-native resources (skills, MCP servers, commands, hooks, permissions) that language version managers don't touch.
+
+### How does version switching actually work?
+
+Same approach as nvm, pyenv, and rbenv — battle-tested by millions of developers. When you install a version, we set up a shim script that resolves the version from `agents.yaml` and runs the right binary. Each version has an isolated config directory. No manual setup required.
 
 ### How do I share my agent setup with my team?
 
