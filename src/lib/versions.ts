@@ -236,12 +236,22 @@ export function getAvailableResources(cwd: string = process.cwd()): AvailableRes
   return result;
 }
 
+// Files/dirs that are never synced into a version home (OS metadata, local tooling).
+const SKILL_COPY_IGNORE = new Set(['.DS_Store', '.git', '.gitignore', '.venv', '__pycache__', 'node_modules']);
+
+function shouldSkillEntryBeSkipped(name: string): boolean {
+  return SKILL_COPY_IGNORE.has(name);
+}
+
 /**
  * Recursively compare two directories: every file in src must exist in dest with identical content.
+ * Skips the same entries that copyDir skips (symlinks and SKILL_COPY_IGNORE members).
  */
 function skillDirsMatch(src: string, dest: string): boolean {
   const entries = fs.readdirSync(src, { withFileTypes: true });
   for (const entry of entries) {
+    if (entry.isSymbolicLink()) continue;
+    if (shouldSkillEntryBeSkipped(entry.name)) continue;
     const srcPath = path.join(src, entry.name);
     const destPath = path.join(dest, entry.name);
     if (entry.isDirectory()) {
@@ -1528,6 +1538,7 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
     const entries = fs.readdirSync(src, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.isSymbolicLink()) continue;
+      if (shouldSkillEntryBeSkipped(entry.name)) continue;
       const srcPath = safeJoin(src, entry.name);
       const destPath = safeJoin(dest, entry.name);
       if (entry.isDirectory()) {
