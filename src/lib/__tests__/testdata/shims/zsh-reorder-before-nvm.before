@@ -1,0 +1,5 @@
+export PATH="/opt/homebrew/bin:$PATH"
+export PATH="/tmp/elsewhere:$PATH"
+export PATH="/tmp/fake/.agents-system/shims:$PATH"
+export NVM_DIR="$HOME/.nvm"
+source "$NVM_DIR/nvm.sh"

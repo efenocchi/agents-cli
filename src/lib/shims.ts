@@ -248,10 +248,10 @@ AGENTS_USER_DIR="$HOME/.agents"
 AGENT="${agent}"
 CLI_COMMAND="${cliCommand}"
 
-# Find project agents.yaml walking up from cwd (skip user agents.yaml)
+# Find project agents.yaml walking up from cwd (skip $HOME/.agents-system/agents.yaml)
 find_project_version() {
   local dir="$PWD"
-  local user_agents_yaml="$AGENTS_USER_DIR/agents.yaml"
+  local user_agents_yaml="$AGENTS_SYSTEM_DIR/agents.yaml"
   while [ "$dir" != "/" ]; do
     local candidate="$dir/agents.yaml"
     if [ -f "$candidate" ] && [ "$candidate" != "$user_agents_yaml" ]; then
@@ -762,7 +762,13 @@ export function switchHomeFileSymlinks(
       } else if (stat.isFile()) {
         // Real file — first-time migration
         // Read the global file content
-        const globalContent = JSON.parse(fs.readFileSync(globalPath, 'utf-8'));
+        let globalContent: Record<string, unknown>;
+        try {
+          globalContent = JSON.parse(fs.readFileSync(globalPath, 'utf-8'));
+        } catch (err) {
+          errors.push(`${fileName}: Could not parse ${globalPath}: ${(err as Error).message}`);
+          continue;
+        }
 
         // Merge auth into ALL installed version files for this agent
         const agentVersionsDir = path.join(versionsDir, agent);
@@ -1128,11 +1134,66 @@ export function isShimsInPath(): boolean {
   return pathDirs.some((dir) => path.resolve(dir) === path.resolve(shimsDir));
 }
 
+function isShimPathCommandLine(line: string, shimsDir: string): boolean {
+  const trimmed = line.trim();
+  if (trimmed.startsWith('#')) {
+    return false;
+  }
+
+  const normalized = trimmed.replace(/['"]/g, '');
+  const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const exactMarkers = [
+    shimsDir,
+    '$HOME/.agents-system/shims',
+    '${HOME}/.agents-system/shims',
+    '~/.agents-system/shims',
+    '$HOME/.agents/shims',
+    '${HOME}/.agents/shims',
+    '~/.agents/shims',
+  ];
+
+  const markerRegexes = exactMarkers.map((marker) => new RegExp(`${escapeRegex(marker)}(?=$|[:\\s])`));
+  const suffixRegexes = [
+    /\/\.agents-system\/shims(?=$|[:\s])/,
+    /\/\.agents\/shims(?=$|[:\s])/,
+  ];
+
+  const touchesShimPath = [...markerRegexes, ...suffixRegexes].some((pattern) => pattern.test(normalized));
+  if (!touchesShimPath) {
+    return false;
+  }
+
+  return trimmed.startsWith('export PATH=') || trimmed.startsWith('fish_add_path ');
+}
+
+function stripShimPathLines(content: string, shimsDir: string): string {
+  const lines = content.split('\n');
+  const kept: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (
+      line.trim() === '# agents-cli: version-managed agent CLIs' &&
+      i + 1 < lines.length &&
+      isShimPathCommandLine(lines[i + 1], shimsDir)
+    ) {
+      i++;
+      continue;
+    }
+    if (isShimPathCommandLine(line, shimsDir)) {
+      continue;
+    }
+    kept.push(line);
+  }
+
+  return kept.join('\n').replace(/\n{3,}/g, '\n\n');
+}
+
 /**
  * Get the shell rc file path for the current shell.
  */
-function getShellRcFile(): { rcFile: string; rcPath: string; shell: string } {
-  const shell = process.env.SHELL || '/bin/bash';
+function getShellRcFile(overrides?: { homeDir?: string; shell?: string }): { rcFile: string; rcPath: string; shell: string } {
+  const shell = overrides?.shell || process.env.SHELL || '/bin/bash';
   const shellName = path.basename(shell);
 
   let rcFile: string;
@@ -1151,7 +1212,7 @@ function getShellRcFile(): { rcFile: string; rcPath: string; shell: string } {
 
   return {
     rcFile,
-    rcPath: path.join(os.homedir(), rcFile),
+    rcPath: path.join(overrides?.homeDir || os.homedir(), rcFile),
     shell: shellName,
   };
 }
@@ -1181,9 +1242,11 @@ Then restart your shell or run:
  * Add shims directory to shell PATH configuration.
  * Returns true if added, false if already present or failed.
  */
-export function addShimsToPath(): { success: boolean; alreadyPresent?: boolean; rcFile?: string; error?: string } {
-  const shimsDir = getShimsDir();
-  const { rcFile, rcPath, shell } = getShellRcFile();
+export function addShimsToPath(
+  overrides?: { homeDir?: string; shell?: string; shimsDir?: string },
+): { success: boolean; alreadyPresent?: boolean; rcFile?: string; error?: string } {
+  const shimsDir = overrides?.shimsDir || getShimsDir();
+  const { rcFile, rcPath, shell } = getShellRcFile(overrides);
 
   // Read current rc file content
   let content = '';
@@ -1195,18 +1258,15 @@ export function addShimsToPath(): { success: boolean; alreadyPresent?: boolean; 
     return { success: false, error: `Could not read ${rcFile}: ${(err as Error).message}` };
   }
 
-  // Check if shims path already in file
-  if (content.includes(shimsDir) || content.includes('$HOME/.agents/shims')) {
-    return { success: true, alreadyPresent: true, rcFile };
+  // Generate the canonical PATH block.
+  let exportBlock: string;
+  if (shell === 'fish') {
+    exportBlock = `# agents-cli: version-managed agent CLIs\nfish_add_path ${shimsDir}\n`;
+  } else {
+    exportBlock = `# agents-cli: version-managed agent CLIs\nexport PATH="${shimsDir}:$PATH"\n`;
   }
 
-  // Generate the export line
-  let exportLine: string;
-  if (shell === 'fish') {
-    exportLine = `\n# agents-cli: version-managed agent CLIs\nfish_add_path ${shimsDir}\n`;
-  } else {
-    exportLine = `\n# agents-cli: version-managed agent CLIs\nexport PATH="${shimsDir}:$PATH"\n`;
-  }
+  const contentWithoutShimLines = stripShimPathLines(content, shimsDir);
 
   // Find insertion point - BEFORE nvm/node setup if possible
   // Look for common patterns that should come AFTER our shims
@@ -1221,11 +1281,11 @@ export function addShimsToPath(): { success: boolean; alreadyPresent?: boolean; 
 
   let insertIndex = -1;
   for (const pattern of insertBeforePatterns) {
-    const match = content.match(pattern);
+    const match = contentWithoutShimLines.match(pattern);
     if (match && match.index !== undefined) {
       // Find start of this line
       let lineStart = match.index;
-      while (lineStart > 0 && content[lineStart - 1] !== '\n') {
+      while (lineStart > 0 && contentWithoutShimLines[lineStart - 1] !== '\n') {
         lineStart--;
       }
       if (insertIndex === -1 || lineStart < insertIndex) {
@@ -1245,16 +1305,37 @@ export function addShimsToPath(): { success: boolean; alreadyPresent?: boolean; 
     let newContent: string;
     if (insertIndex >= 0) {
       // Insert before nvm/node setup (handles index 0 correctly)
-      newContent = content.slice(0, insertIndex) + exportLine + content.slice(insertIndex);
+      const before = contentWithoutShimLines.slice(0, insertIndex);
+      const separator = before.length > 0 && !before.endsWith('\n\n') ? '\n' : '';
+      newContent = before + separator + exportBlock + contentWithoutShimLines.slice(insertIndex);
     } else {
       // Append to end
-      newContent = content + exportLine;
+      const separator = contentWithoutShimLines.length > 0 && !contentWithoutShimLines.endsWith('\n') ? '\n' : '';
+      newContent = contentWithoutShimLines + separator + exportBlock;
     }
+
+    if (newContent === content) {
+      return { success: true, alreadyPresent: true, rcFile };
+    }
+
     fs.writeFileSync(rcPath, newContent, 'utf-8');
     return { success: true, rcFile };
   } catch (err) {
     return { success: false, error: `Could not write ${rcFile}: ${(err as Error).message}` };
   }
+}
+
+export function listAgentsWithInstalledVersions(): AgentId[] {
+  const versionsDir = getVersionsDir();
+  if (!fs.existsSync(versionsDir)) {
+    return [];
+  }
+
+  const entries = fs.readdirSync(versionsDir, { withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isDirectory() && AGENTS[entry.name as AgentId])
+    .map((entry) => entry.name as AgentId)
+    .filter((agent) => fs.readdirSync(path.join(versionsDir, agent), { withFileTypes: true }).some((entry) => entry.isDirectory()));
 }
 
 /**
