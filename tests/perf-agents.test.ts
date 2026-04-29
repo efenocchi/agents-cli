@@ -23,7 +23,9 @@ function timeMs(start: [number, number]): number {
   return s * 1000 + ns / 1e6;
 }
 
-describe('agents perf', () => {
+const describePerf = process.env.PERF === '1' ? describe : describe.skip;
+
+describePerf('agents perf (manual; run with PERF=1)', () => {
   it('single which call', async () => {
     const start = process.hrtime();
     await execAsync('which claude');

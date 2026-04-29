@@ -238,12 +238,13 @@ describe('non-interactive CLI usage', () => {
 
     const addResult = runAgents(home, ['mcp', 'add', 'demo', '--agents', 'codex@0.2.0', '--', 'demo-server']);
     const registerResult = runAgents(home, ['mcp', 'register', 'demo']);
-    const manifest = fs.readFileSync(path.join(home, '.agents', 'agents.yaml'), 'utf-8');
+    const manifest = fs.readFileSync(path.join(home, '.agents-system', 'agents.yaml'), 'utf-8');
     const log = fs.readFileSync(logPath, 'utf-8');
 
     expect(addResult.status).toBe(0);
     expect(registerResult.status).toBe(0);
-    expect(manifest).toContain('agentVersions:');
+    expect(manifest).toContain('mcp:');
+    expect(manifest).toContain('demo:');
     expect(manifest).toContain('codex:');
     expect(manifest).toContain('- 0.2.0');
     expect(log).toContain(path.join(home, '.agents-system', 'versions', 'codex', '0.2.0', 'home'));
