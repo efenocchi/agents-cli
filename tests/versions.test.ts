@@ -4,52 +4,63 @@ import * as path from 'path';
 import * as os from 'os';
 
 // Mock state.ts to redirect all paths to temp directory
-let TEST_ROOT: string;
-let AGENTS_DIR: string;
-let PROJECT_AGENTS_DIR: string | null;
-let META: { agents?: Record<string, string> };
+const hoistedState = vi.hoisted(() => ({
+  TEST_ROOT: '',
+  AGENTS_DIR: '',
+  PROJECT_AGENTS_DIR: null as string | null,
+  META: {} as { agents?: Record<string, string> },
+}));
+let TEST_ROOT = '';
+let AGENTS_DIR = '';
+let PROJECT_AGENTS_DIR: string | null = null;
+let META: { agents?: Record<string, string> } = {};
 
 vi.mock('../src/lib/state.js', () => {
   return {
-    get getAgentsDir() { return () => AGENTS_DIR; },
-    get getSystemAgentsDir() { return () => AGENTS_DIR; },
-    get getUserAgentsDir() { return () => AGENTS_DIR; },
-    get getOptionalUserAgentsDir() { return () => AGENTS_DIR; },
-    get getVersionsDir() { return () => path.join(AGENTS_DIR, 'versions'); },
-    get getShimsDir() { return () => path.join(AGENTS_DIR, 'shims'); },
-    get getCommandsDir() { return () => path.join(AGENTS_DIR, 'commands'); },
-    get getSystemCommandsDir() { return () => path.join(AGENTS_DIR, 'commands'); },
-    get getUserCommandsDir() { return () => path.join(AGENTS_DIR, 'commands'); },
-    get getSkillsDir() { return () => path.join(AGENTS_DIR, 'skills'); },
-    get getSystemSkillsDir() { return () => path.join(AGENTS_DIR, 'skills'); },
-    get getUserSkillsDir() { return () => path.join(AGENTS_DIR, 'skills'); },
-    get getHooksDir() { return () => path.join(AGENTS_DIR, 'hooks'); },
-    get getSystemHooksDir() { return () => path.join(AGENTS_DIR, 'hooks'); },
-    get getUserHooksDir() { return () => path.join(AGENTS_DIR, 'hooks'); },
-    get getMemoryDir() { return () => path.join(AGENTS_DIR, 'memory'); },
-    get getRulesDir() { return () => path.join(AGENTS_DIR, 'memory'); },
-    get getSystemRulesDir() { return () => path.join(AGENTS_DIR, 'memory'); },
-    get getUserRulesDir() { return () => path.join(AGENTS_DIR, 'memory'); },
-    get getResolvedRulesDir() { return () => path.join(AGENTS_DIR, 'memory'); },
-    get getScopedAgentsDirs() { return () => [{ scope: 'user', path: AGENTS_DIR }]; },
-    get getMcpDir() { return () => path.join(AGENTS_DIR, 'mcp'); },
-    get getSystemMcpDir() { return () => path.join(AGENTS_DIR, 'mcp'); },
-    get getUserMcpDir() { return () => path.join(AGENTS_DIR, 'mcp'); },
-    get getPermissionsDir() { return () => path.join(AGENTS_DIR, 'permissions'); },
-    get getSystemPermissionsDir() { return () => path.join(AGENTS_DIR, 'permissions'); },
-    get getUserPermissionsDir() { return () => path.join(AGENTS_DIR, 'permissions'); },
-    get getSubagentsDir() { return () => path.join(AGENTS_DIR, 'subagents'); },
-    get getSystemSubagentsDir() { return () => path.join(AGENTS_DIR, 'subagents'); },
-    get getUserSubagentsDir() { return () => path.join(AGENTS_DIR, 'subagents'); },
-    get getPluginsDir() { return () => path.join(AGENTS_DIR, 'plugins'); },
-    get getPromptcutsPath() { return () => path.join(AGENTS_DIR, 'promptcuts.yaml'); },
-    get getSystemPromptcutsPath() { return () => path.join(AGENTS_DIR, 'promptcuts.yaml'); },
-    get getUserPromptcutsPath() { return () => path.join(AGENTS_DIR, 'promptcuts.yaml'); },
-    get getProjectAgentsDir() { return () => PROJECT_AGENTS_DIR; },
+    get getAgentsDir() { return () => hoistedState.AGENTS_DIR; },
+    get getSystemAgentsDir() { return () => hoistedState.AGENTS_DIR; },
+    get getUserAgentsDir() { return () => hoistedState.AGENTS_DIR; },
+    get getOptionalUserAgentsDir() { return () => hoistedState.AGENTS_DIR; },
+    get getVersionsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'versions'); },
+    get getShimsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'shims'); },
+    get getCommandsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'commands'); },
+    get getSystemCommandsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'commands'); },
+    get getUserCommandsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'commands'); },
+    get getSkillsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'skills'); },
+    get getSystemSkillsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'skills'); },
+    get getUserSkillsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'skills'); },
+    get getHooksDir() { return () => path.join(hoistedState.AGENTS_DIR, 'hooks'); },
+    get getSystemHooksDir() { return () => path.join(hoistedState.AGENTS_DIR, 'hooks'); },
+    get getUserHooksDir() { return () => path.join(hoistedState.AGENTS_DIR, 'hooks'); },
+    get getMemoryDir() { return () => path.join(hoistedState.AGENTS_DIR, 'memory'); },
+    get getRulesDir() { return () => path.join(hoistedState.AGENTS_DIR, 'memory'); },
+    get getSystemRulesDir() { return () => path.join(hoistedState.AGENTS_DIR, 'memory'); },
+    get getUserRulesDir() { return () => path.join(hoistedState.AGENTS_DIR, 'memory'); },
+    get getResolvedRulesDir() { return () => path.join(hoistedState.AGENTS_DIR, 'memory'); },
+    get getScopedAgentsDirs() { return () => [{ scope: 'user', path: hoistedState.AGENTS_DIR }]; },
+    get getMcpDir() { return () => path.join(hoistedState.AGENTS_DIR, 'mcp'); },
+    get getSystemMcpDir() { return () => path.join(hoistedState.AGENTS_DIR, 'mcp'); },
+    get getUserMcpDir() { return () => path.join(hoistedState.AGENTS_DIR, 'mcp'); },
+    get getPermissionsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'permissions'); },
+    get getSystemPermissionsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'permissions'); },
+    get getUserPermissionsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'permissions'); },
+    get getSubagentsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'subagents'); },
+    get getSystemSubagentsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'subagents'); },
+    get getUserSubagentsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'subagents'); },
+    get getPluginsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'plugins'); },
+    get getPromptcutsPath() { return () => path.join(hoistedState.AGENTS_DIR, 'promptcuts.yaml'); },
+    get getSystemPromptcutsPath() { return () => path.join(hoistedState.AGENTS_DIR, 'promptcuts.yaml'); },
+    get getUserPromptcutsPath() { return () => path.join(hoistedState.AGENTS_DIR, 'promptcuts.yaml'); },
+    get getProjectAgentsDir() { return () => hoistedState.PROJECT_AGENTS_DIR; },
     get getEnabledExtraRepos() { return () => []; },
-    get ensureAgentsDir() { return () => fs.mkdirSync(AGENTS_DIR, { recursive: true }); },
-    get readMeta() { return () => META; },
-    get writeMeta() { return (next: { agents?: Record<string, string> }) => { META = next; }; },
+    get ensureAgentsDir() { return () => fs.mkdirSync(hoistedState.AGENTS_DIR, { recursive: true }); },
+    get readMeta() { return () => hoistedState.META; },
+    get writeMeta() {
+      return (next: { agents?: Record<string, string> }) => {
+        META = next;
+        hoistedState.META = next;
+      };
+    },
     get recordVersionResources() { return () => {}; },
     get clearVersionResources() { return () => {}; },
     get getVersionResources() { return () => null; },
@@ -92,6 +103,7 @@ vi.mock('../src/lib/permissions.js', () => ({
 
 vi.mock('../src/lib/mcp.js', () => ({
   installMcpServers: () => ({ applied: [] }),
+  listMcpServerConfigs: () => [],
 }));
 
 vi.mock('../src/lib/shims.js', () => ({
@@ -146,6 +158,10 @@ beforeEach(() => {
   AGENTS_DIR = path.join(TEST_ROOT, '.agents');
   PROJECT_AGENTS_DIR = null;
   META = {};
+  hoistedState.TEST_ROOT = TEST_ROOT;
+  hoistedState.AGENTS_DIR = AGENTS_DIR;
+  hoistedState.PROJECT_AGENTS_DIR = PROJECT_AGENTS_DIR;
+  hoistedState.META = META;
   fs.mkdirSync(AGENTS_DIR, { recursive: true });
 });
 
@@ -219,6 +235,7 @@ describe('resolveAgentVersionTargets', () => {
     installManagedVersion('claude', '2.0.0');
     installManagedVersion('claude', '2.1.0');
     META = { agents: { claude: '2.1.0' } };
+    hoistedState.META = META;
 
     const result = resolveAgentVersionTargets('claude@default', ['claude']);
 
@@ -259,6 +276,7 @@ describe('resolveInstalledAgentTargets', () => {
     installManagedVersion('claude', '2.0.0');
     installManagedVersion('claude', '2.1.0');
     META = { agents: { claude: '2.1.0' } };
+    hoistedState.META = META;
 
     const result = resolveInstalledAgentTargets('claude,claude@2.0.0', ['claude']);
 
@@ -271,6 +289,7 @@ describe('resolveConfiguredAgentTargets', () => {
     installManagedVersion('claude', '2.0.0');
     installManagedVersion('claude', '2.1.0');
     META = { agents: { claude: '2.1.0' } };
+    hoistedState.META = META;
 
     const result = resolveConfiguredAgentTargets(['claude'], undefined, ['claude']);
 
@@ -281,6 +300,7 @@ describe('resolveConfiguredAgentTargets', () => {
     installManagedVersion('claude', '2.0.0');
     installManagedVersion('claude', '2.1.0');
     META = { agents: { claude: '2.1.0' } };
+    hoistedState.META = META;
 
     const result = resolveConfiguredAgentTargets(
       ['claude'],
@@ -593,6 +613,7 @@ describe('getAvailableResources', () => {
     fs.mkdirSync(path.join(projectAgents, 'commands'), { recursive: true });
     fs.writeFileSync(path.join(projectAgents, 'commands', 'proj.md'), '# Project command');
     PROJECT_AGENTS_DIR = projectAgents;
+    hoistedState.PROJECT_AGENTS_DIR = PROJECT_AGENTS_DIR;
 
     const resources = getAvailableResources();
     expect(resources.commands).toContain('proj');
@@ -726,6 +747,7 @@ describe('syncResourcesToVersion', () => {
       fs.mkdirSync(path.join(projectAgents, 'commands'), { recursive: true });
       fs.writeFileSync(path.join(projectAgents, 'commands', 'debug.md'), '# Project debug');
       PROJECT_AGENTS_DIR = projectAgents;
+      hoistedState.PROJECT_AGENTS_DIR = PROJECT_AGENTS_DIR;
       const versionHome = path.join(AGENTS_DIR, 'versions', 'claude', '2.0.65', 'home');
       fs.mkdirSync(versionHome, { recursive: true });
 
