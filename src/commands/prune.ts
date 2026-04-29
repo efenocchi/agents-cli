@@ -1,17 +1,22 @@
 /**
- * Top-level `agents prune` — remove orphan resources from version homes.
+ * Top-level `agents prune` — destructive cleanup across the install.
  *
- * Orphans are files in a version's home directory that no longer correspond to
- * anything in central storage (deleted from ~/.agents/ or never sourced from
- * an enabled extras repo). They accumulate when you remove a command/skill/hook
- * locally but never reconcile the version homes that still hold the old copy.
+ * Two kinds of cleanup, one verb:
+ *   - Resource orphans: command/skill/hook files inside a version home that no
+ *     longer come from any source (deleted from ~/.agents/ but never reconciled
+ *     into the version install).
+ *   - Version duplicates: older installed versions of an agent that share an
+ *     account with a newer installed version of the same agent (the older copy
+ *     is redundant; the newer one is what's signed in and active).
  *
- * Sync is no longer a user-facing concept — `syncResourcesToVersion` runs at
- * agent launch and applies adds/updates automatically. Pruning, however, is
- * destructive, so it stays an explicit verb.
+ * Sync (additive: copy missing/changed files into version homes) is no longer
+ * a user-facing verb — `syncResourcesToVersion` runs at agent launch and
+ * applies adds/updates automatically. Pruning, however, is destructive, so it
+ * stays explicit.
  *
- * Default scope: each agent's currently-pinned default version. Pass `--all`
- * to sweep every installed version of every capable agent.
+ * Default scope: each agent's currently-pinned default version for orphan
+ * cleanup, plus the standard cross-agent version-dedup pass. Pass `--all`
+ * to widen orphan cleanup to every installed version.
  */
 import type { Command } from 'commander';
 import chalk from 'chalk';
@@ -33,10 +38,15 @@ import {
   removeHookFromVersion,
 } from '../lib/hooks.js';
 import { getGlobalDefault } from '../lib/versions.js';
+import { resolveAgentName, formatAgentError } from '../lib/agents.js';
+import { pruneDuplicates } from './view.js';
 import { isInteractiveTerminal, isPromptCancelled } from './utils.js';
 
 type ResourceType = 'commands' | 'skills' | 'hooks';
-const ALL_TYPES: ResourceType[] = ['commands', 'skills', 'hooks'];
+type PruneType = ResourceType | 'versions';
+
+const RESOURCE_TYPES: ResourceType[] = ['commands', 'skills', 'hooks'];
+const ALL_TYPES: PruneType[] = [...RESOURCE_TYPES, 'versions'];
 
 interface PruneOptions {
   all?: boolean;
@@ -51,11 +61,6 @@ interface OrphanGroup {
   orphans: string[];
 }
 
-/**
- * Filter a (agent, version) iterator down to each agent's default version when
- * `--all` is not passed. Agents without a default are dropped silently — the
- * intent of bare `agents prune` is "clean up what I'm using right now."
- */
 function scopePairs(
   pairs: Array<{ agent: AgentId; version: string }>,
   all: boolean,
@@ -108,39 +113,138 @@ function removeOne(group: OrphanGroup, name: string): { success: boolean; error?
   }
 }
 
-function parseType(arg: string | undefined): ResourceType[] {
-  if (!arg) return ALL_TYPES;
-  if (!ALL_TYPES.includes(arg as ResourceType)) {
-    console.log(chalk.red(`Unknown resource type: ${arg}`));
-    console.log(chalk.gray(`Available: ${ALL_TYPES.join(', ')}`));
-    process.exit(1);
+/**
+ * Resolve the optional positional. It can be a resource type, the literal
+ * "versions", or an agent name (shorthand for `prune versions <agent>`).
+ */
+interface ParsedTarget {
+  resourceTypes: ResourceType[];
+  includeVersions: boolean;
+  versionAgent?: AgentId;
+}
+
+function parseTarget(arg: string | undefined): ParsedTarget {
+  if (!arg) {
+    return { resourceTypes: RESOURCE_TYPES, includeVersions: true };
   }
-  return [arg as ResourceType];
+  if (RESOURCE_TYPES.includes(arg as ResourceType)) {
+    return { resourceTypes: [arg as ResourceType], includeVersions: false };
+  }
+  if (arg === 'versions') {
+    return { resourceTypes: [], includeVersions: true };
+  }
+  // Try treating as an agent name — shortcut for `prune versions <agent>`.
+  const agentId = resolveAgentName(arg);
+  if (agentId) {
+    return { resourceTypes: [], includeVersions: true, versionAgent: agentId };
+  }
+  console.log(chalk.red(`Unknown prune target: ${arg}`));
+  console.log(chalk.gray(`Available types: ${ALL_TYPES.join(', ')}`));
+  console.log(chalk.gray(formatAgentError(arg)));
+  process.exit(1);
+}
+
+async function runOrphanPrune(
+  resourceTypes: ResourceType[],
+  options: PruneOptions,
+): Promise<void> {
+  const groups = collectOrphans(resourceTypes, options.all === true);
+
+  if (groups.length === 0) {
+    console.log(chalk.green('No orphans.'));
+    return;
+  }
+
+  const total = groups.reduce((n, g) => n + g.orphans.length, 0);
+
+  console.log(chalk.bold('Orphans (in version home, not in any source)\n'));
+  for (const g of groups) {
+    const label = `${g.type} · ${g.agent}@${g.version}`;
+    console.log(`  ${chalk.cyan(label)}  ${g.orphans.join(', ')}`);
+  }
+  console.log();
+
+  if (options.dryRun) {
+    console.log(chalk.gray(`${total} orphan(s). Run without --dry-run to delete.`));
+    return;
+  }
+
+  if (!options.yes) {
+    if (!isInteractiveTerminal()) {
+      console.log(chalk.yellow('Non-interactive shell: pass -y to confirm, or --dry-run to preview.'));
+      process.exit(1);
+    }
+    let ok = false;
+    try {
+      ok = await confirm({
+        message: `Delete ${total} orphan${total === 1 ? '' : 's'}?`,
+        default: false,
+      });
+    } catch (err) {
+      if (isPromptCancelled(err)) {
+        console.log(chalk.gray('Cancelled'));
+        return;
+      }
+      throw err;
+    }
+    if (!ok) {
+      console.log(chalk.gray('Cancelled'));
+      return;
+    }
+  }
+
+  let removed = 0;
+  let failures = 0;
+  for (const g of groups) {
+    for (const name of g.orphans) {
+      const r = removeOne(g, name);
+      if (r.success) {
+        removed++;
+      } else {
+        failures++;
+        console.log(chalk.red(`  ! ${g.type} ${g.agent}@${g.version} ${name}: ${r.error}`));
+      }
+    }
+  }
+
+  const summary = `Pruned ${removed} orphan${removed === 1 ? '' : 's'}`;
+  console.log(chalk.green(summary) + (failures > 0 ? chalk.red(`, ${failures} failed`) : '') + '.');
 }
 
 export function registerPruneCommand(program: Command): void {
   program
-    .command('prune [type]')
-    .description('Remove orphan resources from version homes (files locally that no longer source from anywhere)')
-    .option('--all', 'Sweep every installed version (default: current default version per agent)')
-    .option('--dry-run', 'Show orphans without deleting')
+    .command('prune [target]')
+    .description('Remove orphan resources (commands/skills/hooks) and/or older duplicate version installs')
+    .option('--all', 'For orphan cleanup: sweep every installed version (default: current default version per agent)')
+    .option('--dry-run', 'Show what would be removed without deleting')
     .option('-y, --yes', 'Skip confirmation prompt')
     .addHelpText('after', `
+Targets:
+  (none)     Orphans across commands, skills, hooks + duplicate versions
+  commands   Orphan command files only
+  skills     Orphan skill directories only
+  hooks      Orphan hook scripts only
+  versions   Older duplicate version installs only
+  <agent>    Older duplicate versions for one agent (e.g. 'claude')
+
 Examples:
-  # Prune orphans across commands, skills, and hooks for current default versions
+  # Full sweep: orphan resources + duplicate versions for current defaults
   agents prune
 
-  # Scope to one resource type
+  # Just orphan skills
   agents prune skills
 
-  # Sweep every installed version of every agent
+  # Just version dedup
+  agents prune versions
+
+  # Just version dedup for one agent
+  agents prune claude
+
+  # Sweep every installed version's orphans, not only the defaults
   agents prune --all
 
   # Preview without deleting
   agents prune --dry-run
-
-  # Skip the confirmation (for scripts)
-  agents prune -y
 
 What's an orphan?
   A command, skill, or hook present inside a version home but missing from every
@@ -150,70 +254,20 @@ What's an orphan?
 
 What this does NOT do:
   This is destructive cleanup only. Adds and updates flow through the auto-sync
-  that runs when you launch the agent — there's no manual sync verb.
+  that runs when you launch the agent — there is no manual sync verb.
 `)
-    .action(async (typeArg: string | undefined, options: PruneOptions) => {
-      const types = parseType(typeArg);
-      const groups = collectOrphans(types, options.all === true);
+    .action(async (target: string | undefined, options: PruneOptions) => {
+      const parsed = parseTarget(target);
 
-      if (groups.length === 0) {
-        console.log(chalk.green('No orphans.'));
-        return;
+      if (parsed.resourceTypes.length > 0) {
+        await runOrphanPrune(parsed.resourceTypes, options);
+        if (parsed.includeVersions) console.log();
       }
 
-      const total = groups.reduce((n, g) => n + g.orphans.length, 0);
-
-      console.log(chalk.bold('Orphans (in version home, not in any source)\n'));
-      for (const g of groups) {
-        const label = `${g.type} · ${g.agent}@${g.version}`;
-        console.log(`  ${chalk.cyan(label)}  ${g.orphans.join(', ')}`);
+      if (parsed.includeVersions) {
+        const versionLabel = parsed.versionAgent ? ` for ${parsed.versionAgent}` : '';
+        console.log(chalk.bold(`Duplicate versions${versionLabel}`));
+        await pruneDuplicates(parsed.versionAgent, options.yes === true, options.dryRun === true);
       }
-      console.log();
-
-      if (options.dryRun) {
-        console.log(chalk.gray(`${total} orphan(s). Run without --dry-run to delete.`));
-        return;
-      }
-
-      if (!options.yes) {
-        if (!isInteractiveTerminal()) {
-          console.log(chalk.yellow('Non-interactive shell: pass -y to confirm, or --dry-run to preview.'));
-          process.exit(1);
-        }
-        let ok = false;
-        try {
-          ok = await confirm({
-            message: `Delete ${total} orphan${total === 1 ? '' : 's'}?`,
-            default: false,
-          });
-        } catch (err) {
-          if (isPromptCancelled(err)) {
-            console.log(chalk.gray('Cancelled'));
-            return;
-          }
-          throw err;
-        }
-        if (!ok) {
-          console.log(chalk.gray('Cancelled'));
-          return;
-        }
-      }
-
-      let removed = 0;
-      let failures = 0;
-      for (const g of groups) {
-        for (const name of g.orphans) {
-          const r = removeOne(g, name);
-          if (r.success) {
-            removed++;
-          } else {
-            failures++;
-            console.log(chalk.red(`  ! ${g.type} ${g.agent}@${g.version} ${name}: ${r.error}`));
-          }
-        }
-      }
-
-      const summary = `Pruned ${removed} orphan${removed === 1 ? '' : 's'}`;
-      console.log(chalk.green(summary) + (failures > 0 ? chalk.red(`, ${failures} failed`) : '') + '.');
     });
 }
