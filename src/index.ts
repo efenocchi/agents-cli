@@ -14,7 +14,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-import { select } from '@inquirer/prompts';
+import { confirm, select } from '@inquirer/prompts';
 
 // Force exit on Ctrl+C when no interactive prompt is handling it.
 process.on('SIGINT', () => process.exit(130));
@@ -64,6 +64,16 @@ import { registerBetaCommands } from './commands/beta.js';
 import { applyGlobalHelpConventions } from './lib/help.js';
 import { isPromptCancelled } from './commands/utils.js';
 import { getAgentsDir } from './lib/state.js';
+import { AGENTS } from './lib/agents.js';
+import { getGlobalDefault } from './lib/versions.js';
+import {
+  addShimsToPath,
+  ensureShimCurrent,
+  getPathShadowingExecutable,
+  getPathSetupInstructions,
+  isShimsInPath,
+  listAgentsWithInstalledVersions,
+} from './lib/shims.js';
 
 const program = new Command();
 
@@ -93,7 +103,7 @@ Agent versions:
   add <agent>[@version]           Install an agent CLI (e.g. agents add codex)
   remove <agent>[@version]        Uninstall a version
   use <agent>@<version>           Set the default version
-  prune [agent]                   Remove older duplicate versions for one agent or all agents
+  prune [target]                  Remove orphan resources (commands/skills/hooks) and/or older duplicate version installs
   view [agent[@version]]          List versions, or inspect one in detail
 
 Agent configuration (synced across versions):
@@ -326,6 +336,69 @@ async function checkForUpdates(): Promise<void> {
       /* prompt error, ignore */
     }
   }
+}
+
+async function maybeBootstrapShimIntegration(requestedCommand: string | undefined): Promise<void> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    return;
+  }
+  if (requestedCommand === 'sync' || requestedCommand === 'refresh-memory') {
+    return;
+  }
+
+  const installedAgents = listAgentsWithInstalledVersions();
+  if (installedAgents.length === 0) {
+    return;
+  }
+
+  const createdOrUpdated: string[] = [];
+  for (const agent of installedAgents) {
+    const status = ensureShimCurrent(agent);
+    if (status !== 'current') {
+      createdOrUpdated.push(`${status === 'created' ? 'Created' : 'Updated'} ${AGENTS[agent].cliCommand} shim`);
+    }
+  }
+  for (const notice of createdOrUpdated) {
+    console.log(chalk.green(notice));
+  }
+
+  const defaultAgents = installedAgents.filter((agent) => getGlobalDefault(agent));
+  const shadowed = defaultAgents
+    .map((agent) => ({ agent, shadowedBy: getPathShadowingExecutable(agent) }))
+    .filter((item): item is { agent: keyof typeof AGENTS; shadowedBy: string } => Boolean(item.shadowedBy));
+
+  if (shadowed.length === 0 && isShimsInPath()) {
+    return;
+  }
+
+  const affected = shadowed.length > 0
+    ? shadowed.map(({ agent, shadowedBy }) => `${AGENTS[agent].cliCommand} -> ${shadowedBy}`)
+    : installedAgents.map((agent) => AGENTS[agent].cliCommand);
+
+  const shouldRepair = await confirm({
+    message: `Repair shim integration now? ${affected.join(', ')}`,
+    default: true,
+  });
+
+  if (!shouldRepair) {
+    console.log(chalk.yellow('Shim integration still needs attention.'));
+    console.log(chalk.gray(getPathSetupInstructions()));
+    return;
+  }
+
+  const pathResult = addShimsToPath();
+  if (!pathResult.success) {
+    console.log(chalk.yellow('Could not repair shim PATH setup automatically.'));
+    console.log(chalk.gray(pathResult.error || getPathSetupInstructions()));
+    return;
+  }
+
+  if (pathResult.alreadyPresent) {
+    console.log(chalk.yellow('Shim PATH entry is already in your shell config, but this shell has not reloaded it yet.'));
+  } else {
+    console.log(chalk.green(`Repaired shim PATH setup in ~/${pathResult.rcFile}`));
+  }
+  console.log(chalk.gray(getPathSetupInstructions()));
 }
 
 
@@ -567,4 +640,5 @@ if (firstRun) {
   process.exit(0);
 }
 
+await maybeBootstrapShimIntegration(requestedCommand);
 await program.parseAsync();
