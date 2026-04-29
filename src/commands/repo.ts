@@ -238,7 +238,7 @@ Examples:
       updateMeta({ extraRepos: extras });
 
       console.log(chalk.gray(`\nRegistered as "${alias}". Skills and commands from this repo will be`));
-      console.log(chalk.gray(`picked up on the next \`agents pull\` or \`agents skills sync\`.`));
+      console.log(chalk.gray(`picked up automatically the next time you launch any agent.`));
     });
 
   repoCmd
