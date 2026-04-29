@@ -47,6 +47,7 @@ interface ExecCommandActionOptions {
   secrets: string[];
   json?: boolean;
   headless?: boolean;
+  interactive?: boolean;
   sessionId?: string;
   verbose?: boolean;
   timeout?: string;
@@ -98,6 +99,7 @@ export function registerRunCommand(program: Command): void {
     )
     .option('--json', 'Stream events as JSON lines (for parsing by other tools)')
     .option('--headless', 'Non-interactive mode (default for run)', true)
+    .option('-i, --interactive', 'Force interactive mode even when a prompt is provided')
     .option('--session-id <id>', 'Resume a previous conversation (Claude only)')
     .option('--verbose', 'Show detailed execution logs')
     .option('--timeout <duration>', 'Kill the agent after this duration (e.g., 30m, 1h, 2h30m)')
@@ -286,6 +288,7 @@ Examples:
         agent,
         version,
         prompt,
+        interactive: options.interactive,
         mode,
         effort,
         cwd: options.cwd,
@@ -298,6 +301,17 @@ Examples:
         timeout: options.timeout,
         env,
       };
+
+      if (options.interactive) {
+        if (options.fallback) {
+          console.error(chalk.red('--interactive is not compatible with --fallback. Fallback only works for headless prompt runs.'));
+          process.exit(1);
+        }
+        if (options.acp) {
+          console.error(chalk.red('--interactive is not compatible with --acp. ACP is a headless protocol.'));
+          process.exit(1);
+        }
+      }
 
       const fallback: FallbackEntry[] = [];
       if (options.fallback) {
