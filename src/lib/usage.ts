@@ -556,6 +556,7 @@ export async function loadClaudeOauth(home?: string): Promise<ClaudeOauthCredent
     ]);
 
     const payload = JSON.parse(stdout.trim()) as ClaudeKeychainPayload;
+    if (typeof payload?.claudeAiOauth?.accessToken !== 'string') return null;
     if (!payload.claudeAiOauth) {
       return null;
     }
