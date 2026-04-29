@@ -7,6 +7,7 @@
  */
 
 import type { Command } from 'commander';
+import { spawn } from 'child_process';
 import chalk from 'chalk';
 import * as path from 'path';
 
@@ -110,12 +111,11 @@ you never need to start it manually.
     .action(async (options) => {
       warnDeprecated('logs', 'agents routines scheduler-logs');
       if (options.follow) {
-        const { exec: execCb } = await import('child_process');
         const { getAgentsDir } = await import('../lib/state.js');
         const logPath = path.join(getAgentsDir(), 'daemon.log');
-        const child = execCb(`tail -f "${logPath}"`);
-        child.stdout?.pipe(process.stdout);
-        child.stderr?.pipe(process.stderr);
+        const child = spawn('tail', ['-f', logPath], { stdio: ['ignore', 'pipe', 'pipe'] });
+        child.stdout.pipe(process.stdout);
+        child.stderr.pipe(process.stderr);
         child.on('exit', () => process.exit(0));
         process.on('SIGINT', () => { child.kill(); process.exit(0); });
         return;
@@ -137,4 +137,3 @@ you never need to start it manually.
       await runDaemon();
     });
 }
-
