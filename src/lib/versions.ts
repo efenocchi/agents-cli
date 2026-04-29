@@ -1528,7 +1528,6 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
     const entries = fs.readdirSync(src, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.isSymbolicLink()) continue;
-      if (entry.name.startsWith('.')) continue;
       const srcPath = safeJoin(src, entry.name);
       const destPath = safeJoin(dest, entry.name);
       if (entry.isDirectory()) {

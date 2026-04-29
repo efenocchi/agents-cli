@@ -24,6 +24,8 @@ export interface ExecOptions {
   version?: string;
   /** Omit to launch the CLI interactively -- no prompt, no --print, stdio fully inherited. */
   prompt?: string;
+  /** Force interactive mode even when a prompt is provided. */
+  interactive?: boolean;
   mode: ExecMode;
   effort: ExecEffort;
   cwd?: string;
@@ -252,7 +254,7 @@ export const AGENT_COMMANDS: Record<AgentId, AgentCommandTemplate> = {
 export function buildExecCommand(options: ExecOptions): string[] {
   const template = AGENT_COMMANDS[options.agent];
   const cmd: string[] = [...template.base];
-  const interactive = options.prompt === undefined;
+  const interactive = options.interactive === true || options.prompt === undefined;
 
   // Use versioned alias if a specific version was requested (e.g., claude@2.1.98)
   if (options.version && cmd.length > 0) {
@@ -317,12 +319,14 @@ export function buildExecCommand(options: ExecOptions): string[] {
     }
   }
 
-  // Add prompt (skipped in interactive mode so the CLI launches its TUI)
-  if (!interactive) {
+  // Add prompt when provided. In pure interactive mode (no prompt) we skip this
+  // so the CLI launches its TUI. When --interactive is passed alongside a prompt
+  // we still forward the prompt so the agent receives it as the first message.
+  if (options.prompt !== undefined) {
     if (template.promptFlag === 'positional') {
-      cmd.push(options.prompt!);
+      cmd.push(options.prompt);
     } else {
-      cmd.push(template.promptFlag, options.prompt!);
+      cmd.push(template.promptFlag, options.prompt);
     }
   }
 
@@ -364,7 +368,7 @@ async function spawnAgent(options: ExecOptions): Promise<SpawnResult> {
 
   const timeoutMs = options.timeout ? parseTimeout(options.timeout) : undefined;
   const piped = !process.stdout.isTTY;
-  const interactive = options.prompt === undefined;
+  const interactive = options.interactive === true || options.prompt === undefined;
 
   return new Promise((resolve, reject) => {
     // Interactive mode inherits all stdio so the CLI owns the TTY (TUI
