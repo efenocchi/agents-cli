@@ -11,12 +11,16 @@
  * `run/get/all` on statements.
  */
 
-const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
+import { createRequire } from 'module';
 
-// Top-level await is fine for ESM modules. Resolved once at module load.
+const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
+const require = createRequire(import.meta.url);
+
+// Keep Node on createRequire() so Vitest doesn't try to prebundle the built-in
+// sqlite module as a userland package during test collection.
 const sqliteMod = isBun
   ? await import('bun:sqlite' as string)
-  : await import('node:sqlite' as string);
+  : require('node:sqlite');
 
 // bun:sqlite exports `Database`; node:sqlite exports `DatabaseSync`.
 const NativeDatabase: new (filename: string) => NativeDb =
