@@ -36,8 +36,6 @@ import {
   countSkillFiles,
   tryParseSkillMetadata,
   diffVersionSkills,
-  installSkillToVersion,
-  removeSkillFromVersion,
   iterSkillsCapableVersions,
   type SkillParseError,
   type VersionSkillDiff,
@@ -432,184 +430,27 @@ Examples:
       }
     });
 
+  // `skills sync` is gone — sync runs automatically when the agent launches.
   skillsCmd
-    .command('sync')
-    .description('Reconcile version-home skills against central ~/.agents/skills/ (add + update, never delete)')
-    .option('-a, --agent <agent>', 'Scope to a specific agent or agent@version')
-    .option('-m, --method <method>', 'Install method: copy (default) or symlink', 'copy')
-    .addHelpText('after', `
-Examples:
-  # Sync every installed version of every skills-capable agent
-  agents skills sync
-
-  # Scope to one agent
-  agents skills sync --agent claude
-
-  # Scope to one version
-  agents skills sync --agent claude@2.1.113
-
-  # Symlink into version homes (central updates propagate automatically)
-  agents skills sync --method symlink
-
-Sync is additive: it installs missing skills and refreshes changed ones. To
-remove orphans (skills in a version home but not in central), use 'agents
-skills prune'.
-`)
-    .action(async (options) => {
-      const method = (options.method === 'symlink' ? 'symlink' : 'copy') as 'symlink' | 'copy';
-
-      let filter: { agent?: AgentId; version?: string } | undefined;
-      if (options.agent) {
-        const [name, version] = String(options.agent).split('@');
-        const agentId = resolveAgentName(name);
-        if (!agentId) {
-          console.log(chalk.red(formatAgentError(name, SKILLS_CAPABLE_AGENTS)));
-          process.exit(1);
-        }
-        filter = { agent: agentId, version: resolveVersionAlias(agentId, version) };
-      }
-
-      const pairs = iterSkillsCapableVersions(filter);
-      if (pairs.length === 0) {
-        console.log(chalk.gray('No matching installed versions.'));
-        return;
-      }
-
-      const diffs = pairs.map(({ agent, version }) => diffVersionSkills(agent, version));
-      const plan = diffs.filter((d) => d.toAdd.length > 0 || d.toUpdate.length > 0);
-
-      if (plan.length === 0) {
-        console.log(chalk.green('All version homes are up to date with central.'));
-        if (diffs.some((d) => d.orphans.length > 0)) {
-          console.log(chalk.gray('Orphan skills present. Run \'agents skills prune --dry-run\' to review.'));
-        }
-        return;
-      }
-
-      console.log(chalk.bold(`Syncing skills (method: ${method})\n`));
-      let adds = 0, updates = 0, failures = 0;
-      for (const diff of plan) {
-        const label = `${diff.agent}@${diff.version}`;
-        if (diff.toAdd.length > 0) {
-          console.log(`  ${chalk.cyan(label)} ${chalk.gray('add:')} ${diff.toAdd.join(', ')}`);
-          for (const name of diff.toAdd) {
-            const r = installSkillToVersion(diff.agent, diff.version, name, method);
-            if (r.success) adds++;
-            else { failures++; console.log(chalk.red(`    ! ${name}: ${r.error}`)); }
-          }
-        }
-        if (diff.toUpdate.length > 0) {
-          console.log(`  ${chalk.cyan(label)} ${chalk.gray('update:')} ${diff.toUpdate.join(', ')}`);
-          for (const name of diff.toUpdate) {
-            const r = installSkillToVersion(diff.agent, diff.version, name, method);
-            if (r.success) updates++;
-            else { failures++; console.log(chalk.red(`    ! ${name}: ${r.error}`)); }
-          }
-        }
-      }
-
-      console.log();
-      console.log(chalk.green(`Synced: ${adds} added, ${updates} updated${failures > 0 ? chalk.red(`, ${failures} failed`) : ''}.`));
-
-      const totalOrphans = diffs.reduce((n, d) => n + d.orphans.length, 0);
-      if (totalOrphans > 0) {
-        console.log(chalk.gray(`${totalOrphans} orphan(s) remain. Run 'agents skills prune --dry-run' to review.`));
-      }
+    .command('sync', { hidden: true })
+    .allowUnknownOption()
+    .allowExcessArguments()
+    .action(() => {
+      console.error(chalk.red('"agents skills sync" is gone.'));
+      console.error(chalk.gray('Sync runs automatically when you launch the agent.'));
+      console.error(chalk.gray('To remove orphans, use:  agents prune skills'));
+      process.exit(1);
     });
 
+  // `skills prune` moved to the top-level `agents prune` command.
   skillsCmd
-    .command('prune')
-    .description('Remove orphan skills from version homes (skills present locally but missing from configured sources)')
-    .option('-a, --agent <agent>', 'Scope to a specific agent or agent@version')
-    .option('--dry-run', 'Show orphans without deleting')
-    .option('-y, --yes', 'Skip confirmation prompt')
-    .addHelpText('after', `
-Examples:
-  # See what would be pruned
-  agents skills prune --dry-run
-
-  # Prune across every installed version (prompts for confirmation)
-  agents skills prune
-
-  # Scope to one agent or version
-  agents skills prune --agent claude@2.0.65
-
-  # Skip confirmation (for scripts)
-  agents skills prune -y
-
-Orphans are skills that exist inside a version home but are missing from every
-configured source: project .agents/skills/, central ~/.agents/skills/, and any
-enabled extra repos. Usually they are leftovers from a skill that was
-deleted or moved but never removed from the version install.
-`)
-    .action(async (options) => {
-      let filter: { agent?: AgentId; version?: string } | undefined;
-      if (options.agent) {
-        const [name, version] = String(options.agent).split('@');
-        const agentId = resolveAgentName(name);
-        if (!agentId) {
-          console.log(chalk.red(formatAgentError(name, SKILLS_CAPABLE_AGENTS)));
-          process.exit(1);
-        }
-        filter = { agent: agentId, version: resolveVersionAlias(agentId, version) };
-      }
-
-      const pairs = iterSkillsCapableVersions(filter);
-      const diffs = pairs
-        .map(({ agent, version }) => diffVersionSkills(agent, version))
-        .filter((d) => d.orphans.length > 0);
-
-      if (diffs.length === 0) {
-        console.log(chalk.green('No orphan skills.'));
-        return;
-      }
-
-      const total = diffs.reduce((n, d) => n + d.orphans.length, 0);
-      console.log(chalk.bold(`Orphans (in version home, missing from configured sources)\n`));
-      for (const d of diffs) {
-        console.log(`  ${chalk.cyan(`${d.agent}@${d.version}`)}  ${d.orphans.join(', ')}`);
-      }
-      console.log();
-
-      if (options.dryRun) {
-        console.log(chalk.gray(`${total} orphan(s). Run without --dry-run to delete.`));
-        return;
-      }
-
-      if (!options.yes) {
-        if (!isInteractiveTerminal()) {
-          console.log(chalk.yellow('Non-interactive shell: pass -y to confirm, or --dry-run to preview.'));
-          process.exit(1);
-        }
-        let ok = false;
-        try {
-          ok = await confirm({
-            message: `Delete ${total} orphan skill director${total === 1 ? 'y' : 'ies'}?`,
-            default: false,
-          });
-        } catch (err) {
-          if (isPromptCancelled(err)) {
-            console.log(chalk.gray('Cancelled'));
-            return;
-          }
-          throw err;
-        }
-        if (!ok) {
-          console.log(chalk.gray('Cancelled'));
-          return;
-        }
-      }
-
-      let removed = 0, failures = 0;
-      for (const d of diffs) {
-        for (const name of d.orphans) {
-          const r = removeSkillFromVersion(d.agent, d.version, name);
-          if (r.success) removed++;
-          else { failures++; console.log(chalk.red(`  ! ${d.agent}@${d.version} ${name}: ${r.error}`)); }
-        }
-      }
-
-      console.log(chalk.green(`Pruned ${removed} orphan(s)${failures > 0 ? chalk.red(`, ${failures} failed`) : ''}.`));
+    .command('prune', { hidden: true })
+    .allowUnknownOption()
+    .allowExcessArguments()
+    .action(() => {
+      console.error(chalk.red('"agents skills prune" moved.'));
+      console.error(chalk.gray('Use:  agents prune skills   (or `agents prune` for everything)'));
+      process.exit(1);
     });
 
   skillsCmd

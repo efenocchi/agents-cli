@@ -907,7 +907,7 @@ function printPrunePlan(plan: AgentPrunePlan, isFirst: boolean): void {
  * each agent, offers the next agent with duplicates. User answering "no"
  * stops the chain.
  */
-async function pruneDuplicates(
+export async function pruneDuplicates(
   filterAgentId: AgentId | undefined,
   yes: boolean,
   dryRun: boolean
@@ -991,37 +991,6 @@ async function pruneDuplicates(
   if (processedAny) {
     console.log(chalk.bold(`Pruned ${totalRemoved} version${totalRemoved === 1 ? '' : 's'}.`));
   }
-}
-
-export async function pruneAction(
-  agentArg?: string,
-  options?: { yes?: boolean; dryRun?: boolean }
-): Promise<void> {
-  const yes = options?.yes === true;
-  const dryRun = options?.dryRun === true;
-
-  if (!agentArg) {
-    await pruneDuplicates(undefined, yes, dryRun);
-    return;
-  }
-
-  const parts = agentArg.split('@');
-  const agentName = parts[0];
-
-  const agentId = resolveAgentName(agentName);
-  if (!agentId) {
-    console.log(chalk.red(formatAgentError(agentName)));
-    process.exit(1);
-  }
-  const requestedVersion = resolveVersionAlias(agentId, parts[1]) ?? null;
-
-  if (requestedVersion) {
-    console.log(chalk.red('prune does not take a @version suffix.'));
-    console.log(chalk.gray(`Run: agents prune ${agentId}`));
-    process.exit(1);
-  }
-
-  await pruneDuplicates(agentId, yes, dryRun);
 }
 
 /**
@@ -1142,33 +1111,3 @@ Output:
     .action((agentArg: string | undefined, options: { json?: boolean; prune?: boolean; yes?: boolean; dryRun?: boolean }) => viewAction(agentArg, options));
 }
 
-/** Register the `agents prune` command. */
-export function registerPruneCommand(program: Command): void {
-  program
-    .command('prune [agent]')
-    .description('Remove older installed versions that share an account with a newer installed version. Skips the global default.')
-    .option('--dry-run', 'Show duplicate versions without deleting')
-    .option('-y, --yes', 'Skip the prune confirmation prompt.')
-    .addHelpText('after', `
-Examples:
-  # Prune older duplicate versions across all installed agents
-  agents prune
-
-  # Preview what would be pruned
-  agents prune --dry-run
-
-  # Prune older duplicate versions for one agent
-  agents prune claude
-
-  # Skip confirmation (for scripts)
-  agents prune claude -y
-
-Notes:
-  - Prune works at the version level, not per resource.
-  - To prune orphan resources from version homes, use:
-    agents commands prune
-    agents skills prune
-    agents hooks prune
-`)
-    .action((agentArg: string | undefined, options: { yes?: boolean; dryRun?: boolean }) => pruneAction(agentArg, options));
-}

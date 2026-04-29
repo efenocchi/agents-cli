@@ -34,7 +34,7 @@ import { registerPullCommand } from './commands/pull.js';
 import { registerRepoCommands } from './commands/repo.js';
 import { registerInitCommand, runInit } from './commands/init.js';
 import { registerStatusCommand } from './commands/status.js';
-import { registerPruneCommand, registerViewCommand } from './commands/view.js';
+import { registerViewCommand } from './commands/view.js';
 import { registerCommandsCommands } from './commands/commands.js';
 import { registerHooksCommands } from './commands/hooks.js';
 import { registerSkillsCommands } from './commands/skills.js';
@@ -48,6 +48,7 @@ import { registerRoutinesCommands } from './commands/routines.js';
 import { registerRunCommand } from './commands/exec.js';
 import { registerModelsCommand } from './commands/models.js';
 import { registerPruneCommand } from './commands/prune.js';
+import { registerDoctorCommand } from './commands/doctor.js';
 import { registerSubagentsCommands } from './commands/subagents.js';
 import { registerPluginsCommands } from './commands/plugins.js';
 import { registerSyncCommand } from './commands/sync.js';
@@ -330,7 +331,6 @@ async function checkForUpdates(): Promise<void> {
 
 // Register all commands
 registerViewCommand(program);
-registerPruneCommand(program);
 registerStatusCommand(program);
 registerCommandsCommands(program);
 registerHooksCommands(program);
@@ -371,6 +371,8 @@ registerDaemonCommands(program);
 registerRoutinesCommands(program);
 registerRunCommand(program);
 registerModelsCommand(program);
+registerPruneCommand(program);
+registerDoctorCommand(program);
 
 // Deprecated 'exec' alias for 'run'
 program
