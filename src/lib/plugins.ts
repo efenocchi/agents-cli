@@ -61,6 +61,9 @@ export function loadPluginManifest(pluginRoot: string): PluginManifest | null {
     const content = fs.readFileSync(manifestPath, 'utf-8');
     const parsed = JSON.parse(content) as PluginManifest;
     if (!parsed.name || !parsed.version) return null;
+    if (/[/\\]/.test(parsed.name) || parsed.name.includes('..') || parsed.name.includes('\0')) {
+      return null;
+    }
     return parsed;
   } catch {
     return null;
