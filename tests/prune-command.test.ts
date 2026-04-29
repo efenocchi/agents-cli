@@ -21,18 +21,18 @@ describe('prune command', () => {
   it('surfaces prune in top-level help', () => {
     const helpText = runCli(['--help']);
 
-    expect(helpText).toContain('prune [agent]');
-    expect(helpText).toContain('Remove older duplicate versions for one agent or all agents');
+    expect(helpText).toContain('prune [target]');
+    expect(helpText).toContain('Remove orphan resources (commands/skills/hooks) and/or older duplicate version installs');
   });
 
   it('shows dedicated help for agents prune', () => {
     const helpText = runCli(['prune', '--help']);
 
-    expect(helpText).toContain('Usage: agents prune [options] [agent]');
+    expect(helpText).toContain('Usage: agents prune [options] [target]');
     expect(helpText).toContain('--dry-run');
     expect(helpText).toContain('agents prune --dry-run');
     expect(helpText).toContain('agents prune claude');
-    expect(helpText).toContain('agents commands prune');
+    expect(helpText).toContain('agents prune skills');
     expect(helpText).not.toContain('Usage: agents [command] [options]');
   });
 
