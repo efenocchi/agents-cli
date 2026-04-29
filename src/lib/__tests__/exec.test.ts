@@ -162,6 +162,30 @@ describe('buildExecCommand', () => {
     });
   });
 
+  // --- Interactive mode ---
+
+  describe('interactive mode', () => {
+    it('prompt + interactive: true does not add --print', () => {
+      const cmd = buildExecCommand(opts({ agent: 'claude', prompt: 'fix auth', interactive: true, headless: true }));
+      expect(cmd).not.toContain('--print');
+    });
+
+    it('prompt + interactive: true still includes the prompt in the built command', () => {
+      const cmd = buildExecCommand(opts({ agent: 'claude', prompt: 'fix auth', interactive: true, headless: true }));
+      expect(cmd).toContain('fix auth');
+    });
+
+    it('no prompt behaves as interactive by default (no --print)', () => {
+      const cmd = buildExecCommand(opts({ agent: 'claude', prompt: undefined, headless: true }));
+      expect(cmd).not.toContain('--print');
+    });
+
+    it('prompt without interactive behaves as headless (adds --print)', () => {
+      const cmd = buildExecCommand(opts({ agent: 'claude', prompt: 'fix auth', headless: true }));
+      expect(cmd).toContain('--print');
+    });
+  });
+
   // --- Session ID ---
 
   describe('session ID', () => {
