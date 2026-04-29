@@ -6,20 +6,24 @@ import * as os from 'os';
 // Declare before vi.mock so getter closures can reference it
 let tmpDir: string;
 
-vi.mock('../state.js', () => ({
-  get getProjectAgentsDir()  { return () => null; },
-  get getUserAgentsDir()     { return () => tmpDir; },
-  get getSystemAgentsDir()   { return () => tmpDir; },
-  get getSkillsDir()         { return () => path.join(tmpDir, 'skills'); },
-  get getUserHooksDir()      { return () => path.join(tmpDir, 'hooks'); },
-  get getHooksDir()          { return () => path.join(tmpDir, 'hooks'); },
-  get getUserRulesDir()      { return () => path.join(tmpDir, 'rules'); },
-  get getResolvedRulesDir()  { return () => path.join(tmpDir, 'rules'); },
-  get getUserPermissionsDir(){ return () => tmpDir; },
-  get getPermissionsDir()    { return () => tmpDir; },
-  get getVersionsDir()       { return () => path.join(tmpDir, 'versions'); },
-  get getEnabledExtraRepos() { return () => []; },
-}));
+vi.mock('../state.js', async () => {
+  const actual = await vi.importActual<typeof import('../state.js')>('../state.js');
+  return {
+    ...actual,
+    get getProjectAgentsDir()   { return () => null; },
+    get getUserAgentsDir()      { return () => tmpDir; },
+    get getSystemAgentsDir()    { return () => tmpDir; },
+    get getSkillsDir()          { return () => path.join(tmpDir, 'skills'); },
+    get getUserHooksDir()       { return () => path.join(tmpDir, 'hooks'); },
+    get getHooksDir()           { return () => path.join(tmpDir, 'hooks'); },
+    get getUserRulesDir()       { return () => path.join(tmpDir, 'rules'); },
+    get getResolvedRulesDir()   { return () => path.join(tmpDir, 'rules'); },
+    get getUserPermissionsDir() { return () => tmpDir; },
+    get getPermissionsDir()     { return () => tmpDir; },
+    get getVersionsDir()        { return () => path.join(tmpDir, 'versions'); },
+    get getEnabledExtraRepos()  { return () => []; },
+  };
+});
 
 vi.mock('../resources.js', () => ({
   resolveResource: (kind: string, name: string) => {
