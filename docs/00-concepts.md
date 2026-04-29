@@ -26,7 +26,7 @@ Every agents-cli installation maintains two repos:
 | Repo | Path | Owner | Purpose |
 |------|------|-------|---------|
 | **System repo** | `~/.agents-system/` | agents-cli maintainers | Core resources and defaults shipped with every install. Updated via `npm update -g agents-cli`. |
-| **User repo** | `~/.agents/` | You | Your personal additions and overrides. Synced with `agents push` / `agents pull`. |
+| **User repo** | `~/.agents/` | You | Your personal additions and overrides. Synced with `agents repo push` / `agents repo pull`. |
 
 A project can also have a local repo — drop a `.agents/` directory at the project root. Its resources apply only while you're inside that project tree.
 
@@ -49,7 +49,7 @@ A **resource** is any named item inside a DotAgents repo. Resources are typed by
 | `profiles` | Model + endpoint + auth bundles | YAML, consumed by `agents run` and shims |
 | `subagents` | Subagent workflow definitions | `.md` files |
 
-Resources are installed once in `~/.agents/` and synced to every supported agent's native format automatically. Sync happens when you run `agents use`, `agents pull`, or explicitly via `agents sync`.
+Resources are installed once in `~/.agents/` and synced to every supported agent's native format automatically. Sync happens when you run `agents use`, `agents repo pull`, or explicitly via `agents sync`.
 
 ---
 
