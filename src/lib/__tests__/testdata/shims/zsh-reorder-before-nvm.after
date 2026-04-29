@@ -1,7 +1,7 @@
 export PATH="/opt/homebrew/bin:$PATH"
 export PATH="/tmp/elsewhere:$PATH"
+export NVM_DIR="$HOME/.nvm"
+source "$NVM_DIR/nvm.sh"
 
 # agents-cli: version-managed agent CLIs
 export PATH="__SHIMS_DIR__:$PATH"
-export NVM_DIR="$HOME/.nvm"
-source "$NVM_DIR/nvm.sh"

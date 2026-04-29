@@ -1229,7 +1229,7 @@ export function getPathSetupInstructions(): string {
   fish_add_path ${shimsDir}`;
   }
 
-  return `Add to ~/${rcFile} (BEFORE any nvm/node setup):
+  return `Add to ~/${rcFile} (AFTER any nvm/node setup):
   export PATH="${shimsDir}:$PATH"
 
 IMPORTANT: Shims must come FIRST in PATH to override global installs.
@@ -1268,9 +1268,8 @@ export function addShimsToPath(
 
   const contentWithoutShimLines = stripShimPathLines(content, shimsDir);
 
-  // Find insertion point - BEFORE nvm/node setup if possible
-  // Look for common patterns that should come AFTER our shims
-  const insertBeforePatterns = [
+  // Find insertion point - AFTER node/nvm/fnm setup if present, otherwise append.
+  const insertAfterPatterns = [
     /^export NVM_DIR=/m,
     /^source.*nvm/m,
     /^\[ -s.*nvm/m,
@@ -1280,18 +1279,14 @@ export function addShimsToPath(
   ];
 
   let insertIndex = -1;
-  for (const pattern of insertBeforePatterns) {
-    const match = contentWithoutShimLines.match(pattern);
-    if (match && match.index !== undefined) {
-      // Find start of this line
-      let lineStart = match.index;
-      while (lineStart > 0 && contentWithoutShimLines[lineStart - 1] !== '\n') {
-        lineStart--;
-      }
-      if (insertIndex === -1 || lineStart < insertIndex) {
-        insertIndex = lineStart;
-      }
+  const lines = contentWithoutShimLines.split('\n');
+  let offset = 0;
+  for (const line of lines) {
+    const lineWithNewline = `${line}\n`;
+    if (insertAfterPatterns.some((pattern) => pattern.test(line))) {
+      insertIndex = offset + lineWithNewline.length;
     }
+    offset += lineWithNewline.length;
   }
 
   // Write the updated content
@@ -1304,7 +1299,7 @@ export function addShimsToPath(
 
     let newContent: string;
     if (insertIndex >= 0) {
-      // Insert before nvm/node setup (handles index 0 correctly)
+      // Insert after the last node/nvm/fnm-related line so our prepend wins.
       const before = contentWithoutShimLines.slice(0, insertIndex);
       const separator = before.length > 0 && !before.endsWith('\n\n') ? '\n' : '';
       newContent = before + separator + exportBlock + contentWithoutShimLines.slice(insertIndex);
@@ -1313,6 +1308,8 @@ export function addShimsToPath(
       const separator = contentWithoutShimLines.length > 0 && !contentWithoutShimLines.endsWith('\n') ? '\n' : '';
       newContent = contentWithoutShimLines + separator + exportBlock;
     }
+
+    newContent = newContent.replace(/\n{2,}$/g, '\n');
 
     if (newContent === content) {
       return { success: true, alreadyPresent: true, rcFile };
