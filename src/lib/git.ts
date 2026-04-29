@@ -331,10 +331,10 @@ export async function setRemoteUrl(repoPath: string, url: string): Promise<void>
  */
 export async function checkGitHubRepoExists(owner: string, repo: string): Promise<boolean> {
   try {
-    const { exec } = await import('child_process');
+    const { execFile } = await import('child_process');
     const { promisify } = await import('util');
-    const execAsync = promisify(exec);
-    await execAsync(`gh repo view ${owner}/${repo} --json name`);
+    const execFileAsync = promisify(execFile);
+    await execFileAsync('gh', ['repo', 'view', `${owner}/${repo}`, '--json', 'name']);
     return true;
   } catch {
     /* repo not found or gh CLI unavailable */

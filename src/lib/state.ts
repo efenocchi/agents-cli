@@ -94,9 +94,8 @@ export function getUserAgentsDir(): string {
 }
 
 /**
- * Backward-compat shim. Previously returned null when ~/.agents/ did not exist
- * or was a symlink to the system dir. Now always returns USER_AGENTS_DIR since
- * the user repo is always-on after the FOUNDATION migration.
+ * Backward-compat shim. Returns null when ~/.agents/ is a symlink to the
+ * system dir; otherwise returns USER_AGENTS_DIR.
  *
  * @deprecated Use getUserAgentsDir() directly.
  */
