@@ -64,7 +64,7 @@ describe('agents beta', () => {
     expect(outputOf(factory)).toContain('agents beta enable factory');
   });
 
-  it('stores beta flags in ~/.agents-system/agents.yaml when no personal repo exists', () => {
+  it('stores beta flags in ~/.agents/agents.yaml when no personal repo exists', () => {
     const home = makeTempHome();
     writeUpdateCache(home);
 
@@ -73,9 +73,9 @@ describe('agents beta', () => {
     const drive = runAgents(['drive', 'status'], home);
 
     expect(enable.status).toBe(0);
-    expect(fs.readFileSync(path.join(home, '.agents-system', 'agents.yaml'), 'utf-8')).toContain('beta:');
-    expect(fs.readFileSync(path.join(home, '.agents-system', 'agents.yaml'), 'utf-8')).toContain('- drive');
-    expect(outputOf(list)).toContain(path.join(home, '.agents-system', 'agents.yaml'));
+    expect(fs.readFileSync(path.join(home, '.agents', 'agents.yaml'), 'utf-8')).toContain('beta:');
+    expect(fs.readFileSync(path.join(home, '.agents', 'agents.yaml'), 'utf-8')).toContain('- drive');
+    expect(outputOf(list)).toContain(path.join(home, '.agents', 'agents.yaml'));
     expect(drive.status).toBe(0);
     expect(outputOf(drive)).toContain('Drive');
   });
@@ -101,4 +101,3 @@ describe('agents beta', () => {
     expect(outputOf(factory)).toContain('Run `rush login` first.');
   });
 });
-

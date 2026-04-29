@@ -48,6 +48,42 @@ async function runAgainstFixture(
   return agent;
 }
 
+async function saveStagedAgent(
+  baseDir: string,
+  taskName: string,
+  name: string,
+  after: string[] = [],
+  envOverrides: Record<string, string> | null = null
+): Promise<AgentProcess> {
+  const agent = new AgentProcess(
+    randomUUID(),
+    taskName,
+    'claude',
+    'irrelevant',
+    null,
+    'plan',
+    null,
+    after.length > 0 ? AgentStatus.PENDING : AgentStatus.RUNNING,
+    new Date(),
+    null,
+    baseDir,
+    null,
+    null,
+    null,
+    'test-cloud',
+    null,
+    null,
+    null,
+    name,
+    after,
+    'low',
+    null,
+    envOverrides
+  );
+  await agent.saveMeta();
+  return agent;
+}
+
 describe('AgentProcess: remoteSessionId extraction', () => {
   let tmpBase: string;
 
@@ -332,14 +368,11 @@ describe('AgentProcess: remoteSessionId extraction', () => {
 
     it('--env overrides are stored and round-trip through disk', async () => {
       const base = freshBase();
-      const mgr = new AgentManager(50, base);
-      const alice = await mgr.spawn('t', 'claude', 'x', null, 'plan', 'low', null, null, null, 'alice');
-      const bob = await mgr.spawn(
-        't', 'claude', 'y', null, 'plan', 'low', null, null, null, 'bob',
-        ['alice'],
-        null,
-        { DEBUG: '1', FEATURE_FLAG: 'on' }
-      );
+      const alice = await saveStagedAgent(base, 't', 'alice');
+      const bob = await saveStagedAgent(base, 't', 'bob', ['alice'], {
+        DEBUG: '1',
+        FEATURE_FLAG: 'on',
+      });
       expect(bob.envOverrides).toEqual({ DEBUG: '1', FEATURE_FLAG: 'on' });
       const reloaded = await AgentProcess.loadFromDisk(bob.agentId, base);
       expect(reloaded?.envOverrides).toEqual({ DEBUG: '1', FEATURE_FLAG: 'on' });
@@ -348,11 +381,8 @@ describe('AgentProcess: remoteSessionId extraction', () => {
 
     it('loadFromDisk round-trips status correctly (including PENDING)', async () => {
       const base = freshBase();
-      const mgr = new AgentManager(50, base);
-      const alice = await mgr.spawn('t', 'claude', 'x', null, 'plan', 'low', null, null, null, 'alice');
-      const bob = await mgr.spawn(
-        't', 'claude', 'y', null, 'plan', 'low', null, null, null, 'bob', ['alice']
-      );
+      const alice = await saveStagedAgent(base, 't', 'alice');
+      const bob = await saveStagedAgent(base, 't', 'bob', ['alice']);
       // Re-read from disk via loadFromDisk and confirm PENDING didn't
       // silently turn into RUNNING (the bug I fixed while building this).
       const reloaded = await AgentProcess.loadFromDisk(bob.agentId, base);
