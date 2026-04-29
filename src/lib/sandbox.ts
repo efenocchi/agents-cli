@@ -48,6 +48,13 @@ const SAFE_TOOLS: Record<string, string> = {
 /** Bare tool names that get scoped to allow.dirs, never wildcarded. */
 const DIR_SCOPED_TOOLS = new Set(['read', 'write', 'edit', 'glob', 'grep', 'notebook_edit']);
 
+function tomlString(value: string): string {
+  if (/[\r\n]/.test(value)) {
+    throw new Error(`TOML value contains newline: ${JSON.stringify(value)}`);
+  }
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
 /** Build a restricted environment for a sandboxed process, setting HOME to the overlay. */
 export function buildSpawnEnv(overlayHome: string, extraEnv?: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = { HOME: overlayHome };
@@ -221,7 +228,7 @@ export function generateCodexConfig(overlayHome: string, config: JobConfig): voi
 
   const model = config.config?.model as string | undefined;
   if (model) {
-    lines.push(`model = "${model}"`);
+    lines.push(`model = ${tomlString(model)}`);
   }
 
   if (config.mode === 'edit') {
@@ -234,7 +241,7 @@ export function generateCodexConfig(overlayHome: string, config: JobConfig): voi
     for (const [key, value] of Object.entries(config.config)) {
       if (key === 'model') continue;
       if (typeof value === 'string') {
-        lines.push(`${key} = "${value}"`);
+        lines.push(`${key} = ${tomlString(value)}`);
       } else if (typeof value === 'boolean' || typeof value === 'number') {
         lines.push(`${key} = ${value}`);
       }
