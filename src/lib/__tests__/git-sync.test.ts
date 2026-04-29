@@ -1,161 +1,80 @@
-import { describe, it, expect } from 'vitest';
-import { getGitSyncStatus, isGitRepo, getTrackedFiles } from '../git.js';
-import { parseSkillMetadata } from '../skills.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { execSync } from 'child_process';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
-import * as yaml from 'yaml';
+import { getGitSyncStatus, getTrackedFiles, isGitRepo } from '../git.js';
 
-const AGENTS_DIR = path.join(process.env.HOME!, '.agents');
+let repoDir: string;
 
-describe('Git Sync Status - Real Repo Tests', () => {
-  it('~/.agents/ should be a git repo', () => {
-    expect(isGitRepo(AGENTS_DIR)).toBe(true);
+function git(args: string): string {
+  return execSync(`git -C ${JSON.stringify(repoDir)} ${args}`, { encoding: 'utf-8' }).trim();
+}
+
+beforeEach(() => {
+  repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'git-sync-test-'));
+});
+
+afterEach(() => {
+  fs.rmSync(repoDir, { recursive: true, force: true });
+});
+
+describe('git sync helpers', () => {
+  it('detects git repositories', () => {
+    expect(isGitRepo(repoDir)).toBe(false);
+
+    execSync(`git init ${JSON.stringify(repoDir)}`, { encoding: 'utf-8' });
+
+    expect(isGitRepo(repoDir)).toBe(true);
   });
 
-  it('should list files in ~/.agents/skills/', () => {
-    const skillsDir = path.join(AGENTS_DIR, 'skills');
-    const skills = fs.readdirSync(skillsDir).filter(f => !f.startsWith('.'));
-    console.log('Local skills:', skills);
-    expect(skills.length).toBeGreaterThan(0);
+  it('lists tracked files from the actual repository index', async () => {
+    execSync(`git init ${JSON.stringify(repoDir)}`, { encoding: 'utf-8' });
+    git('config user.name "Test User"');
+    git('config user.email "test@example.com"');
+
+    fs.mkdirSync(path.join(repoDir, 'skills', 'demo'), { recursive: true });
+    fs.writeFileSync(path.join(repoDir, 'skills', 'demo', 'SKILL.md'), '# demo\n');
+    fs.writeFileSync(path.join(repoDir, 'README.md'), 'root\n');
+    git('add skills/demo/SKILL.md README.md');
+    git('commit -m "initial"');
+
+    expect(await getTrackedFiles(repoDir)).toEqual(['README.md', 'skills/demo/SKILL.md']);
+    expect(await getTrackedFiles(repoDir, 'skills')).toEqual(['skills/demo/SKILL.md']);
   });
 
-  it('should have git-tracked skills', async () => {
-    const trackedFiles = await getTrackedFiles(AGENTS_DIR, 'skills');
-    console.log('Git tracked skills files:', trackedFiles);
+  it('categorizes synced, modified, staged, new, and deleted files', async () => {
+    execSync(`git init ${JSON.stringify(repoDir)}`, { encoding: 'utf-8' });
+    git('config user.name "Test User"');
+    git('config user.email "test@example.com"');
 
-    // These should be tracked based on GitHub repo
-    const expectedTracked = ['skills/mq', 'skills/linear', 'skills/twitter-warmup'];
-    for (const expected of expectedTracked) {
-      const hasMatch = trackedFiles.some(f => f.startsWith(expected));
-      expect(hasMatch, `Expected ${expected} to be tracked`).toBe(true);
-    }
-  });
+    fs.mkdirSync(path.join(repoDir, 'skills'), { recursive: true });
+    fs.writeFileSync(path.join(repoDir, 'skills', 'clean.md'), 'clean\n');
+    fs.writeFileSync(path.join(repoDir, 'skills', 'modified.md'), 'before\n');
+    fs.writeFileSync(path.join(repoDir, 'skills', 'staged.md'), 'before\n');
+    fs.writeFileSync(path.join(repoDir, 'skills', 'deleted.md'), 'delete me\n');
+    git('add skills');
+    git('commit -m "initial"');
 
-  it('getGitSyncStatus should return tracked files as synced', async () => {
-    const status = await getGitSyncStatus(AGENTS_DIR, 'skills');
-    console.log('getGitSyncStatus for skills:', JSON.stringify(status, null, 2));
+    fs.writeFileSync(path.join(repoDir, 'skills', 'modified.md'), 'after\n');
+    fs.writeFileSync(path.join(repoDir, 'skills', 'staged.md'), 'after\n');
+    git('add skills/staged.md');
+    fs.rmSync(path.join(repoDir, 'skills', 'deleted.md'));
+    fs.writeFileSync(path.join(repoDir, 'skills', 'new.md'), 'new\n');
 
-    // synced array should contain tracked files
-    // OR all arrays empty means clean (no changes)
-    expect(status).not.toBeNull();
-  });
+    const status = await getGitSyncStatus(repoDir, 'skills');
 
-  it('should detect untracked skills as new', async () => {
-    const skillsDir = path.join(AGENTS_DIR, 'skills');
-    const localSkills = fs.readdirSync(skillsDir).filter(f => !f.startsWith('.'));
-    const trackedFiles = await getTrackedFiles(AGENTS_DIR, 'skills');
-
-    // Find skills that are local but not tracked
-    const untrackedSkills = localSkills.filter(skill => {
-      return !trackedFiles.some(f => f.startsWith(`skills/${skill}`));
+    expect(status).toEqual({
+      synced: ['skills/clean.md'],
+      modified: ['skills/modified.md', 'skills/staged.md'],
+      new: ['skills/new.md'],
+      staged: ['skills/staged.md'],
+      deleted: ['skills/deleted.md'],
     });
-
-    console.log('Untracked skills (should be blue):', untrackedSkills);
-
-    const status = await getGitSyncStatus(AGENTS_DIR, 'skills');
-    console.log('Git status new files:', status?.new);
-
-    // Untracked files should appear in status.new
-    // This is the bug - they might not be appearing
   });
 
-  it('should correctly identify tracked vs untracked', async () => {
-    const skillsDir = path.join(AGENTS_DIR, 'skills');
-    const localSkills = fs.readdirSync(skillsDir).filter(f => !f.startsWith('.'));
-    const trackedFiles = await getTrackedFiles(AGENTS_DIR, 'skills');
-
-    const trackedSkillNames = new Set<string>();
-    for (const file of trackedFiles) {
-      const match = file.match(/^skills\/([^/]+)/);
-      if (match) trackedSkillNames.add(match[1]);
-    }
-
-    console.log('\n=== SKILL STATUS ===');
-    for (const skill of localSkills) {
-      const isTracked = trackedSkillNames.has(skill);
-      const status = isTracked ? 'TRACKED (should be green)' : 'UNTRACKED (should be blue)';
-      console.log(`  ${skill}: ${status}`);
-    }
-
-    expect(trackedSkillNames.size).toBeGreaterThan(0);
-  });
-
-  it('getGitSyncStatus should populate synced array for clean tracked files', async () => {
-    // The issue: getGitSyncStatus returns empty arrays even for tracked files
-    // Because it only looks at git status (changed files), not all tracked files
-
-    const status = await getGitSyncStatus(AGENTS_DIR, 'skills');
-    console.log('\ngetGitSyncStatus result:');
-    console.log('  synced:', status?.synced);
-    console.log('  new:', status?.new);
-    console.log('  modified:', status?.modified);
-
-    // This test documents the current behavior
-    // If all arrays are empty, that means "no changes" but doesn't tell us what's tracked
-  });
-});
-
-describe('Commands Git Status', () => {
-  it('should have git-tracked commands', async () => {
-    const trackedFiles = await getTrackedFiles(AGENTS_DIR, 'commands');
-    console.log('Git tracked command files:', trackedFiles.slice(0, 5), '...');
-    expect(trackedFiles.length).toBeGreaterThan(0);
-  });
-
-  it('getGitSyncStatus for commands', async () => {
-    const status = await getGitSyncStatus(AGENTS_DIR, 'commands');
-    console.log('getGitSyncStatus for commands:', JSON.stringify(status, null, 2));
-  });
-});
-
-describe('Skill YAML Parsing', () => {
-  it('should parse SKILL.md with valid YAML frontmatter', () => {
-    const skillsDir = path.join(AGENTS_DIR, 'skills');
-    const skills = fs.readdirSync(skillsDir).filter(f => !f.startsWith('.'));
-
-    console.log('\n=== SKILL.md YAML Parsing ===');
-    for (const skill of skills) {
-      const skillDir = path.join(skillsDir, skill);
-      const skillMdPath = path.join(skillDir, 'SKILL.md');
-
-      if (!fs.existsSync(skillMdPath)) {
-        console.log(`  ${skill}: NO SKILL.md`);
-        continue;
-      }
-
-      const meta = parseSkillMetadata(skillDir);
-      if (meta) {
-        console.log(`  ${skill}: OK (name: ${meta.name})`);
-      } else {
-        // Try to diagnose the issue
-        const content = fs.readFileSync(skillMdPath, 'utf-8');
-        const lines = content.split('\n');
-        if (lines[0] === '---') {
-          const endIdx = lines.slice(1).findIndex(l => l === '---');
-          if (endIdx > 0) {
-            const frontmatter = lines.slice(1, endIdx + 1).join('\n');
-            try {
-              yaml.parse(frontmatter);
-              console.log(`  ${skill}: FAILED (unknown reason)`);
-            } catch (e: any) {
-              console.log(`  ${skill}: YAML ERROR - ${e.message.split('\n')[0]}`);
-            }
-          }
-        }
-      }
-    }
-  });
-
-  it('YAML with colons in values should be quoted', () => {
-    // This documents the issue: YAML values containing colons need quotes
-    const validYaml = `name: test
-description: "Query files with mq CLI. Triggers on: this is fine"`;
-    const parsed = yaml.parse(validYaml);
-    expect(parsed.description).toContain('Triggers on:');
-
-    // Without quotes, this fails
-    const invalidYaml = `name: test
-description: Query files with mq CLI. Triggers on: this breaks`;
-    expect(() => yaml.parse(invalidYaml)).toThrow();
+  it('returns null or empty results for non-repositories', async () => {
+    expect(await getGitSyncStatus(repoDir, 'skills')).toBeNull();
+    expect(await getTrackedFiles(repoDir, 'skills')).toEqual([]);
   });
 });
