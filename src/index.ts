@@ -71,6 +71,7 @@ import {
   ensureShimCurrent,
   getPathShadowingExecutable,
   getPathSetupInstructions,
+  hasAliasShadowingShim,
   isShimsInPath,
   listAgentsWithInstalledVersions,
 } from './lib/shims.js';
@@ -367,13 +368,26 @@ async function maybeBootstrapShimIntegration(requestedCommand: string | undefine
     .map((agent) => ({ agent, shadowedBy: getPathShadowingExecutable(agent) }))
     .filter((item): item is { agent: keyof typeof AGENTS; shadowedBy: string } => Boolean(item.shadowedBy));
 
-  if (shadowed.length === 0 && isShimsInPath()) {
+  // Also check for shell aliases that shadow the shim
+  const aliased = defaultAgents.filter((agent) => hasAliasShadowingShim(agent));
+
+  if (shadowed.length === 0 && aliased.length === 0 && isShimsInPath()) {
     return;
   }
 
-  const affected = shadowed.length > 0
-    ? shadowed.map(({ agent, shadowedBy }) => `${AGENTS[agent].cliCommand} -> ${shadowedBy}`)
-    : installedAgents.map((agent) => AGENTS[agent].cliCommand);
+  const affected: string[] = [];
+  for (const { agent, shadowedBy } of shadowed) {
+    affected.push(`${AGENTS[agent].cliCommand} -> ${shadowedBy}`);
+  }
+  for (const agent of aliased) {
+    if (!shadowed.some((s) => s.agent === agent)) {
+      affected.push(`${AGENTS[agent].cliCommand} (alias)`);
+    }
+  }
+  if (affected.length === 0) {
+    // PATH issue - show all installed agents
+    affected.push(...installedAgents.map((agent) => AGENTS[agent].cliCommand));
+  }
 
   const shouldRepair = await confirm({
     message: `Repair shim integration now? ${affected.join(', ')}`,
@@ -638,6 +652,18 @@ if (firstRun) {
     }
   }
   process.exit(0);
+}
+
+// Commands that require the system repo to be cloned first.
+const SYSTEM_REPO_COMMANDS = new Set([
+  'view', 'status', 'skills', 'rules', 'commands', 'hooks',
+  'mcp', 'permissions', 'versions', 'packages', 'sync',
+  'subagents', 'repo', 'plugins', 'doctor',
+]);
+
+if (!firstRun && requestedCommand && SYSTEM_REPO_COMMANDS.has(requestedCommand)) {
+  const { ensureInitialized } = await import('./commands/init.js');
+  await ensureInitialized(program);
 }
 
 await maybeBootstrapShimIntegration(requestedCommand);
