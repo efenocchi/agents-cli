@@ -248,8 +248,13 @@ Examples:
     .action(async () => {
       const meta = readMeta();
       const primaryUrl = meta.source || DEFAULT_SYSTEM_REPO;
+      const primaryDir = getSystemAgentsDir();
+      const primaryOnDisk = fs.existsSync(primaryDir);
+      const primaryCommit = primaryOnDisk ? await getShortCommit(primaryDir) : null;
+      const primaryStatus = !primaryOnDisk ? chalk.red('missing') : chalk.green('cloned');
+      const primaryCommitLabel = primaryCommit ? chalk.gray(`(${primaryCommit})`) : '';
       console.log(chalk.bold('\nPrimary:'));
-      console.log(`  ${chalk.cyan('(primary)')}  ${primaryUrl}`);
+      console.log(`  ${chalk.cyan('(primary)'.padEnd(12))}  ${primaryUrl}  ${primaryStatus}  ${primaryCommitLabel}`);
 
       const extras = meta.extraRepos || {};
       const aliases = Object.keys(extras);
