@@ -166,6 +166,36 @@ export async function runInit(program: Command, options: { force?: boolean } = {
   console.log(chalk.cyan('  agents repo init'));
 }
 
+/**
+ * Ensure the system repo exists before running a command that needs it.
+ * If ~/.agents-system/ is not a git repo AND we're in an interactive TTY,
+ * prompt the user to run init now. In non-interactive mode, print a clear
+ * error and exit.
+ */
+export async function ensureInitialized(program: Command): Promise<void> {
+  const agentsDir = getAgentsDir();
+  if (isGitRepo(agentsDir)) return;
+
+  if (!isInteractiveTerminal()) {
+    console.error(chalk.red('agents-cli is not initialized. Run: agents init'));
+    process.exit(1);
+  }
+
+  console.log(chalk.yellow('\nagents-cli has not been set up yet.'));
+  const proceed = await confirm({
+    message: 'Run `agents init` now?',
+    default: true,
+  }).catch(() => false);
+
+  if (!proceed) {
+    console.log(chalk.gray('Skipped. Run `agents init` when ready.'));
+    process.exit(0);
+  }
+
+  await runInit(program);
+  process.exit(0);
+}
+
 /** Register the `agents init` command. */
 export function registerInitCommand(program: Command): void {
   program
