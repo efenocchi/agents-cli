@@ -83,11 +83,11 @@ REMOTE="$(git rev-parse origin/main)"
 # token must have publish access to both @phnx-labs and @companion; create
 # automation tokens at https://www.npmjs.com/settings/<user>/tokens with the
 # "Automation" type so 2FA is bypassed for publishes.
-command -v agents >/dev/null || die "'agents' CLI not on PATH (needed to read npm-tokens secrets bundle)"
-NPM_BUNDLE_OUT="$(agents secrets export npm-tokens --plaintext 2>/dev/null || true)"
-[[ -n "$NPM_BUNDLE_OUT" ]] || die "could not read 'npm-tokens' secrets bundle -- create it with: agents secrets create npm-tokens && agents secrets add npm-tokens NPM_TOKEN"
+command -v agents >/dev/null || die "'agents' CLI not on PATH (needed to read npmjs.com secrets bundle)"
+NPM_BUNDLE_OUT="$(agents secrets export npmjs.com --plaintext 2>/dev/null || true)"
+[[ -n "$NPM_BUNDLE_OUT" ]] || die "could not read 'npmjs.com' secrets bundle -- create it with: agents secrets create npmjs.com && agents secrets add npmjs.com NPM_TOKEN"
 NPM_TOKEN_LINE="$(printf '%s\n' "$NPM_BUNDLE_OUT" | grep -E '^export NPM_TOKEN=' | head -1)"
-[[ -n "$NPM_TOKEN_LINE" ]] || die "secrets bundle 'npm-tokens' is missing key NPM_TOKEN"
+[[ -n "$NPM_TOKEN_LINE" ]] || die "secrets bundle 'npmjs.com' is missing key NPM_TOKEN"
 # Strip 'export NPM_TOKEN=' prefix and surrounding quotes if any.
 NPM_TOKEN="${NPM_TOKEN_LINE#export NPM_TOKEN=}"
 NPM_TOKEN="${NPM_TOKEN%\"}"
@@ -104,7 +104,7 @@ export NPM_CONFIG_USERCONFIG="$NPMRC_TMP"
 # Verify the token works.
 NPM_USER="$(npm whoami 2>/dev/null || true)"
 [[ -n "$NPM_USER" ]] || die "npm whoami failed with the resolved NPM_TOKEN -- token may be expired or lack publish scope"
-green "npm authenticated as $NPM_USER (via npm-tokens bundle)"
+green "npm authenticated as $NPM_USER (via npmjs.com bundle)"
 
 # ----- Validate version bump -----
 # Compare against current published latest of the canonical package.
@@ -320,7 +320,7 @@ echo
 if ! $APPLY; then
   green "Dry run looks good. Re-run with --apply to publish $TARGET to both packages."
   echo
-  yellow "Will run on --apply (using NPM_TOKEN from npm-tokens bundle, no 2FA prompts):"
+  yellow "Will run on --apply (using NPM_TOKEN from npmjs.com bundle, no 2FA prompts):"
   yellow "  1. git commit -m 'chore(release): $TARGET'  (skipped if HEAD already is)"
   yellow "  2. git tag v$TARGET                          (skipped if tag exists)"
   yellow "  3. npm publish $PHNX_PKG@$TARGET             (skipped if already on registry)"
