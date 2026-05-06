@@ -703,7 +703,7 @@ Examples:
     .option('--plaintext', 'Acknowledge that the resolved values will be printed in the clear')
     .action(async (bundleName: string | undefined, opts: { plaintext?: boolean }) => {
       try {
-        const { resolveBundleEnv } = await import('../lib/secrets/bundles.js');
+        const { resolveBundleEnv, bundleToEnvPrefix, isReservedEnvName } = await import('../lib/secrets/bundles.js');
         const resolvedBundleName = bundleName ?? (await pickBundleName('export'));
         const bundle = readBundle(resolvedBundleName);
         if (isInteractiveTerminal() && !opts.plaintext) {
@@ -711,9 +711,12 @@ Examples:
           process.exit(1);
         }
         const env = resolveBundleEnv(bundle);
+        const prefix = bundleToEnvPrefix(resolvedBundleName);
         for (const [k, v] of Object.entries(env)) {
-          const escaped = v.replace(/'/g, `'\\''`);
-          process.stdout.write(`export ${k}='${escaped}'\n`);
+          const exportKey = isReservedEnvName(k) ? `${prefix}_${k}` : k;
+          const needsQuotes = /[\s$`"'\\|&;<>(){}[\]!#~]/.test(v);
+          const output = needsQuotes ? `'${v.replace(/'/g, `'\\''`)}'` : v;
+          process.stdout.write(`export ${exportKey}=${output}\n`);
         }
       } catch (err) {
         if (isPromptCancelled(err)) return;

@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
+  bundleToEnvPrefix,
   describeBundle,
+  isReservedEnvName,
   keychainItemsForBundle,
   parseDotenv,
   resolveBundleEnv,
@@ -10,9 +12,11 @@ import {
 } from '../bundles.js';
 
 describe('validation', () => {
-  it('validateBundleName accepts lowercase letters, digits, dash, underscore', () => {
+  it('validateBundleName accepts lowercase letters, digits, dash, underscore, dot', () => {
     expect(() => validateBundleName('prod-stripe_1')).not.toThrow();
     expect(() => validateBundleName('A')).not.toThrow();
+    expect(() => validateBundleName('github.com')).not.toThrow();
+    expect(() => validateBundleName('api.example.org')).not.toThrow();
   });
 
   it('validateBundleName rejects names starting with a special char', () => {
@@ -25,6 +29,24 @@ describe('validation', () => {
     expect(() => validateEnvKey('_private')).not.toThrow();
     expect(() => validateEnvKey('1starts_with_digit')).toThrow();
     expect(() => validateEnvKey('KEY-WITH-DASH')).toThrow();
+  });
+
+  it('bundleToEnvPrefix converts bundle names to valid env prefixes', () => {
+    expect(bundleToEnvPrefix('github')).toBe('GITHUB');
+    expect(bundleToEnvPrefix('github.com')).toBe('GITHUB_COM');
+    expect(bundleToEnvPrefix('my-prod')).toBe('MY_PROD');
+    expect(bundleToEnvPrefix('api.example.org')).toBe('API_EXAMPLE_ORG');
+    expect(bundleToEnvPrefix('test-bundle.v2')).toBe('TEST_BUNDLE_V2');
+  });
+
+  it('isReservedEnvName detects system env vars', () => {
+    expect(isReservedEnvName('PATH')).toBe(true);
+    expect(isReservedEnvName('HOME')).toBe(true);
+    expect(isReservedEnvName('USERNAME')).toBe(true);
+    expect(isReservedEnvName('USER')).toBe(true);
+    expect(isReservedEnvName('SHELL')).toBe(true);
+    expect(isReservedEnvName('MY_CUSTOM_VAR')).toBe(false);
+    expect(isReservedEnvName('API_KEY')).toBe(false);
   });
 });
 
