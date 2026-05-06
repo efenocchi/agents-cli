@@ -11,6 +11,18 @@ CLI for managing AI coding agent versions, config, sessions, and cloud dispatch 
 
 Same shape in both. Resources resolve **project > user > system** at sync time. Operational state always lives in the system repo.
 
+### System repo gitignore rules
+
+The system repo (`~/.agents-system/`) ships npm defaults (resources) AND holds runtime state. Only runtime state is gitignored:
+
+| Track (npm-shipped) | Gitignore (runtime) |
+|---------------------|---------------------|
+| `commands/`, `skills/`, `hooks/`, `rules/`, `subagents/`, `mcp/`, `permissions/`, `profiles/` | `browser/` (chrome-data, pids, screenshots), `helpers/` (pty logs, sockets), `sessions/`, `runs/`, `cache/`, `cloud/`, `drive/`, `swarm/`, `teams/`, `.migrated`, `*.log`, `*.pid` |
+
+**No `secrets/` directory anywhere.** Bundle metadata lives in macOS Keychain, not on disk. The `migrateLegacyBundles()` function in `src/lib/secrets/bundles.ts` cleans up any legacy YAML files.
+
+**Browser profiles** (YAML configs) belong in `~/.agents/browser/profiles/` (user repo). Runtime browser data (chrome-data, sessions) lives in `~/.agents-system/browser/` and is gitignored.
+
 These `$HOME`-level directories (plus an optional `.agents/` at project root) are called **DotAgents repos** — they live outside this codebase and are managed by the CLI. Each has a canonical layout: `commands/`, `skills/`, `hooks/`, `rules/`, `mcp/`, `permissions/`, `profiles/`, `subagents/`. The typed items inside are called **resources**. Resolution order is project > user > extra repos > system; same-named resource at a higher layer wins, everything else unions in. See `docs/00-concepts.md` for the full model.
 
 ## Source layout
