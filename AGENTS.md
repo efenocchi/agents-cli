@@ -7,31 +7,25 @@ CLI for managing AI coding agent versions, config, sessions, and cloud dispatch 
 | Path | Role | Edited by |
 |---|---|---|
 | `.agents/` (project root) | **Project repo** — project-specific commands, skills, hooks, rules. Scoped to this repo only. | Project maintainers |
-| `~/.agents/` | **User repo** — your personal commands, skills, hooks, rules, mcp configs, permissions, profiles, browser configs. `agents repo push`/`pull` target. | You |
-| `~/.agents-system/` | **System repo** — npm-shipped defaults (tracked) + all operational state including `agents.yaml`, sessions, runs, browser runtime (gitignored). | Maintainers (resources) / CLI (state) |
+| `~/.agents/` | **User repo** — your resources + ALL operational state (versions, shims, sessions, agents.yaml, browser runtime). | You / CLI |
+| `~/.agents-system/` | **System repo** — npm-shipped defaults ONLY. Nothing else. | Maintainers |
 
-Same shape in all three. Resources AND `agents.yaml` resolve **project > user > system** — project-level pins override user/system.
+Resources AND `agents.yaml` resolve **project > user > system** — project-level pins override user/system.
 
-### System repo gitignore rules
+### What lives where
 
-The system repo (`~/.agents-system/`) ships npm defaults (resources) AND holds runtime state. Only runtime state is gitignored:
+**System repo (`~/.agents-system/`)** — npm-shipped defaults, fully tracked:
+```
+commands/  hooks/  hooks.yaml  mcp/  permissions/  profiles/  rules/  scripts/  skills/
+```
+Clone from `phnx-labs/.agents-system` to see exactly what ships. Nothing else belongs here.
 
-**Track (npm-shipped defaults):**
-`commands/`, `skills/`, `hooks/`, `rules/`, `subagents/`, `mcp/`, `permissions/`, `profiles/`, `scripts/`
-
-**Gitignore (runtime/operational state):**
-- **Agent state:** `versions/`, `shims/`, `agents/`, `agents.yaml`
-- **Sessions/runs:** `sessions/`, `runs/`, `routines/`, `backups/`
-- **Browser:** `browser/` (chrome-data, pids, screenshots)
-- **Helpers:** `helpers/` (pty logs, sockets)
-- **Cache/cloud:** `cache/`, `cloud/`, `drive/`, `repos/`, `packages/`
-- **Teams/swarm:** `swarm/`, `swarmify/`, `teams/`
-- **Processes:** `*.log`, `*.pid`, `*.sock`, `bin/`
-- **Local markers:** `.migrated`, `.update-check`, `.environment`
+**User repo (`~/.agents/`)** — your resources + all operational state:
+- **Your resources:** commands, skills, hooks, rules, mcp, permissions, profiles, subagents
+- **Operational state:** `versions/`, `shims/`, `sessions/`, `runs/`, `routines/`, `cache/`, `cloud/`, `teams/`, `browser/`, `agents.yaml`
+- **Browser:** `browser/profiles/` (YAML configs) + `browser/<profile>/` (runtime: chrome-data, pids)
 
 **No `secrets/` directory anywhere.** Bundle metadata lives in macOS Keychain, not on disk.
-
-**Browser profiles** (YAML configs) belong in `~/.agents/browser/profiles/` (user repo). Runtime browser data lives in `~/.agents-system/browser/` and is gitignored.
 
 These `$HOME`-level directories (plus an optional `.agents/` at project root) are called **DotAgents repos** — they live outside this codebase and are managed by the CLI. Each has a canonical layout: `commands/`, `skills/`, `hooks/`, `rules/`, `mcp/`, `permissions/`, `profiles/`, `subagents/`. The typed items inside are called **resources**. Resolution order is project > user > extra repos > system; same-named resource at a higher layer wins, everything else unions in. See `docs/00-concepts.md` for the full model.
 
