@@ -84,7 +84,12 @@ function removeHookFiles(dir: string, name: string): void {
   }
 }
 
-function listHookEntriesFromDir(dir: string): HookEntry[] {
+/**
+ * List hook entries in a single directory, grouping script + data files by
+ * basename. Exported so doctor-diff can reuse the same grouping the sync path
+ * applies; without this, doctor would double-count `foo.sh` and `foo.yaml`.
+ */
+export function listHookEntriesFromDir(dir: string): HookEntry[] {
   if (!fs.existsSync(dir)) {
     return [];
   }
