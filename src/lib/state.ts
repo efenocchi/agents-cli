@@ -57,6 +57,7 @@ const SHIMS_DIR = path.join(SYSTEM_AGENTS_DIR, 'shims');
 const BACKUPS_DIR = path.join(SYSTEM_AGENTS_DIR, 'backups');
 const PLUGINS_DIR = path.join(SYSTEM_AGENTS_DIR, 'plugins');
 const DRIVE_DIR = path.join(SYSTEM_AGENTS_DIR, 'drive');
+const TRASH_DIR = path.join(SYSTEM_AGENTS_DIR, 'trash');
 
 // ─── User resource dirs ───────────────────────────────────────────────────────
 
@@ -266,6 +267,12 @@ export function getPluginsDir(): string { return PLUGINS_DIR; }
 /** Path to synced remote session data (~/.agents-system/drive/). */
 export function getDriveDir(): string { return DRIVE_DIR; }
 
+/** Path to soft-deleted resources (~/.agents-system/trash/). */
+export function getTrashDir(): string { return TRASH_DIR; }
+
+/** Path to soft-deleted version dirs (~/.agents-system/trash/versions/). */
+export function getTrashVersionsDir(): string { return path.join(TRASH_DIR, 'versions'); }
+
 /**
  * Path to a single user-level extra DotAgent repo clone (~/.agents-<alias>/).
  *
@@ -387,8 +394,8 @@ export function readMeta(): Meta {
 
   // NOTE: agents.yaml migration from ~/.agents-system/ to ~/.agents/ is handled
   // exclusively by runMigration() in migrate.ts, called from postinstall and
-  // explicit command-time fallbacks (agents view/use/pull). Calling it here
-  // would mutate real-user filesystem state during test runs that import this
+  // from a one-shot bootstrap step in src/index.ts. Calling it here would
+  // mutate real-user filesystem state during test runs that import this
   // module, causing cross-test pollution.
 
   // Legacy migration: check for old meta.yaml in system dir

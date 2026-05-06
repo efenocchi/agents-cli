@@ -214,7 +214,7 @@ async function runOrphanPrune(
 export function registerPruneCommand(program: Command): void {
   program
     .command('prune [target]')
-    .description('Remove orphan resources (commands/skills/hooks) and/or older duplicate version installs')
+    .description('Remove orphan resources (commands/skills/hooks) and/or older duplicate version installs (versions soft-deleted to ~/.agents-system/trash/)')
     .option('--all', 'For orphan cleanup: sweep every installed version (default: current default version per agent)')
     .option('--dry-run', 'Show what would be removed without deleting')
     .option('-y, --yes', 'Skip confirmation prompt')
@@ -253,8 +253,14 @@ What's an orphan?
   reconciled into the version install.
 
 What this does NOT do:
-  This is destructive cleanup only. Adds and updates flow through the auto-sync
-  that runs when you launch the agent — there is no manual sync verb.
+  Adds and updates flow through the auto-sync that runs when you launch the
+  agent — there is no manual sync verb.
+
+Soft-delete:
+  Version directories are NEVER hard-deleted. \`prune\` moves them to
+  ~/.agents-system/trash/versions/<agent>/<version>/<timestamp>/. Recover
+  with \`agents trash list\` and \`agents trash restore <agent>@<version>\`.
+  The trash never auto-expires; \`rm -rf\` it manually when you're sure.
 `)
     .action(async (target: string | undefined, options: PruneOptions) => {
       const parsed = parseTarget(target);

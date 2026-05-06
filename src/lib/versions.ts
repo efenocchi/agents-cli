@@ -24,7 +24,7 @@ import chalk from 'chalk';
 import * as TOML from 'smol-toml';
 import { checkbox, select, confirm } from '@inquirer/prompts';
 import type { AgentId, VersionResources } from './types.js';
-import { getVersionsDir, getShimsDir, ensureAgentsDir, readMeta, writeMeta, getCommandsDir, getSkillsDir, getHooksDir, getMemoryDir, getResolvedRulesDir, getUserRulesDir, getPermissionsDir, getSubagentsDir, clearVersionResources, getVersionResources, recordVersionResources, getMcpDir, getProjectAgentsDir, getPromptcutsPath, getEnabledExtraRepos, getAgentsDir, getOptionalUserAgentsDir, getUserAgentsDir } from './state.js';
+import { getVersionsDir, getShimsDir, ensureAgentsDir, readMeta, writeMeta, getCommandsDir, getSkillsDir, getHooksDir, getMemoryDir, getResolvedRulesDir, getUserRulesDir, getPermissionsDir, getSubagentsDir, clearVersionResources, getVersionResources, recordVersionResources, getMcpDir, getProjectAgentsDir, getPromptcutsPath, getEnabledExtraRepos, getAgentsDir, getOptionalUserAgentsDir, getUserAgentsDir, getTrashVersionsDir } from './state.js';
 import { resolveResource } from './resources.js';
 import { AGENTS, getAccountEmail, MCP_CAPABLE_AGENTS, COMMANDS_CAPABLE_AGENTS, getMcpConfigPathForHome, parseMcpConfig, resolveAgentName, formatAgentError } from './agents.js';
 import { getDefaultPermissionSet, applyPermissionsToVersion as applyPermsToVersion, PERMISSIONS_CAPABLE_AGENTS, discoverPermissionGroups, getTotalPermissionRuleCount, buildPermissionsFromGroups, CODEX_RULES_FILENAME, getActivePermissionSetName, readPermissionSetRecipe, PERMISSION_SET_ENV_VAR } from './permissions.js';
@@ -982,6 +982,31 @@ export function listInstalledVersions(agent: AgentId): string[] {
 }
 
 /**
+ * List every version directory for an agent, including ones missing the
+ * binary (typically home-only leftovers from a prior `removeVersion`).
+ *
+ * Used by `agents prune` to surface stale installs that the regular
+ * `listInstalledVersions` filters out. Do NOT use elsewhere — every other
+ * call site assumes a working binary.
+ */
+export function listInstalledVersionDirs(agent: AgentId): Array<{ version: string; hasBinary: boolean }> {
+  const agentVersionsDir = path.join(getVersionsDir(), agent);
+  if (!fs.existsSync(agentVersionsDir)) {
+    return [];
+  }
+  const entries = fs.readdirSync(agentVersionsDir, { withFileTypes: true });
+  const out: Array<{ version: string; hasBinary: boolean }> = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    out.push({
+      version: entry.name,
+      hasBinary: fs.existsSync(getBinaryPath(agent, entry.name)),
+    });
+  }
+  return out.sort((a, b) => compareVersions(a.version, b.version));
+}
+
+/**
  * Get the global default version for an agent.
  */
 export function getGlobalDefault(agent: AgentId): string | null {
@@ -1109,8 +1134,9 @@ export async function installVersion(
 /**
  * Remove install artifacts from a version directory, preserving `home/` which
  * contains the user's conversation history, sessions, history.jsonl, tasks,
- * todos, file-history, etc. Called by removeVersion so that uninstalling a
- * version never deletes the user's transcripts.
+ * todos, file-history, etc. Used by the install pipeline (NOT by removeVersion)
+ * to clean up staging artifacts when a fresh install collides with an existing
+ * dir. removeVersion uses soft-delete instead.
  */
 function removeInstallArtifacts(versionDir: string): void {
   for (const entry of fs.readdirSync(versionDir)) {
@@ -1120,8 +1146,41 @@ function removeInstallArtifacts(versionDir: string): void {
 }
 
 /**
- * Remove a specific version of an agent. Preserves `home/` under the version
- * directory so conversation history survives reinstalls.
+ * Soft-delete a version directory by moving it to ~/.agents-system/trash/versions/.
+ * Returns the trash path on success or null on failure / no source.
+ *
+ * Trash layout: ~/.agents-system/trash/versions/<agent>/<version>/<timestamp>/
+ * The timestamp suffix lets a user soft-delete the same version twice (after
+ * re-install) without collision and gives a chronological audit trail.
+ *
+ * The whole versionDir moves — including `home/` (transcripts, sessions). The
+ * user can recover everything via `agents trash restore <agent>@<version>`.
+ * Nothing is ever hard-deleted.
+ */
+export function softDeleteVersionDir(agent: AgentId, version: string): string | null {
+  const versionDir = getVersionDir(agent, version);
+  if (!fs.existsSync(versionDir)) return null;
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const trashRoot = getTrashVersionsDir();
+  const trashAgentDir = path.join(trashRoot, agent, version);
+  const trashDest = path.join(trashAgentDir, stamp);
+
+  try {
+    fs.mkdirSync(trashAgentDir, { recursive: true, mode: 0o700 });
+    fs.renameSync(versionDir, trashDest);
+    return trashDest;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Remove a specific version of an agent.
+ *
+ * Soft-delete only: moves the entire version directory (including `home/`)
+ * to ~/.agents-system/trash/versions/. Recoverable via `agents trash restore`.
+ * Nothing is hard-deleted.
  */
 export function removeVersion(agent: AgentId, version: string): boolean {
   const versionDir = getVersionDir(agent, version);
@@ -1130,7 +1189,10 @@ export function removeVersion(agent: AgentId, version: string): boolean {
     return false;
   }
 
-  removeInstallArtifacts(versionDir);
+  const trashPath = softDeleteVersionDir(agent, version);
+  if (!trashPath) {
+    return false;
+  }
 
   // Remove versioned alias (e.g., claude@2.0.65)
   removeVersionedAlias(agent, version);
