@@ -5,6 +5,13 @@ import * as os from 'os';
 
 import { resolveImports, compileRulesForProject } from './compile.js';
 import { AGENTS } from '../agents.js';
+import type { RulesLayer } from './compose.js';
+
+/** Build the layer list used by the project tests below — only the project layer,
+ *  so the composed output is deterministic regardless of ~/.agents-system state. */
+function projectOnlyLayers(cwd: string): RulesLayer[] {
+  return [{ scope: 'project', rulesDir: path.join(cwd, '.agents', 'rules') }];
+}
 
 let tmpDir: string;
 
@@ -119,30 +126,39 @@ describe('resolveImports', () => {
 });
 
 describe('compileRulesForProject', () => {
-  it('is a no-op when .agents/rules/AGENTS.md is absent', () => {
-    const result = compileRulesForProject(tmpDir);
+  /** Set up a minimal project rules tree with a `default` preset and one subrule. */
+  function setupProject(opts: { subruleBody?: string } = {}): void {
+    writeFile(
+      '.agents/rules/rules.yaml',
+      'presets:\n  default:\n    subrules: [proj]\n'
+    );
+    writeFile('.agents/rules/subrules/proj.md', opts.subruleBody ?? 'TOKEN_FRAGMENT');
+  }
+
+  it('is a no-op when .agents/rules/ is absent', () => {
+    const result = compileRulesForProject(tmpDir, { layers: projectOnlyLayers(tmpDir) });
     expect(result.compiled).toBe(false);
     expect(result.agentsPath).toBe('');
     expect(fs.existsSync(path.join(tmpDir, 'AGENTS.md'))).toBe(false);
   });
 
-  it('writes cwd/AGENTS.md with our header and inlines @-imports', () => {
-    writeFile('.agents/rules/AGENTS.md', 'Project rules:\n\n@./fragment.md');
-    writeFile('.agents/rules/fragment.md', 'TOKEN_FRAGMENT');
+  it('writes cwd/AGENTS.md with our header and includes the project subrule', () => {
+    setupProject();
 
-    const result = compileRulesForProject(tmpDir);
+    const result = compileRulesForProject(tmpDir, { layers: projectOnlyLayers(tmpDir) });
 
     expect(result.compiled).toBe(true);
     expect(result.agentsPath).toBe(path.join(tmpDir, 'AGENTS.md'));
     const written = fs.readFileSync(result.agentsPath, 'utf-8');
     expect(written).toContain('Auto-compiled by agents-cli');
     expect(written).toContain('TOKEN_FRAGMENT');
-    expect(written).not.toContain('@./fragment.md');
+    // No raw @-import syntax should leak into the output.
+    expect(written).not.toMatch(/^@\.\//m);
   });
 
   it('creates per-agent symlinks for non-AGENTS.md instruction filenames', () => {
-    writeFile('.agents/rules/AGENTS.md', 'rules');
-    const result = compileRulesForProject(tmpDir);
+    setupProject();
+    const result = compileRulesForProject(tmpDir, { layers: projectOnlyLayers(tmpDir) });
 
     expect(result.compiled).toBe(true);
     // Every distinct non-AGENTS.md, flat-name instructions file should be symlinked.
@@ -158,22 +174,19 @@ describe('compileRulesForProject', () => {
       const linkPath = path.join(tmpDir, fname);
       expect(fs.existsSync(linkPath), `${fname} should exist`).toBe(true);
       const stat = fs.lstatSync(linkPath);
-      // On platforms that allow symlinks (POSIX), they should be symlinks
-      // pointing at AGENTS.md. We don't enforce symlink — copy fallback also OK.
       if (stat.isSymbolicLink()) {
         expect(fs.readlinkSync(linkPath)).toBe('AGENTS.md');
       }
     }
-    // Reported set matches what we found on disk.
     expect(new Set(result.symlinks)).toEqual(expected);
   });
 
   it("doesn't clobber a user-authored cwd/AGENTS.md", () => {
-    writeFile('.agents/rules/AGENTS.md', 'compiled body');
+    setupProject();
     const userBody = '# My hand-written project rules\nDo not touch.';
     writeFile('AGENTS.md', userBody);
 
-    const result = compileRulesForProject(tmpDir);
+    const result = compileRulesForProject(tmpDir, { layers: projectOnlyLayers(tmpDir) });
 
     expect(result.compiled).toBe(false);
     expect(result.skippedClobber).toContain('AGENTS.md');
@@ -181,40 +194,36 @@ describe('compileRulesForProject', () => {
   });
 
   it("doesn't clobber a user-authored CLAUDE.md", () => {
-    writeFile('.agents/rules/AGENTS.md', 'compiled body');
+    setupProject();
     const userClaude = '# Hand-written claude rules';
     writeFile('CLAUDE.md', userClaude);
 
-    const result = compileRulesForProject(tmpDir);
+    const result = compileRulesForProject(tmpDir, { layers: projectOnlyLayers(tmpDir) });
 
     expect(result.compiled).toBe(true);
     expect(result.skippedClobber).toContain('CLAUDE.md');
-    // Hand-written file is preserved
     expect(fs.readFileSync(path.join(tmpDir, 'CLAUDE.md'), 'utf-8')).toBe(userClaude);
-    // AGENTS.md still got compiled
     expect(fs.existsSync(path.join(tmpDir, 'AGENTS.md'))).toBe(true);
   });
 
   it('is idempotent — second run with same sources reports compiled:false', () => {
-    writeFile('.agents/rules/AGENTS.md', 'rules body');
-    const first = compileRulesForProject(tmpDir);
+    setupProject();
+    const first = compileRulesForProject(tmpDir, { layers: projectOnlyLayers(tmpDir) });
     expect(first.compiled).toBe(true);
 
-    const second = compileRulesForProject(tmpDir);
-    // Same content → no rewrite
+    const second = compileRulesForProject(tmpDir, { layers: projectOnlyLayers(tmpDir) });
     expect(second.compiled).toBe(false);
-    // Symlinks reported on the second run because they already exist correctly
     expect(second.symlinks.length).toBeGreaterThan(0);
   });
 
   it('replaces stale compiled content when sources change', () => {
-    writeFile('.agents/rules/AGENTS.md', 'first version');
-    compileRulesForProject(tmpDir);
+    setupProject({ subruleBody: 'first version' });
+    compileRulesForProject(tmpDir, { layers: projectOnlyLayers(tmpDir) });
     const first = fs.readFileSync(path.join(tmpDir, 'AGENTS.md'), 'utf-8');
     expect(first).toContain('first version');
 
-    fs.writeFileSync(path.join(tmpDir, '.agents/rules/AGENTS.md'), 'second version');
-    const result = compileRulesForProject(tmpDir);
+    fs.writeFileSync(path.join(tmpDir, '.agents/rules/subrules/proj.md'), 'second version');
+    const result = compileRulesForProject(tmpDir, { layers: projectOnlyLayers(tmpDir) });
     expect(result.compiled).toBe(true);
     const second = fs.readFileSync(path.join(tmpDir, 'AGENTS.md'), 'utf-8');
     expect(second).toContain('second version');
@@ -222,18 +231,15 @@ describe('compileRulesForProject', () => {
   });
 
   it('preserves an existing correct symlink without recreating it', () => {
-    writeFile('.agents/rules/AGENTS.md', 'rules');
-    compileRulesForProject(tmpDir);
+    setupProject();
+    compileRulesForProject(tmpDir, { layers: projectOnlyLayers(tmpDir) });
 
-    // Identify a symlink we created (e.g. CLAUDE.md)
     const claudePath = path.join(tmpDir, 'CLAUDE.md');
     const before = fs.lstatSync(claudePath);
 
-    // Run again
-    compileRulesForProject(tmpDir);
+    compileRulesForProject(tmpDir, { layers: projectOnlyLayers(tmpDir) });
     const after = fs.lstatSync(claudePath);
 
-    // ino should be unchanged because we didn't touch it
     expect(after.ino).toBe(before.ino);
   });
 });

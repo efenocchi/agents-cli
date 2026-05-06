@@ -24,7 +24,7 @@ import chalk from 'chalk';
 import * as TOML from 'smol-toml';
 import { checkbox, select, confirm } from '@inquirer/prompts';
 import type { AgentId, VersionResources } from './types.js';
-import { getVersionsDir, getShimsDir, ensureAgentsDir, readMeta, writeMeta, getCommandsDir, getSkillsDir, getHooksDir, getResolvedRulesDir, getUserRulesDir, getPermissionsDir, getSubagentsDir, clearVersionResources, getVersionResources, recordVersionResources, getMcpDir, getProjectAgentsDir, getPromptcutsPath, getEnabledExtraRepos, getAgentsDir, getOptionalUserAgentsDir, getUserAgentsDir, getTrashVersionsDir } from './state.js';
+import { getVersionsDir, getShimsDir, ensureAgentsDir, readMeta, writeMeta, getCommandsDir, getSkillsDir, getHooksDir, getResolvedRulesDir, getUserRulesDir, getPermissionsDir, getSubagentsDir, clearVersionResources, getVersionResources, recordVersionResources, getMcpDir, getProjectAgentsDir, getPromptcutsPath, getEnabledExtraRepos, getAgentsDir, getOptionalUserAgentsDir, getUserAgentsDir, getTrashVersionsDir, getActiveRulesPreset } from './state.js';
 import { resolveResource } from './resources.js';
 import { AGENTS, getAccountEmail, MCP_CAPABLE_AGENTS, COMMANDS_CAPABLE_AGENTS, getMcpConfigPathForHome, parseMcpConfig, resolveAgentName, formatAgentError } from './agents.js';
 import { getDefaultPermissionSet, applyPermissionsToVersion as applyPermsToVersion, PERMISSIONS_CAPABLE_AGENTS, discoverPermissionGroups, getTotalPermissionRuleCount, buildPermissionsFromGroups, CODEX_RULES_FILENAME, getActivePermissionSetName, readPermissionSetRecipe, PERMISSION_SET_ENV_VAR } from './permissions.js';
@@ -35,7 +35,7 @@ import { listInstalledSubagents, transformSubagentForClaude, syncSubagentToOpenc
 import { parseHookManifest, registerHooksToSettings } from './hooks.js';
 import { supports, explainSkip } from './capabilities.js';
 import { discoverPlugins, syncPluginToVersion, isPluginSynced, pluginSupportsAgent, cleanOrphanedPluginSkills } from './plugins.js';
-import { compileRulesForAgent } from './rules/compile.js';
+import { composeRulesFromState } from './rules/compose.js';
 import { loadSyncManifest, saveSyncManifest, buildManifest, isSyncStale } from './sync-manifest.js';
 import { PLUGINS_CAPABLE_AGENTS } from './agents.js';
 import { safeJoin } from './paths.js';
@@ -161,26 +161,31 @@ export function getAvailableResources(cwd: string = process.cwd()): AvailableRes
   }
   result.hooks = Array.from(hookNames);
 
-  // Rules (*.md files, excluding symlinks and README)
-  // Scan 'rules/' first (canonical), then 'memory/' (legacy name) for backward compat.
-  const memoryNames = new Set<string>();
-  for (const { base } of resourceBases) {
-    for (const subdir of ['rules', 'memory']) {
-      const memoryDir = path.join(base, subdir);
-      if (!fs.existsSync(memoryDir)) continue;
-      const names = fs.readdirSync(memoryDir)
-        .filter(f => {
-          if (!f.endsWith('.md') || f === RULES_DOC_FILENAME) return false;
-          const stat = fs.lstatSync(path.join(memoryDir, f));
-          return !stat.isSymbolicLink();
-        })
-        .map(f => f.replace(/\.md$/, ''));
-      for (const name of names) {
-        memoryNames.add(name);
+  // Rules — list available presets across layers (project > user > extras > system).
+  // The composer selects exactly one preset per sync; this list drives the
+  // resource-count display and `agents rules switch` picker. Routes through
+  // the rules-dir getters so test mocks work the same as production paths.
+  const presetNames = new Set<string>();
+  const rulesDirs: string[] = [];
+  if (projectAgentsDir) rulesDirs.push(path.join(projectAgentsDir, 'rules'));
+  rulesDirs.push(getUserRulesDir());
+  rulesDirs.push(getResolvedRulesDir());
+  for (const extra of getEnabledExtraRepos()) {
+    rulesDirs.push(path.join(extra.dir, 'rules'));
+  }
+  for (const rulesDir of rulesDirs) {
+    const rulesYamlPath = path.join(rulesDir, 'rules.yaml');
+    if (!fs.existsSync(rulesYamlPath)) continue;
+    try {
+      const parsed = yaml.parse(fs.readFileSync(rulesYamlPath, 'utf-8')) as { presets?: Record<string, unknown> } | null;
+      for (const name of Object.keys(parsed?.presets || {})) {
+        presetNames.add(name);
       }
+    } catch {
+      // malformed rules.yaml — skip silently; the composer will surface the error.
     }
   }
-  result.memory = Array.from(memoryNames);
+  result.memory = Array.from(presetNames);
 
   // MCP servers (*.yaml files)
   const mcpNames = new Set<string>();
@@ -362,46 +367,13 @@ export function getActuallySyncedResources(agent: AgentId, version: string, opti
     }
   }
 
-  // Rules - check which rule files are actually in sync (content matches)
-  const systemRulesDir = getResolvedRulesDir();
-  const projectRulesDir = projectAgentsDir ? path.join(projectAgentsDir, 'rules') : null;
-  const userRulesDir = getUserRulesDir();
-  const ruleFiles = new Set<string>();
-  if (fs.existsSync(systemRulesDir)) {
-    fs.readdirSync(systemRulesDir).filter(f => f.endsWith('.md') && f !== RULES_DOC_FILENAME).forEach(f => ruleFiles.add(f));
-  }
-  if (projectRulesDir && fs.existsSync(projectRulesDir)) {
-    fs.readdirSync(projectRulesDir).filter(f => f.endsWith('.md') && f !== RULES_DOC_FILENAME).forEach(f => ruleFiles.add(f));
-  }
-  if (fs.existsSync(userRulesDir)) {
-    fs.readdirSync(userRulesDir).filter(f => f.endsWith('.md') && f !== RULES_DOC_FILENAME).forEach(f => ruleFiles.add(f));
-  }
-  for (const file of ruleFiles) {
-    const ruleName = file.replace(/\.md$/, '');
-    const targetName = file === 'AGENTS.md' ? agentConfig.instructionsFile : file;
-    const versionFile = path.join(configDir, targetName);
-    if (!fs.existsSync(versionFile)) continue;
-
-    const projectFile = projectRulesDir ? path.join(projectRulesDir, file) : null;
-    const systemFile = path.join(systemRulesDir, file);
-    const userFile = path.join(userRulesDir, file);
-    const hasProject = projectFile ? fs.existsSync(projectFile) : false;
-    const hasUser = fs.existsSync(userFile);
-    const hasSystem = fs.existsSync(systemFile);
-    const sourceFile = hasProject ? projectFile! : hasUser ? userFile : systemFile;
-    if (!hasProject && !hasSystem && !hasUser) {
-      result.memory.push(ruleName);
-      continue;
-    }
-    try {
-      const sourceContent = fs.readFileSync(sourceFile, 'utf-8');
-      const versionContent = fs.readFileSync(versionFile, 'utf-8');
-      if (sourceContent === versionContent) {
-        result.memory.push(ruleName);
-      }
-    } catch {
-      // Ignore
-    }
+  // Rules — single composed instruction file per agent. If the file exists in
+  // the version home, we consider the active preset synced. Available presets
+  // are surfaced from rules.yaml; this set is the subset that materialized.
+  const instrFile = path.join(configDir, agentConfig.instructionsFile);
+  if (fs.existsSync(instrFile)) {
+    const activePreset = getActiveRulesPreset(agent, version);
+    result.memory.push(activePreset);
   }
 
   // MCP - use canonical config path + parser per agent
@@ -1779,49 +1751,34 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
     }
   }
 
-  // Sync rule files
-  const rulesToSync = selection
-    ? resolveSelection(selection.memory, available.memory)
-    : available.memory;
+  // Sync rules — compose from layered subrules + active preset and write a
+  // single inlined instruction file. No @-import expansion; no per-fragment
+  // copies. Project rules are NOT synced into the version home — they are
+  // composed into the workspace at agents-run time (see compileRulesForProject).
+  const skipMemory = selection && (selection.memory === undefined || (Array.isArray(selection.memory) && selection.memory.length === 0));
+  if (!skipMemory && COMMANDS_CAPABLE_AGENTS.includes(agent)) {
+    try {
+      // If selection.memory names a single preset, treat it as a one-shot
+      // override; otherwise read the persisted active preset.
+      const overridePreset = Array.isArray(selection?.memory) && selection!.memory.length === 1 && selection!.memory[0] !== 'AGENTS'
+        ? selection!.memory[0]
+        : null;
+      const preset = overridePreset || getActiveRulesPreset(agent, version);
+      const composed = composeRulesFromState({ preset });
 
-  if (rulesToSync.length > 0 && COMMANDS_CAPABLE_AGENTS.includes(agent)) {
-    const systemRulesDir = getResolvedRulesDir();
-    const userRulesDir = getUserRulesDir();
-    const syncedRules: string[] = [];
-    const agentSupportsImports = !!agentConfig.capabilities.rulesImports;
-
-    // Project rules are NOT synced into the version home. They are written to
-    // the workspace itself by compileRulesForProject(cwd), where each agent
-    // natively reads cwd/<INSTRUCTIONS_FILE>. The version home holds only
-    // user/system/extras — these become the agent's user-level rules; the
-    // agent's own loader merges that with the project file at runtime.
-    for (const mem of rulesToSync) {
-      const candidates: Array<string | null> = [
-        safeJoin(userRulesDir, `${mem}.md`),
-        safeJoin(systemRulesDir, `${mem}.md`),
-        ...extraRepos.map((e) => safeJoin(path.join(e.dir, 'rules'), `${mem}.md`)),
-      ];
-      const srcFile = candidates.find((p) => p && fs.existsSync(p) && !fs.lstatSync(p).isSymbolicLink()) || null;
-      if (!srcFile) continue;
-
-      const targetName = mem === 'AGENTS' ? agentConfig.instructionsFile : `${mem}.md`;
+      const targetName = agentConfig.instructionsFile;
       const destFile = safeJoin(agentDir, targetName);
-
+      fs.mkdirSync(path.dirname(destFile), { recursive: true });
       removePath(destFile);
-      // For the primary rules file (AGENTS.md), agents that don't natively
-      // resolve @-imports get a compiled (inlined) copy + sidecar manifest.
-      // Everything else (secondary rule files, @-capable agents) gets a
-      // straight copy.
-      if (mem === 'AGENTS' && !agentSupportsImports) {
-        compileRulesForAgent(agent, version);
-      } else {
-        fs.copyFileSync(srcFile, destFile);
-      }
+      fs.writeFileSync(destFile, composed.content);
       result.memory.push(targetName);
-      syncedRules.push(mem);
-    }
-    if (syncedRules.length > 0) {
-      recordVersionResources(agent, version, 'memory', syncedRules);
+
+      // Track which preset materialized — surfaces in `agents rules list`.
+      recordVersionResources(agent, version, 'memory', [composed.preset]);
+    } catch (err) {
+      // No rules.yaml yet, or a typo'd preset name. Don't fail the whole sync —
+      // just leave the agent without a synced rules file.
+      console.warn(`Skipping rules sync for ${agent}@${version}: ${(err as Error).message}`);
     }
   }
 
