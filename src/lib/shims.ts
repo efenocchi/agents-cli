@@ -198,8 +198,10 @@ export async function promptConflictStrategy(
  *   v6 — hard-disable Codex startup update checks in the generated shims.
  *   v7 — rename `agents refresh-memory` invocation to `agents refresh-rules`
  *        and capability flag `memoryImports` → `rulesImports`.
+ *   v8 — versions moved from ~/.agents-system/versions to ~/.agents/versions
+ *        (two-repo split: system = shipped defaults, user = operational state).
  */
-export const SHIM_SCHEMA_VERSION = 7;
+export const SHIM_SCHEMA_VERSION = 8;
 
 /** Internal marker string used to embed the schema version in shim scripts. */
 const SHIM_VERSION_MARKER = 'agents-shim-version:';
@@ -318,7 +320,7 @@ if [ -z "$VERSION" ]; then
   exit 1
 fi
 
-VERSION_DIR="$AGENTS_SYSTEM_DIR/versions/$AGENT/$VERSION"
+VERSION_DIR="$AGENTS_USER_DIR/versions/$AGENT/$VERSION"
 BINARY="$VERSION_DIR/node_modules/.bin/$CLI_COMMAND"
 
 # Auto-install if not present
@@ -415,8 +417,10 @@ export function removeShim(agent: AgentId): boolean {
  *        read the versioned permissions/rules instead of $HOME/.codex.
  *   v4 — direct aliases read binaries and config homes from ~/.agents-system.
  *   v5 — hard-disable Codex startup update checks in versioned aliases.
+ *   v6 — versions moved from ~/.agents-system/versions to ~/.agents/versions
+ *        (two-repo split: system = shipped defaults, user = operational state).
  */
-export const VERSIONED_ALIAS_SCHEMA_VERSION = 5;
+export const VERSIONED_ALIAS_SCHEMA_VERSION = 6;
 
 /** Internal marker string used to embed the schema version in versioned alias scripts. */
 const VERSIONED_ALIAS_VERSION_MARKER = 'agents-versioned-alias-version:';
@@ -445,14 +449,14 @@ export function generateVersionedAliasScript(agent: AgentId, version: string): s
     ? `
 # Claude stores OAuth credentials in the macOS keychain. Scope them to this
 # version's config directory so direct aliases also switch the live account.
-export CLAUDE_CONFIG_DIR="$HOME/.agents-system/versions/${agent}/${version}/home/${configDirName}"
+export CLAUDE_CONFIG_DIR="$HOME/.agents/versions/${agent}/${version}/home/${configDirName}"
 `
     : agent === 'codex'
       ? `
 # Codex reads its config (approval_policy, sandbox_mode, MCP servers, rules)
 # from CODEX_HOME. Point direct aliases at the versioned home so permissions
 # and rules written by agents-cli actually take effect.
-export CODEX_HOME="$HOME/.agents-system/versions/${agent}/${version}/home/${configDirName}"
+export CODEX_HOME="$HOME/.agents/versions/${agent}/${version}/home/${configDirName}"
 `
       : '';
   const launchArgs = agent === 'codex' ? ' -c check_for_update_on_startup=false' : '';
@@ -462,7 +466,7 @@ export CODEX_HOME="$HOME/.agents-system/versions/${agent}/${version}/home/${conf
 # ${VERSIONED_ALIAS_VERSION_MARKER} ${VERSIONED_ALIAS_SCHEMA_VERSION}
 # Direct alias for ${agentConfig.name}@${version}
 
-BINARY="$HOME/.agents-system/versions/${agent}/${version}/node_modules/.bin/${agentConfig.cliCommand}"
+BINARY="$HOME/.agents/versions/${agent}/${version}/node_modules/.bin/${agentConfig.cliCommand}"
 
 if [ ! -x "$BINARY" ]; then
   echo "agents: ${agent}@${version} not installed" >&2
