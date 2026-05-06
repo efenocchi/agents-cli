@@ -26,7 +26,7 @@ import { AGENTS } from '../src/lib/agents.js';
 import type { AgentId } from '../src/lib/types.js';
 import { getGlobalDefault } from '../src/lib/versions.js';
 import { getVersionsDir } from '../src/lib/state.js';
-import { compileRulesForProject } from '../src/lib/rules-compile.js';
+import { compileRulesForProject } from '../src/lib/rules/compile.js';
 
 const E2E = process.env.AGENTS_E2E === '1';
 const d = E2E ? describe : describe.skip;

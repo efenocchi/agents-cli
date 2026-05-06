@@ -39,7 +39,7 @@ import {
   getVersionHomePath,
 } from './versions.js';
 import { markdownToToml } from './convert.js';
-import { resolveImports, supportsRulesImports } from './rules-compile.js';
+import { resolveImports, supportsRulesImports } from './rules/compile.js';
 import { listCommandsInVersionHome, getVersionCommandsDir } from './commands.js';
 import { listSkillsInVersionHome, getVersionSkillsDir } from './skills.js';
 import { listHooksInVersionHome, getVersionHooksDir, listHookEntriesFromDir } from './hooks.js';

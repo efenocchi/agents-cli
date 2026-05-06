@@ -32,7 +32,7 @@ import {
   instructionsExists,
   getInstructionsContent,
   listCentralRules,
-} from '../lib/rules.js';
+} from '../lib/rules/rules.js';
 import {
   listInstalledVersions,
   getGlobalDefault,

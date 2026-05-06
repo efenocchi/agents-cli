@@ -58,7 +58,7 @@ import {
 import { getAgentResources, listResources } from '../lib/resources.js';
 import { getAgentsDir, getUserAgentsDir, getPromptcutsPath } from '../lib/state.js';
 import { isGitRepo, getGitSyncStatus } from '../lib/git.js';
-import { getCentralRulesFileName } from '../lib/rules.js';
+import { getCentralRulesFileName } from '../lib/rules/rules.js';
 import { getConfiguredRunStrategy } from '../lib/rotate.js';
 import { confirm } from '@inquirer/prompts';
 import { formatPath, isInteractiveTerminal, isPromptCancelled } from './utils.js';
