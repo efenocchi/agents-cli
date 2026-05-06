@@ -39,7 +39,6 @@ const SYSTEM_COMMANDS_DIR = path.join(SYSTEM_AGENTS_DIR, 'commands');
 const SYSTEM_HOOKS_DIR = path.join(SYSTEM_AGENTS_DIR, 'hooks');
 const SYSTEM_SKILLS_DIR = path.join(SYSTEM_AGENTS_DIR, 'skills');
 const SYSTEM_RULES_DIR = path.join(SYSTEM_AGENTS_DIR, 'rules');
-const SYSTEM_LEGACY_MEMORY_DIR = path.join(SYSTEM_AGENTS_DIR, 'memory');
 const SYSTEM_MCP_DIR = path.join(SYSTEM_AGENTS_DIR, 'mcp');
 const SYSTEM_PERMISSIONS_DIR = path.join(SYSTEM_AGENTS_DIR, 'permissions');
 const SYSTEM_SUBAGENTS_DIR = path.join(SYSTEM_AGENTS_DIR, 'subagents');
@@ -162,39 +161,8 @@ export function getSkillsDir(): string { return SYSTEM_SKILLS_DIR; }
 /** Path to the canonical rules directory — system repo. */
 export function getRulesDir(): string { return SYSTEM_RULES_DIR; }
 
-/** Back-compat export; resolves to system rules dir. */
-export function getMemoryDir(): string { return SYSTEM_RULES_DIR; }
-
-let legacyMemoryWarned = false;
-
-/**
- * Read-side resolution for the canonical rules dir.
- *
- * Returns SYSTEM_RULES_DIR normally. Falls back to the legacy
- * SYSTEM_LEGACY_MEMORY_DIR (~/.agents-system/memory/) only when the upstream
- * still uses the old layout and the user hasn't pulled the rename yet —
- * detected by absence of rules/AGENTS.md and presence of memory/AGENTS.md.
- *
- * Prints a single warning per process the first time the fallback fires.
- * Per the read-only system-repo invariant, this never moves files; the rename
- * is applied when the user pulls upstream.
- */
-export function getResolvedRulesDir(): string {
-  const rulesAgents = path.join(SYSTEM_RULES_DIR, 'AGENTS.md');
-  const legacyAgents = path.join(SYSTEM_LEGACY_MEMORY_DIR, 'AGENTS.md');
-  if (fs.existsSync(rulesAgents)) return SYSTEM_RULES_DIR;
-  if (fs.existsSync(legacyAgents)) {
-    if (!legacyMemoryWarned) {
-      legacyMemoryWarned = true;
-      process.stderr.write(
-        'agents-cli: Legacy memory/ directory detected — agents-cli still works, ' +
-          "but run 'agents repo pull system' to migrate to rules/.\n",
-      );
-    }
-    return SYSTEM_LEGACY_MEMORY_DIR;
-  }
-  return SYSTEM_RULES_DIR;
-}
+/** Read-side resolution for the canonical rules dir — system repo. */
+export function getResolvedRulesDir(): string { return SYSTEM_RULES_DIR; }
 
 /** Path to MCP server YAML configs — system repo. */
 export function getMcpDir(): string { return SYSTEM_MCP_DIR; }

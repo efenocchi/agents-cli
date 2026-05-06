@@ -58,7 +58,7 @@ import {
 import { getAgentResources, listResources } from '../lib/resources.js';
 import { getAgentsDir, getUserAgentsDir, getPromptcutsPath } from '../lib/state.js';
 import { isGitRepo, getGitSyncStatus } from '../lib/git.js';
-import { getCentralMemoryFileName } from '../lib/memory.js';
+import { getCentralRulesFileName } from '../lib/rules.js';
 import { getConfiguredRunStrategy } from '../lib/rotate.js';
 import { confirm } from '@inquirer/prompts';
 import { formatPath, isInteractiveTerminal, isPromptCancelled } from './utils.js';
@@ -499,7 +499,7 @@ async function showAgentResources(agentId: AgentId, requestedVersion: string): P
       relativePath = `hooks/${resourceName}`;
     } else {
       // Rules files: map agent-specific name (CLAUDE.md) back to canonical (AGENTS.md)
-      const centralName = getCentralMemoryFileName(agentId);
+      const centralName = getCentralRulesFileName(agentId);
       relativePath = `rules/${centralName}`;
     }
 

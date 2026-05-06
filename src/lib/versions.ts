@@ -24,7 +24,7 @@ import chalk from 'chalk';
 import * as TOML from 'smol-toml';
 import { checkbox, select, confirm } from '@inquirer/prompts';
 import type { AgentId, VersionResources } from './types.js';
-import { getVersionsDir, getShimsDir, ensureAgentsDir, readMeta, writeMeta, getCommandsDir, getSkillsDir, getHooksDir, getMemoryDir, getResolvedRulesDir, getUserRulesDir, getPermissionsDir, getSubagentsDir, clearVersionResources, getVersionResources, recordVersionResources, getMcpDir, getProjectAgentsDir, getPromptcutsPath, getEnabledExtraRepos, getAgentsDir, getOptionalUserAgentsDir, getUserAgentsDir, getTrashVersionsDir } from './state.js';
+import { getVersionsDir, getShimsDir, ensureAgentsDir, readMeta, writeMeta, getCommandsDir, getSkillsDir, getHooksDir, getResolvedRulesDir, getUserRulesDir, getPermissionsDir, getSubagentsDir, clearVersionResources, getVersionResources, recordVersionResources, getMcpDir, getProjectAgentsDir, getPromptcutsPath, getEnabledExtraRepos, getAgentsDir, getOptionalUserAgentsDir, getUserAgentsDir, getTrashVersionsDir } from './state.js';
 import { resolveResource } from './resources.js';
 import { AGENTS, getAccountEmail, MCP_CAPABLE_AGENTS, COMMANDS_CAPABLE_AGENTS, getMcpConfigPathForHome, parseMcpConfig, resolveAgentName, formatAgentError } from './agents.js';
 import { getDefaultPermissionSet, applyPermissionsToVersion as applyPermsToVersion, PERMISSIONS_CAPABLE_AGENTS, discoverPermissionGroups, getTotalPermissionRuleCount, buildPermissionsFromGroups, CODEX_RULES_FILENAME, getActivePermissionSetName, readPermissionSetRecipe, PERMISSION_SET_ENV_VAR } from './permissions.js';
@@ -35,7 +35,7 @@ import { listInstalledSubagents, transformSubagentForClaude, syncSubagentToOpenc
 import { parseHookManifest, registerHooksToSettings } from './hooks.js';
 import { supports, explainSkip } from './capabilities.js';
 import { discoverPlugins, syncPluginToVersion, isPluginSynced, pluginSupportsAgent, cleanOrphanedPluginSkills } from './plugins.js';
-import { compileMemoryForAgent } from './memory-compile.js';
+import { compileRulesForAgent } from './rules-compile.js';
 import { loadSyncManifest, saveSyncManifest, buildManifest, isSyncStale } from './sync-manifest.js';
 import { PLUGINS_CAPABLE_AGENTS } from './agents.js';
 import { safeJoin } from './paths.js';
@@ -362,42 +362,42 @@ export function getActuallySyncedResources(agent: AgentId, version: string, opti
     }
   }
 
-  // Rules - check which instruction files are actually in sync (content matches)
-  const memoryDir = getResolvedRulesDir();
-  const projectMemoryDir = projectAgentsDir ? path.join(projectAgentsDir, 'rules') : null;
-  const userMemoryDir = getUserRulesDir();
-  const memoryFiles = new Set<string>();
-  if (fs.existsSync(memoryDir)) {
-    fs.readdirSync(memoryDir).filter(f => f.endsWith('.md') && f !== RULES_DOC_FILENAME).forEach(f => memoryFiles.add(f));
+  // Rules - check which rule files are actually in sync (content matches)
+  const systemRulesDir = getResolvedRulesDir();
+  const projectRulesDir = projectAgentsDir ? path.join(projectAgentsDir, 'rules') : null;
+  const userRulesDir = getUserRulesDir();
+  const ruleFiles = new Set<string>();
+  if (fs.existsSync(systemRulesDir)) {
+    fs.readdirSync(systemRulesDir).filter(f => f.endsWith('.md') && f !== RULES_DOC_FILENAME).forEach(f => ruleFiles.add(f));
   }
-  if (projectMemoryDir && fs.existsSync(projectMemoryDir)) {
-    fs.readdirSync(projectMemoryDir).filter(f => f.endsWith('.md') && f !== RULES_DOC_FILENAME).forEach(f => memoryFiles.add(f));
+  if (projectRulesDir && fs.existsSync(projectRulesDir)) {
+    fs.readdirSync(projectRulesDir).filter(f => f.endsWith('.md') && f !== RULES_DOC_FILENAME).forEach(f => ruleFiles.add(f));
   }
-  if (fs.existsSync(userMemoryDir)) {
-    fs.readdirSync(userMemoryDir).filter(f => f.endsWith('.md') && f !== RULES_DOC_FILENAME).forEach(f => memoryFiles.add(f));
+  if (fs.existsSync(userRulesDir)) {
+    fs.readdirSync(userRulesDir).filter(f => f.endsWith('.md') && f !== RULES_DOC_FILENAME).forEach(f => ruleFiles.add(f));
   }
-  for (const file of memoryFiles) {
-    const memName = file.replace(/\.md$/, '');
+  for (const file of ruleFiles) {
+    const ruleName = file.replace(/\.md$/, '');
     const targetName = file === 'AGENTS.md' ? agentConfig.instructionsFile : file;
     const versionFile = path.join(configDir, targetName);
     if (!fs.existsSync(versionFile)) continue;
 
-    const projectFile = projectMemoryDir ? path.join(projectMemoryDir, file) : null;
-    const centralFile = path.join(memoryDir, file);
-    const userFile = path.join(userMemoryDir, file);
+    const projectFile = projectRulesDir ? path.join(projectRulesDir, file) : null;
+    const systemFile = path.join(systemRulesDir, file);
+    const userFile = path.join(userRulesDir, file);
     const hasProject = projectFile ? fs.existsSync(projectFile) : false;
     const hasUser = fs.existsSync(userFile);
-    const hasCentral = fs.existsSync(centralFile);
-    const sourceFile = hasProject ? projectFile! : hasUser ? userFile : centralFile;
-    if (!hasProject && !hasCentral && !hasUser) {
-      result.memory.push(memName);
+    const hasSystem = fs.existsSync(systemFile);
+    const sourceFile = hasProject ? projectFile! : hasUser ? userFile : systemFile;
+    if (!hasProject && !hasSystem && !hasUser) {
+      result.memory.push(ruleName);
       continue;
     }
     try {
-      const centralContent = fs.readFileSync(sourceFile, 'utf-8');
+      const sourceContent = fs.readFileSync(sourceFile, 'utf-8');
       const versionContent = fs.readFileSync(versionFile, 'utf-8');
-      if (centralContent === versionContent) {
-        result.memory.push(memName);
+      if (sourceContent === versionContent) {
+        result.memory.push(ruleName);
       }
     } catch {
       // Ignore
@@ -1523,10 +1523,10 @@ export function getResourceDiff(agent: AgentId, version: string): ResourceDiff {
   }
 
   // Rules: check individual file symlinks
-  const centralMemory = getResolvedRulesDir();
-  if (fs.existsSync(centralMemory)) {
-    const memoryFiles = fs.readdirSync(centralMemory).filter(f => f.endsWith('.md') && f !== RULES_DOC_FILENAME);
-    for (const file of memoryFiles) {
+  const systemRulesDir = getResolvedRulesDir();
+  if (fs.existsSync(systemRulesDir)) {
+    const ruleFiles = fs.readdirSync(systemRulesDir).filter(f => f.endsWith('.md') && f !== RULES_DOC_FILENAME);
+    for (const file of ruleFiles) {
       const targetName = file === 'AGENTS.md' ? agentConfig.instructionsFile : file;
       const targetPath = path.join(agentDir, targetName);
       const status = getSymlinkStatus(targetPath);
@@ -1779,26 +1779,26 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
     }
   }
 
-  // Sync memory files
-  const memoryToSync = selection
+  // Sync rule files
+  const rulesToSync = selection
     ? resolveSelection(selection.memory, available.memory)
     : available.memory;
 
-  if (memoryToSync.length > 0 && COMMANDS_CAPABLE_AGENTS.includes(agent)) {
-    const centralMemory = getResolvedRulesDir();
-    const userMemoryDir = getUserRulesDir();
-    const syncedMemory: string[] = [];
-    const agentSupportsImports = !!agentConfig.capabilities.memoryImports;
+  if (rulesToSync.length > 0 && COMMANDS_CAPABLE_AGENTS.includes(agent)) {
+    const systemRulesDir = getResolvedRulesDir();
+    const userRulesDir = getUserRulesDir();
+    const syncedRules: string[] = [];
+    const agentSupportsImports = !!agentConfig.capabilities.rulesImports;
 
     // Project rules are NOT synced into the version home. They are written to
-    // the workspace itself by compileMemoryForProject(cwd), where each agent
+    // the workspace itself by compileRulesForProject(cwd), where each agent
     // natively reads cwd/<INSTRUCTIONS_FILE>. The version home holds only
-    // user/system/extras — these become the agent's user-level memory; the
+    // user/system/extras — these become the agent's user-level rules; the
     // agent's own loader merges that with the project file at runtime.
-    for (const mem of memoryToSync) {
+    for (const mem of rulesToSync) {
       const candidates: Array<string | null> = [
-        safeJoin(userMemoryDir, `${mem}.md`),
-        safeJoin(centralMemory, `${mem}.md`),
+        safeJoin(userRulesDir, `${mem}.md`),
+        safeJoin(systemRulesDir, `${mem}.md`),
         ...extraRepos.map((e) => safeJoin(path.join(e.dir, 'rules'), `${mem}.md`)),
       ];
       const srcFile = candidates.find((p) => p && fs.existsSync(p) && !fs.lstatSync(p).isSymbolicLink()) || null;
@@ -1808,20 +1808,20 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
       const destFile = safeJoin(agentDir, targetName);
 
       removePath(destFile);
-      // For the primary memory file (AGENTS.md), agents that don't natively
+      // For the primary rules file (AGENTS.md), agents that don't natively
       // resolve @-imports get a compiled (inlined) copy + sidecar manifest.
-      // Everything else (secondary memory files, @-capable agents) gets a
+      // Everything else (secondary rule files, @-capable agents) gets a
       // straight copy.
       if (mem === 'AGENTS' && !agentSupportsImports) {
-        compileMemoryForAgent(agent, version);
+        compileRulesForAgent(agent, version);
       } else {
         fs.copyFileSync(srcFile, destFile);
       }
       result.memory.push(targetName);
-      syncedMemory.push(mem);
+      syncedRules.push(mem);
     }
-    if (syncedMemory.length > 0) {
-      recordVersionResources(agent, version, 'memory', syncedMemory);
+    if (syncedRules.length > 0) {
+      recordVersionResources(agent, version, 'memory', syncedRules);
     }
   }
 

@@ -185,9 +185,9 @@ export async function promptConflictStrategy(
  *
  * History:
  *   v1 — initial shim (implicit, no marker).
- *   v2 — `--version=...` form in sync/refresh-memory calls; refresh-memory
+ *   v2 — `--version=...` form in sync/refresh-rules calls; refresh-rules
  *        shim hook for non-@-capable agents.
- *   v3 — sync/refresh-memory flag renamed `--version` → `--agent-version`
+ *   v3 — sync/refresh-rules flag renamed `--version` → `--agent-version`
  *        so it no longer collides with commander's top-level `--version`.
  *   v4 — project version marker changed from `.agents-version` to a
  *        root-level `agents.yaml`; shim now skips ~/.agents/agents.yaml
@@ -196,8 +196,10 @@ export async function promptConflictStrategy(
  *        sandbox_mode, rules/agents-deny.rules) is actually read by the codex
  *        binary instead of $HOME/.codex.
  *   v6 — hard-disable Codex startup update checks in the generated shims.
+ *   v7 — rename `agents refresh-memory` invocation to `agents refresh-rules`
+ *        and capability flag `memoryImports` → `rulesImports`.
  */
-export const SHIM_SCHEMA_VERSION = 6;
+export const SHIM_SCHEMA_VERSION = 7;
 
 /** Internal marker string used to embed the schema version in shim scripts. */
 const SHIM_VERSION_MARKER = 'agents-shim-version:';
@@ -226,16 +228,16 @@ export CODEX_HOME="$VERSION_DIR/home/${configDirName}"
 `
       : '';
 
-  // Agents that don't natively resolve @-imports in their memory file need
+  // Agents that don't natively resolve @-imports in their rules file need
   // agents-cli to recompile when the user edits a rule/preset file. The
   // check is fast (sha256 of ~8 small files) and skips the recompile when
   // sources haven't changed.
-  const refreshMemoryCall = !agentConfig.capabilities.memoryImports
+  const refreshRulesCall = !agentConfig.capabilities.rulesImports
     ? `
-# Recompile memory if any rule/preset source has changed since last sync.
+# Recompile rules if any rule/preset source has changed since last sync.
 # Fast-path check (~10-20ms) when nothing changed; full recompile only on
 # actual diff. Non-blocking failure — if the refresh errors, we still launch.
-agents refresh-memory --agent "$AGENT" --agent-version "$VERSION" --quiet 2>/dev/null || true
+agents refresh-rules --agent "$AGENT" --agent-version "$VERSION" --quiet 2>/dev/null || true
 `
     : '';
   const launchArgs = agent === 'codex' ? ' -c check_for_update_on_startup=false' : '';
@@ -361,7 +363,7 @@ PROJECT_AGENTS_DIR=$(find_project_agents_dir)
 if [ -n "$PROJECT_AGENTS_DIR" ]; then
   agents sync --agent "$AGENT" --agent-version "$VERSION" --project-dir "$PROJECT_AGENTS_DIR" --quiet >/dev/null 2>&1
 fi
-${refreshMemoryCall}${managedEnv}
+${refreshRulesCall}${managedEnv}
 
 exec "$BINARY"${launchArgs} "$@"
 `;
