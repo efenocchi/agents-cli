@@ -111,12 +111,24 @@ green "Bump: $BUMP ($PHNX_LATEST -> $TARGET)"
 echo
 
 # ----- Sync package.json with target -----
-PKG_VERSION="$(jq -r .version package.json)"
-if [[ "$PKG_VERSION" != "$TARGET" ]]; then
-  yellow "Updating package.json: $PKG_VERSION -> $TARGET"
+ORIGINAL_PKG_VERSION="$(jq -r .version package.json)"
+PKG_BUMPED=false
+restore_package_json() {
+  if $PKG_BUMPED; then
+    tmp="$(mktemp)"
+    jq --arg v "$ORIGINAL_PKG_VERSION" '.version = $v' package.json > "$tmp"
+    mv "$tmp" package.json
+    yellow "Reverted package.json to $ORIGINAL_PKG_VERSION"
+  fi
+}
+trap restore_package_json EXIT
+
+if [[ "$ORIGINAL_PKG_VERSION" != "$TARGET" ]]; then
+  yellow "Updating package.json: $ORIGINAL_PKG_VERSION -> $TARGET"
   tmp="$(mktemp)"
   jq --arg v "$TARGET" '.version = $v' package.json > "$tmp"
   mv "$tmp" package.json
+  PKG_BUMPED=true
 fi
 
 # ----- Build + test -----
@@ -135,6 +147,10 @@ echo
 
 read -r -p "Publish $TARGET to BOTH $PHNX_PKG and $SWARMIFY_PKG? [y/N] " yn
 [[ "$yn" =~ ^[Yy]$ ]] || die "aborted"
+
+# Past this point we want to keep the bumped package.json, since we're
+# committing it. Disable the auto-revert.
+PKG_BUMPED=false
 
 # ----- Commit + tag -----
 git add package.json
