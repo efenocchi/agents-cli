@@ -5,10 +5,13 @@
  * in the system keychain rather than environment variables or plaintext files.
  */
 
+import { createHash } from 'crypto';
+import { fileURLToPath } from 'url';
 import { execFileSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { getSystemAgentsDir } from './state.js';
 
 const SERVICE_PREFIX = 'agents-cli';
 
@@ -64,10 +67,56 @@ export function secretsKeychainItem(bundle: string, key: string): string {
   return `${SERVICE_PREFIX}.secrets.${bundle}.${key}`;
 }
 
+// Compile the Swift keychain helper on first use and cache it by source hash.
+// The binary lives at ~/.agents-system/bin/agents-keychain-<hash> so a new
+// version of the source triggers a recompile without invalidating the old one
+// until the new binary is ready.
+function ensureKeychainHelper(): string {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const sourcePath = path.join(here, 'keychain-helper.swift');
+  const sourceContent = fs.readFileSync(sourcePath);
+  const hash = createHash('sha256').update(sourceContent).digest('hex').slice(0, 8);
+
+  const binDir = path.join(getSystemAgentsDir(), 'bin');
+  const binName = `agents-keychain-${hash}`;
+  const binPath = path.join(binDir, binName);
+
+  if (fs.existsSync(binPath)) return binPath;
+
+  const swiftcCheck = spawnSync('swiftc', ['--version'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  if (swiftcCheck.error || swiftcCheck.status !== 0) {
+    throw new Error(
+      'Keychain sync requires Xcode Command Line Tools. Install with: xcode-select --install'
+    );
+  }
+
+  if (!fs.existsSync(binDir)) fs.mkdirSync(binDir, { recursive: true });
+
+  const compile = spawnSync('swiftc', ['-O', sourcePath, '-o', binPath], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (compile.status !== 0) {
+    const err = compile.stderr?.toString().trim();
+    throw new Error(`Failed to compile keychain helper: ${err}`);
+  }
+
+  // Remove stale binaries from previous versions
+  try {
+    for (const f of fs.readdirSync(binDir)) {
+      if (f.startsWith('agents-keychain-') && f !== binName) {
+        try { fs.unlinkSync(path.join(binDir, f)); } catch { /* ignore */ }
+      }
+    }
+  } catch { /* ignore */ }
+
+  return binPath;
+}
+
 /** Check if a keychain item exists (macOS only). */
 export function hasKeychainToken(item: string): boolean {
   assertMacOS();
-  const result = spawnSync('security', ['find-generic-password', '-a', os.userInfo().username, '-s', item, '-w'], {
+  const bin = ensureKeychainHelper();
+  const result = spawnSync(bin, ['has', item, os.userInfo().username], {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   return result.status === 0;
@@ -76,30 +125,23 @@ export function hasKeychainToken(item: string): boolean {
 /** Retrieve a secret value from the macOS Keychain. Throws if not found. */
 export function getKeychainToken(item: string): string {
   assertMacOS();
-  try {
-    const token = execFileSync('security', ['find-generic-password', '-a', os.userInfo().username, '-s', item, '-w'], {
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }).trim();
-    if (!token) {
-      throw new Error(`Keychain item '${item}' exists but is empty.`);
-    }
-    return token;
-  } catch (err: any) {
-    if (err.status === 44 || /could not be found/i.test(err.stderr?.toString() || '')) {
-      throw new Error(`Keychain item '${item}' not found.`);
-    }
-    throw new Error(`Failed to read keychain item '${item}': ${err.message}`);
+  const bin = ensureKeychainHelper();
+  const result = spawnSync(bin, ['get', item, os.userInfo().username], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (result.status === 1) {
+    throw new Error(`Keychain item '${item}' not found.`);
   }
+  if (result.status !== 0) {
+    const msg = result.stderr?.toString().trim();
+    throw new Error(msg || `Failed to read keychain item '${item}'.`);
+  }
+  const token = result.stdout?.toString().trim();
+  if (!token) throw new Error(`Keychain item '${item}' exists but is empty.`);
+  return token;
 }
 
-// Quote a string for `security -i`'s shell-like tokenizer. The value never
-// appears in argv when passed this way, so it is invisible to `ps`.
-function quoteForSecurityCli(s: string): string {
-  return '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
-}
-
-/** Store or update a secret value in the macOS Keychain. */
+/** Store or update a secret value in the macOS Keychain, synced via iCloud Keychain. */
 export function setKeychainToken(item: string, value: string): void {
   assertMacOS();
   if (!value || !value.trim()) {
@@ -108,25 +150,24 @@ export function setKeychainToken(item: string, value: string): void {
   if (/[\r\n]/.test(value)) {
     throw new Error('Secret value contains newlines, which are not supported.');
   }
-  const user = os.userInfo().username;
-  const cmd = `add-generic-password -a ${quoteForSecurityCli(user)} -s ${quoteForSecurityCli(item)} -w ${quoteForSecurityCli(value)} -U\n`;
-  const result = spawnSync('security', ['-i'], {
-    input: cmd,
+  const bin = ensureKeychainHelper();
+  const result = spawnSync(bin, ['set', item, os.userInfo().username], {
+    input: value,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   if (result.status !== 0) {
-    throw new Error(`Failed to write keychain item '${item}' (exit ${result.status}).`);
+    const msg = result.stderr?.toString().trim();
+    throw new Error(msg || `Failed to write keychain item '${item}'.`);
   }
 }
 
 /** Delete a keychain item. Returns true if it existed. */
 export function deleteKeychainToken(item: string): boolean {
   assertMacOS();
-  const result = spawnSync(
-    'security',
-    ['delete-generic-password', '-a', os.userInfo().username, '-s', item],
-    { stdio: ['ignore', 'pipe', 'pipe'] }
-  );
+  const bin = ensureKeychainHelper();
+  const result = spawnSync(bin, ['delete', item, os.userInfo().username], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   return result.status === 0;
 }
 
