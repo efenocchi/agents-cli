@@ -51,13 +51,13 @@ const SYSTEM_INSTRUCTIONS_FILE = path.join(SYSTEM_AGENTS_DIR, 'instructions.md')
 // User-level operational state
 const PACKAGES_DIR = path.join(USER_AGENTS_DIR, 'packages');
 const ROUTINES_DIR = path.join(USER_AGENTS_DIR, 'routines');
-const RUNS_DIR = path.join(USER_AGENTS_DIR, 'runs');
+const RUNS_DIR = path.join(ROUTINES_DIR, 'runs');
 const VERSIONS_DIR = path.join(USER_AGENTS_DIR, 'versions');
 const SHIMS_DIR = path.join(USER_AGENTS_DIR, 'shims');
-const BACKUPS_DIR = path.join(USER_AGENTS_DIR, 'backups');
+const BACKUPS_DIR = path.join(USER_AGENTS_DIR, '.backups');
 const PLUGINS_DIR = path.join(USER_AGENTS_DIR, 'plugins');
 const DRIVE_DIR = path.join(USER_AGENTS_DIR, 'drive');
-const TRASH_DIR = path.join(USER_AGENTS_DIR, 'trash');
+const TRASH_DIR = path.join(USER_AGENTS_DIR, '.trash');
 
 // ─── User resource dirs ───────────────────────────────────────────────────────
 
@@ -299,7 +299,6 @@ export function ensureAgentsDir(): void {
   if (!fs.existsSync(SYSTEM_RULES_DIR)) fs.mkdirSync(SYSTEM_RULES_DIR, opts);
   if (!fs.existsSync(SYSTEM_PERMISSIONS_DIR)) fs.mkdirSync(SYSTEM_PERMISSIONS_DIR, opts);
   if (!fs.existsSync(SYSTEM_SUBAGENTS_DIR)) fs.mkdirSync(SYSTEM_SUBAGENTS_DIR, opts);
-  if (!fs.existsSync(DRIVE_DIR)) fs.mkdirSync(DRIVE_DIR, opts);
   try { fs.chmodSync(SYSTEM_AGENTS_DIR, 0o700); } catch {}
 }
 
