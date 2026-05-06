@@ -14,6 +14,7 @@ import * as crypto from 'crypto';
 import { AGENTS } from '../agents.js';
 import type { AgentId } from '../types.js';
 import { getResolvedRulesDir, getVersionsDir } from '../state.js';
+import { composeRules, composeRulesFromState, type RulesLayer } from './compose.js';
 
 // Match `@path` preceded by start-of-string or whitespace. This avoids
 // matching emails ("foo@bar.com") and the middle of words. The leading
@@ -245,34 +246,49 @@ export interface ProjectCompileResult {
  * Compile project-scope rules into a workspace's root memory files so each
  * agent's native loader picks them up.
  *
- * Reads `cwd/.agents/rules/AGENTS.md`, inlines all @-imports against that
- * directory, then writes `cwd/AGENTS.md` with COMPILED_HEADER_PROJECT and
- * creates symlinks (CLAUDE.md, GEMINI.md, .cursorrules, etc.) → AGENTS.md so
- * every agent finds its expected file at cwd. The agent's own loader merges
- * this project-level file with its user-level memory (in version home) at
- * runtime.
+ * Composes rules from all available layers (project > user > extras > system)
+ * with project highest priority — so a project's `subrules/` and `rules.yaml`
+ * shadow user/system fragments and presets. Writes `cwd/AGENTS.md` with
+ * COMPILED_HEADER_PROJECT and creates symlinks (CLAUDE.md, GEMINI.md,
+ * .cursorrules, etc.) → AGENTS.md so every agent finds its expected file at
+ * cwd. The agent's own loader merges this project-level file with its
+ * user-level rules (in version home) at runtime.
  *
  * Don't-clobber guard: if `cwd/AGENTS.md` exists without our header, the user
  * authored it — leave it alone and report via `skippedClobber`. Same for any
  * pre-existing per-agent file or symlink that doesn't already point at
  * AGENTS.md.
  *
- * No-op when `cwd/.agents/rules/AGENTS.md` does not exist. Idempotent on
- * repeated calls — content equality short-circuits the write.
+ * No-op when `cwd/.agents/rules/` does not exist. Idempotent on repeated
+ * calls — content equality short-circuits the write.
  */
-export function compileRulesForProject(cwd: string): ProjectCompileResult {
-  const rulesDir = path.join(cwd, '.agents', 'rules');
-  const sourceAgents = path.join(rulesDir, 'AGENTS.md');
+export function compileRulesForProject(
+  cwd: string,
+  opts: { preset?: string; layers?: RulesLayer[] } = {}
+): ProjectCompileResult {
+  const projectRulesDir = path.join(cwd, '.agents', 'rules');
 
   const empty: ProjectCompileResult = {
     compiled: false, agentsPath: '', symlinks: [], sources: 0, skippedClobber: [],
   };
 
-  if (!fs.existsSync(sourceAgents)) return empty;
+  if (!fs.existsSync(projectRulesDir)) return empty;
 
-  const rootContent = fs.readFileSync(sourceAgents, 'utf8');
-  const { content, sources } = resolveImports(rootContent, rulesDir);
-  const newContent = COMPILED_HEADER_PROJECT + content;
+  let composed: { content: string; subrules: { sourcePath: string }[] };
+  try {
+    // Tests inject `layers` to isolate from real ~/.agents-system / ~/.agents
+    // state. Production callers omit it and compose from discovered state.
+    const result = opts.layers
+      ? composeRules({ preset: opts.preset, layers: opts.layers })
+      : composeRulesFromState({ cwd, preset: opts.preset });
+    composed = { content: result.content, subrules: result.subrules };
+  } catch {
+    // Composer threw (no preset, malformed yaml). Don't write a half-baked
+    // file — bail out cleanly, same as if the rules dir didn't exist.
+    return empty;
+  }
+
+  const newContent = COMPILED_HEADER_PROJECT + composed.content;
 
   const agentsPath = path.join(cwd, 'AGENTS.md');
   const skippedClobber: string[] = [];
@@ -353,5 +369,5 @@ export function compileRulesForProject(cwd: string): ProjectCompileResult {
     }
   }
 
-  return { compiled, agentsPath, symlinks, sources: sources.length + 1, skippedClobber };
+  return { compiled, agentsPath, symlinks, sources: composed.subrules.length, skippedClobber };
 }

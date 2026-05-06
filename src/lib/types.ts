@@ -345,6 +345,12 @@ export interface VersionResources {
   permissions?: string[];
   subagents?: string[];
   plugins?: string[];
+  /**
+   * Active rule preset for this agent@version. The composer reads layered
+   * `rules.yaml` files and emits this preset's subrules as the agent's
+   * single instruction file. Absent/null means the literal "default" preset.
+   */
+  rulesPreset?: string;
 }
 
 /** Manifest file (plugin.yaml) at the root of a plugin bundle. */

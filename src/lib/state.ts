@@ -497,3 +497,23 @@ export function clearVersionResources(
     writeMeta(meta);
   }
 }
+
+/** Active rules preset for an agent@version. Defaults to "default" when unset. */
+export function getActiveRulesPreset(agent: AgentId, version: string): string {
+  const meta = readMeta();
+  return meta.versions?.[agent]?.[version]?.rulesPreset || 'default';
+}
+
+/** Persist the active rules preset for an agent@version. */
+export function setActiveRulesPreset(
+  agent: AgentId,
+  version: string,
+  preset: string
+): void {
+  const meta = readMeta();
+  if (!meta.versions) meta.versions = {};
+  if (!meta.versions[agent]) meta.versions[agent] = {};
+  if (!meta.versions[agent]![version]) meta.versions[agent]![version] = {};
+  meta.versions[agent]![version].rulesPreset = preset;
+  writeMeta(meta);
+}
