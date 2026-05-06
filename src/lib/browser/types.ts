@@ -53,7 +53,12 @@ export type IPCAction =
   | 'tabs'
   | 'close'
   | 'evaluate'
-  | 'screenshot';
+  | 'screenshot'
+  | 'refs'
+  | 'click'
+  | 'type'
+  | 'press'
+  | 'hover';
 
 export interface IPCRequest {
   action: IPCAction;
@@ -63,6 +68,11 @@ export interface IPCRequest {
   tabId?: string;
   expr?: string;
   path?: string;
+  ref?: number;
+  text?: string;
+  key?: string;
+  interactive?: boolean;
+  limit?: number;
 }
 
 export interface IPCResponse {
@@ -75,6 +85,7 @@ export interface IPCResponse {
   profiles?: ProfileStatus[];
   result?: unknown;
   path?: string;
+  refs?: string;
 }
 
 export const TASK_ID_REGEX = /^[a-z0-9][a-z0-9-]*$/;
