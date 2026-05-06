@@ -8,7 +8,11 @@
 #
 # The shim keeps existing @companion installs auto-updating into the new code.
 #
-# Usage: scripts/release.sh <version>     (e.g. scripts/release.sh 1.14.2)
+# Usage: scripts/release.sh <version> [--apply]
+#
+# Default mode is DRY-RUN: every check runs (type-check, build, tests, tarball
+# preview) but no publish, commit, tag, or push happens. Add --apply to
+# actually release.
 #
 # Validates that <version> is a single-step bump from the current published
 # @phnx-labs latest -- patch+1, or minor+1 with patch=0, or major+1 with
@@ -31,9 +35,28 @@ bold()   { printf '\033[1m%s\033[0m\n'  "$*"; }
 die() { red "error: $*"; exit 1; }
 
 # ----- Parse args -----
-[[ $# -eq 1 ]] || die "usage: scripts/release.sh <version>  (e.g. 1.14.2)"
-TARGET="$1"
+APPLY=false
+TARGET=""
+for arg in "$@"; do
+  case "$arg" in
+    --apply) APPLY=true ;;
+    -h|--help) printf '%s\n' "usage: scripts/release.sh <version> [--apply]"; exit 0 ;;
+    --*) die "unknown flag: $arg" ;;
+    *)
+      [[ -z "$TARGET" ]] || die "unexpected argument: $arg"
+      TARGET="$arg"
+      ;;
+  esac
+done
+[[ -n "$TARGET" ]] || die "usage: scripts/release.sh <version> [--apply]  (e.g. 1.14.2 --apply)"
 [[ "$TARGET" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "version must be MAJOR.MINOR.PATCH (no pre-release tags)"
+
+if $APPLY; then
+  bold "Mode: APPLY (real publish)"
+else
+  yellow "Mode: DRY-RUN (no publish, no commit, no tag, no push -- pass --apply to actually release)"
+fi
+echo
 
 # ----- Pre-flight -----
 command -v npm >/dev/null    || die "npm not found"
@@ -199,42 +222,23 @@ rm -f "$TEST_LOG"
 green "Tests clean."
 echo
 
-# ----- Confirmation -----
-bold "Tarball preview"
+# ----- Tarball preview (always) -----
+bold "Tarball preview ($PHNX_PKG@$TARGET)"
 npm pack --dry-run 2>&1 | tail -10
 echo
 
-read -r -p "Publish $TARGET to BOTH $PHNX_PKG and $SWARMIFY_PKG? [y/N] " yn
-[[ "$yn" =~ ^[Yy]$ ]] || die "aborted"
-
-# Past this point we want to keep the bumped package.json, since we're
-# committing it. Disable the auto-revert.
-PKG_BUMPED=false
-
-# ----- Commit + tag -----
-git add package.json
-if ! git diff --cached --quiet; then
-  git commit -m "chore(release): $TARGET"
-fi
-git tag "v$TARGET"
-
-# ----- Publish @phnx-labs -----
-bold "Publishing $PHNX_PKG@$TARGET..."
-read -r -p "npm OTP: " OTP_PHNX
-echo
-if ! npm publish --access=public --otp="$OTP_PHNX"; then
-  red "publish failed for $PHNX_PKG"
-  red "the version commit and tag remain locally; rerun 'npm publish --access=public --otp=...' from $ROOT to retry"
-  exit 1
-fi
-green "Published $PHNX_PKG@$TARGET"
-echo
-
-# ----- Build and publish @companion shim -----
+# ----- Build the shim package on disk so we can preview/publish it -----
 bold "Building $SWARMIFY_PKG@$TARGET shim..."
 SHIM_SRC="$ROOT/scripts/companion-shim"
 SHIM_TMP="$(mktemp -d -t agents-cli-shim)"
-trap 'rm -rf "$SHIM_TMP"' EXIT
+# Cleanup of SHIM_TMP layered onto the existing EXIT trap (which restores
+# package.json on abort). bash only keeps the most recent EXIT trap, so we
+# define a combined cleanup function.
+cleanup_all() {
+  restore_package_json
+  rm -rf "${SHIM_TMP:-}"
+}
+trap cleanup_all EXIT
 
 cp -R "$SHIM_SRC/bin" "$SHIM_SRC/scripts" "$SHIM_SRC/README.md" "$SHIM_TMP/"
 cat > "$SHIM_TMP/package.json" <<EOF
@@ -267,6 +271,51 @@ cat > "$SHIM_TMP/package.json" <<EOF
 }
 EOF
 
+bold "Tarball preview ($SWARMIFY_PKG@$TARGET shim)"
+( cd "$SHIM_TMP" && npm pack --dry-run 2>&1 | tail -10 )
+echo
+
+# ----- Bail out here in DRY-RUN mode -----
+if ! $APPLY; then
+  green "Dry run looks good. Re-run with --apply to publish $TARGET to both packages."
+  echo
+  yellow "Will run on --apply:"
+  yellow "  1. git commit -m 'chore(release): $TARGET'"
+  yellow "  2. git tag v$TARGET"
+  yellow "  3. npm publish $PHNX_PKG@$TARGET   (will prompt for OTP)"
+  yellow "  4. npm publish $SWARMIFY_PKG@$TARGET   (will prompt for second OTP)"
+  yellow "  5. git push origin main + tag"
+  exit 0
+fi
+
+# ----- Confirmation (--apply only) -----
+read -r -p "Publish $TARGET to BOTH $PHNX_PKG and $SWARMIFY_PKG? [y/N] " yn
+[[ "$yn" =~ ^[Yy]$ ]] || die "aborted"
+
+# Past this point we want to keep the bumped package.json, since we're
+# committing it. Disable the auto-revert.
+PKG_BUMPED=false
+
+# ----- Commit + tag -----
+git add package.json
+if ! git diff --cached --quiet; then
+  git commit -m "chore(release): $TARGET"
+fi
+git tag "v$TARGET"
+
+# ----- Publish @phnx-labs -----
+bold "Publishing $PHNX_PKG@$TARGET..."
+read -r -p "npm OTP: " OTP_PHNX
+echo
+if ! npm publish --access=public --otp="$OTP_PHNX"; then
+  red "publish failed for $PHNX_PKG"
+  red "the version commit and tag remain locally; rerun 'npm publish --access=public --otp=...' from $ROOT to retry"
+  exit 1
+fi
+green "Published $PHNX_PKG@$TARGET"
+echo
+
+# ----- Publish @companion shim -----
 bold "Publishing $SWARMIFY_PKG@$TARGET..."
 read -r -p "npm OTP (new code, OTPs are single-use): " OTP_SWARMIFY
 echo
