@@ -131,13 +131,72 @@ if [[ "$ORIGINAL_PKG_VERSION" != "$TARGET" ]]; then
   PKG_BUMPED=true
 fi
 
-# ----- Build + test -----
-bold "Building..."
-rm -rf dist
-bun run build >/dev/null
+# ----- Strict TypeScript check -----
+# Run tsc --noEmit first so type errors surface clearly, separate from the
+# real build's filesystem operations. This catches anything strict-mode
+# tsconfig.json complains about (unused locals, implicit any, etc.).
+bold "Type-checking (tsc --noEmit)..."
+TSC_LOG="$(mktemp -t agents-cli-tsc)"
+if ! npx --no-install tsc --noEmit --pretty false > "$TSC_LOG" 2>&1; then
+  red "TypeScript errors:"
+  cat "$TSC_LOG" >&2
+  rm -f "$TSC_LOG"
+  die "fix the type errors above before releasing"
+fi
+# Even with exit 0, surface anything that looks like a warning or note we
+# might have missed (tsc rarely emits these, but be paranoid).
+if grep -iE '\bwarning\b|\bdeprecated\b' "$TSC_LOG" >/dev/null 2>&1; then
+  red "tsc emitted warnings:"
+  grep -iE '\bwarning\b|\bdeprecated\b' "$TSC_LOG" >&2
+  rm -f "$TSC_LOG"
+  die "fix the warnings above before releasing"
+fi
+rm -f "$TSC_LOG"
+green "Type check clean."
 
-bold "Running tests..."
-npm test 2>&1 | tail -5
+# ----- Build (real artifacts) -----
+bold "Building (bun run build)..."
+rm -rf dist
+BUILD_LOG="$(mktemp -t agents-cli-build)"
+if ! bun run build > "$BUILD_LOG" 2>&1; then
+  red "Build failed:"
+  cat "$BUILD_LOG" >&2
+  rm -f "$BUILD_LOG"
+  die "build failed"
+fi
+# Same paranoid scan over build output (the keychain copy step shouldn't
+# print anything; if it does, we want to know).
+if grep -iE '\berror\b|\bwarning\b' "$BUILD_LOG" >/dev/null 2>&1; then
+  red "build emitted warnings/errors:"
+  grep -iE '\berror\b|\bwarning\b' "$BUILD_LOG" >&2
+  rm -f "$BUILD_LOG"
+  die "fix the build output above before releasing"
+fi
+rm -f "$BUILD_LOG"
+green "Build clean."
+
+# ----- Tests -----
+# pipefail is on, so a failure in `npm test` would propagate even through a
+# pipe. We don't pipe -- show the full output so a developer can scroll back
+# through any individual failure. The summary line is captured for the
+# tarball-preview section regardless.
+bold "Running tests (npm test)..."
+TEST_LOG="$(mktemp -t agents-cli-test)"
+if ! npm test 2>&1 | tee "$TEST_LOG"; then
+  red "Tests failed."
+  rm -f "$TEST_LOG"
+  die "fix failing tests before releasing"
+fi
+# vitest sometimes prints "Unhandled error between tests" without failing
+# the run. Catch that and treat it as a release blocker.
+if grep -E 'Unhandled error|UnhandledPromiseRejection' "$TEST_LOG" >/dev/null 2>&1; then
+  red "test run had unhandled errors:"
+  grep -E 'Unhandled error|UnhandledPromiseRejection' "$TEST_LOG" >&2
+  rm -f "$TEST_LOG"
+  die "investigate the unhandled errors above before releasing"
+fi
+rm -f "$TEST_LOG"
+green "Tests clean."
 echo
 
 # ----- Confirmation -----
