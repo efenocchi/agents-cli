@@ -15,7 +15,7 @@ import {
   writeBundle,
   deleteBundle,
   type SecretsBundle,
-} from '../secrets-bundles.js';
+} from '../bundles.js';
 
 // Redirect the secrets dir into a per-test tmp path so nothing touches the
 // real ~/.agents/secrets. The state module reads HOME at import time, so we

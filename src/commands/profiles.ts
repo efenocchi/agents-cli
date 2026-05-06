@@ -25,7 +25,7 @@ import {
   keychainItemName,
   setKeychainToken,
   deleteKeychainToken,
-} from '../lib/profiles-keychain.js';
+} from '../lib/secrets/profiles.js';
 import { isInteractiveTerminal } from './utils.js';
 
 /** Prompt the user for a secret value with masked input. Requires an interactive TTY. */

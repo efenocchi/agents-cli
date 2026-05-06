@@ -21,7 +21,7 @@
   "files": [
     "dist/**/*.js",
     "dist/**/*.d.ts",
-    "dist/**/*.swift",
+    "dist/lib/secrets/AgentsKeychain.app/**",
     "scripts/postinstall.js",
     "CHANGELOG.md",
     "README.md",
@@ -36,7 +36,7 @@
     "url": "https://github.com/phnx-labs/agents-cli/issues"
   },
   "scripts": {
-    "build": "tsc && cp src/lib/keychain-helper.swift dist/lib/keychain-helper.swift",
+    "build": "tsc && rm -rf dist/lib/secrets/AgentsKeychain.app && cp -R bin/AgentsKeychain.app dist/lib/secrets/AgentsKeychain.app",
     "prepublishOnly": "tsc",
     "postinstall": "node scripts/postinstall.js",
     "dev": "tsx src/index.ts",

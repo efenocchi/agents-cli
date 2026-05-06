@@ -22,14 +22,14 @@ import {
   validateEnvKey,
   writeBundle,
   type SecretsBundle,
-} from '../lib/secrets-bundles.js';
+} from '../lib/secrets/bundles.js';
 import {
   deleteKeychainToken,
   getKeychainToken,
   hasKeychainToken,
   secretsKeychainItem,
   setKeychainToken,
-} from '../lib/secrets.js';
+} from '../lib/secrets/index.js';
 import { registerCommandGroups } from '../lib/help.js';
 import { isInteractiveTerminal, isPromptCancelled } from './utils.js';
 
@@ -240,6 +240,7 @@ Examples:
         console.log(chalk.bold(bundle.name));
         if (bundle.description) console.log(chalk.gray(bundle.description));
         if (bundle.allow_exec) console.log(chalk.yellow('allow_exec: true'));
+        if (bundle.icloud_sync) console.log(chalk.cyan('icloud_sync: true'));
         console.log();
         if (entries.length === 0) {
           console.log(chalk.gray('(no keys)'));
@@ -253,12 +254,12 @@ Examples:
         for (const e of entries) {
           if (e.kind === 'keychain') {
             const item = secretsKeychainItem(bundle.name, e.detail);
-            const stored = hasKeychainToken(item);
+            const stored = hasKeychainToken(item, bundle.icloud_sync);
             const marker = stored ? chalk.green('stored') : chalk.red('missing');
             let valueCol = `[keychain:${e.detail}] ${marker}`;
             if (reveal && stored) {
               try {
-                valueCol = redact(getKeychainToken(item), true);
+                valueCol = redact(getKeychainToken(item, bundle.icloud_sync), true);
               } catch {
                 // fall through to masked
               }
@@ -287,8 +288,9 @@ Examples:
     .description('Create an empty bundle')
     .option('--description <text>', 'Free-form description')
     .option('--allow-exec', 'Allow exec: refs in this bundle (off by default)')
+    .option('--icloud-sync', 'Store keychain values in iCloud Keychain so they sync across your Macs (requires Xcode CLT)')
     .option('--force', 'Overwrite an existing bundle')
-    .action(async (name: string | undefined, opts: { description?: string; allowExec?: boolean; force?: boolean }) => {
+    .action(async (name: string | undefined, opts: { description?: string; allowExec?: boolean; icloudSync?: boolean; force?: boolean }) => {
       try {
         const resolvedName = name ?? (await promptBundleName());
         validateBundleName(resolvedName);
@@ -300,6 +302,7 @@ Examples:
           name: resolvedName,
           description: opts.description,
           allow_exec: opts.allowExec,
+          icloud_sync: opts.icloudSync,
           vars: {},
         };
         writeBundle(bundle);
@@ -372,10 +375,11 @@ Examples:
           secretValue = await promptForSecret(`Enter value for ${resolvedBundleName}.${resolvedKey}`);
         }
         const item = secretsKeychainItem(resolvedBundleName, resolvedKey);
-        setKeychainToken(item, secretValue);
+        setKeychainToken(item, secretValue, bundle.icloud_sync);
         bundle.vars[resolvedKey] = keychainRef(resolvedKey);
         writeBundle(bundle);
-        console.log(chalk.green(`${resolvedBundleName}.${resolvedKey} stored in keychain (${item}).`));
+        const where = bundle.icloud_sync ? 'iCloud Keychain' : 'keychain';
+        console.log(chalk.green(`${resolvedBundleName}.${resolvedKey} stored in ${where} (${item}).`));
       } catch (err) {
         if (isPromptCancelled(err)) return;
         console.error(chalk.red((err as Error).message));
@@ -401,7 +405,7 @@ Examples:
         writeBundle(bundle);
         if (!opts.keepSecret && typeof raw === 'string' && raw.startsWith('keychain:')) {
           const item = secretsKeychainItem(resolvedBundleName, raw.slice('keychain:'.length));
-          const removed = deleteKeychainToken(item);
+          const removed = deleteKeychainToken(item, bundle.icloud_sync);
           if (removed) {
             console.log(chalk.green(`Removed ${resolvedBundleName}.${resolvedKey} and purged keychain item.`));
             return;
@@ -445,7 +449,7 @@ Examples:
         }
         if (!opts.keepSecrets) {
           for (const { item } of keychainItemsForBundle(bundle)) {
-            deleteKeychainToken(item);
+            deleteKeychainToken(item, bundle.icloud_sync);
           }
         }
         const existed = deleteBundle(resolvedName);
@@ -484,7 +488,7 @@ Examples:
             bundle.vars[key] = { value };
           } else {
             const item = secretsKeychainItem(resolvedBundleName, key);
-            setKeychainToken(item, value);
+            setKeychainToken(item, value, bundle.icloud_sync);
             bundle.vars[key] = keychainRef(key);
           }
           added++;
@@ -504,7 +508,7 @@ Examples:
     .option('--plaintext', 'Acknowledge that the resolved values will be printed in the clear')
     .action(async (bundleName: string | undefined, opts: { plaintext?: boolean }) => {
       try {
-        const { resolveBundleEnv } = await import('../lib/secrets-bundles.js');
+        const { resolveBundleEnv } = await import('../lib/secrets/bundles.js');
         const resolvedBundleName = bundleName ?? (await pickBundleName('export'));
         const bundle = readBundle(resolvedBundleName);
         if (isInteractiveTerminal() && !opts.plaintext) {
