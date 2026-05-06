@@ -1,0 +1,6 @@
+name: proj-mcp-fixture
+transport: stdio
+command: /usr/bin/true
+args:
+  - --tag
+  - MCP_TOKEN_PROJECT_MCP_AVAILABLE
