@@ -11,9 +11,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
-import { AGENTS } from './agents.js';
-import type { AgentId } from './types.js';
-import { getResolvedRulesDir, getVersionsDir } from './state.js';
+import { AGENTS } from '../agents.js';
+import type { AgentId } from '../types.js';
+import { getResolvedRulesDir, getVersionsDir } from '../state.js';
 
 // Match `@path` preceded by start-of-string or whitespace. This avoids
 // matching emails ("foo@bar.com") and the middle of words. The leading

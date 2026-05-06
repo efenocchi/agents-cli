@@ -10,7 +10,7 @@ import { AGENTS, listInstalledMcpsWithScope } from './agents.js';
 import { listInstalledCommandsWithScope } from './commands.js';
 import { listInstalledSkillsWithScope, type SkillParseError } from './skills.js';
 import { listInstalledHooksWithScope } from './hooks.js';
-import { listInstalledInstructionsWithScope } from './rules.js';
+import { listInstalledInstructionsWithScope } from './rules/rules.js';
 import { getEffectiveHome } from './versions.js';
 import { listMcpServerConfigs } from './mcp.js';
 import {

@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
-import { resolveImports, compileRulesForProject } from '../rules-compile.js';
+import { resolveImports, compileRulesForProject } from './compile.js';
 import { AGENTS } from '../agents.js';
 
 let tmpDir: string;

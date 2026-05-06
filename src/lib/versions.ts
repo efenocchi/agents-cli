@@ -35,7 +35,7 @@ import { listInstalledSubagents, transformSubagentForClaude, syncSubagentToOpenc
 import { parseHookManifest, registerHooksToSettings } from './hooks.js';
 import { supports, explainSkip } from './capabilities.js';
 import { discoverPlugins, syncPluginToVersion, isPluginSynced, pluginSupportsAgent, cleanOrphanedPluginSkills } from './plugins.js';
-import { compileRulesForAgent } from './rules-compile.js';
+import { compileRulesForAgent } from './rules/compile.js';
 import { loadSyncManifest, saveSyncManifest, buildManifest, isSyncStale } from './sync-manifest.js';
 import { PLUGINS_CAPABLE_AGENTS } from './agents.js';
 import { safeJoin } from './paths.js';

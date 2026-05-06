@@ -11,7 +11,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import { AGENTS } from '../lib/agents.js';
 import { isVersionInstalled, syncResourcesToVersion } from '../lib/versions.js';
-import { compileRulesForProject } from '../lib/rules-compile.js';
+import { compileRulesForProject } from '../lib/rules/compile.js';
 
 /** Register the hidden `agents sync` command. */
 export function registerSyncCommand(program: Command): void {

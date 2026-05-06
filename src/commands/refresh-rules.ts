@@ -10,7 +10,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import { AGENTS } from '../lib/agents.js';
 import { isVersionInstalled } from '../lib/versions.js';
-import { ensureRulesFresh, supportsRulesImports } from '../lib/rules-compile.js';
+import { ensureRulesFresh, supportsRulesImports } from '../lib/rules/compile.js';
 
 /**
  * Hidden command invoked by shims for agents that don't natively resolve
