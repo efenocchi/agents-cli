@@ -1672,12 +1672,12 @@ function normalizeVersion(version?: string | null): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
-/** Extract the version number from a managed ~/.agents-system/versions/<agent>/<version>/... path. */
+/** Extract the version number from a managed ~/.agents/versions/<agent>/<version>/... path. */
 function extractVersionFromManagedPath(agent: SessionAgentId, sourcePath?: string): string | undefined {
   if (!sourcePath) return undefined;
 
   const candidates = [sourcePath, safeRealpathSync(sourcePath) || ''];
-  const marker = `/.agents-system/versions/${agent}/`;
+  const marker = `/.agents/versions/${agent}/`;
 
   for (const candidate of candidates) {
     if (!candidate) continue;

@@ -2,12 +2,12 @@
  * Active-session detection across every context an agent can run in:
  *
  *   - `terminal` — agents launched from VS Code / Cursor / Codium via the
- *     agents-cli extension. Published to `~/.agents-system/runtime/live-terminals.json`
+ *     agents-cli extension. Published to `~/.agents/runtime/live-terminals.json`
  *     with PID + session UUID per entry.
  *   - `teams`    — agents spawned by `agents teams add`, tracked in
- *     `~/.agents-system/teams/agents/<id>/meta.json` with a PID the manager polls.
+ *     `~/.agents/teams/agents/<id>/meta.json` with a PID the manager polls.
  *   - `cloud`    — dispatched to Rush / Codex Cloud / Factory, tracked in
- *     the SQLite cache at `~/.agents-system/cloud/tasks.db`.
+ *     the SQLite cache at `~/.agents/cloud/tasks.db`.
  *   - `headless` — bare `claude` / `codex` / `gemini` / `cursor-agent` /
  *     `opencode` processes that don't belong to any of the above. Detected
  *     by `ps` minus the PIDs we've already attributed.
@@ -23,7 +23,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { listActiveTasks } from '../cloud/store.js';
 import { AgentManager } from '../teams/agents.js';
-import { getAgentsDir } from '../state.js';
+import { getUserAgentsDir } from '../state.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -56,7 +56,7 @@ export interface ActiveQueryOptions {
 }
 
 const HOME = os.homedir();
-const LIVE_TERMINALS_FILE = path.join(getAgentsDir(), 'runtime', 'live-terminals.json');
+const LIVE_TERMINALS_FILE = path.join(getUserAgentsDir(), 'runtime', 'live-terminals.json');
 
 /**
  * A process is classified `running` if its session file was touched in the

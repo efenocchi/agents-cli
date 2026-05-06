@@ -13,9 +13,9 @@ import type { CloudProvider, CloudProviderId, CloudConfig } from './types.js';
 import { RushCloudProvider } from './rush.js';
 import { CodexCloudProvider } from './codex.js';
 import { FactoryCloudProvider } from './factory.js';
-import { getAgentsDir } from '../state.js';
+import { getUserAgentsDir } from '../state.js';
 
-const META_FILE = path.join(getAgentsDir(), 'agents.yaml');
+const META_FILE = path.join(getUserAgentsDir(), 'agents.yaml');
 
 let _config: CloudConfig | null = null;
 

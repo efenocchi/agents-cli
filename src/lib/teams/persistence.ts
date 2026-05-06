@@ -14,7 +14,7 @@ import { constants as fsConstants } from 'fs';
 import { randomBytes } from 'crypto';
 import lockfile from 'proper-lockfile';
 import { AgentType } from './parsers.js';
-import { getAgentsDir } from '../state.js';
+import { getUserAgentsDir } from '../state.js';
 
 /**
  * Atomic JSON write: writes to a sibling tmp file then renames over the
@@ -63,8 +63,8 @@ async function withConfigLock<T>(p: string, fn: () => Promise<T>): Promise<T> {
 // All supported teammate agent types
 const ALL_AGENTS: AgentType[] = ['claude', 'codex', 'gemini', 'cursor', 'opencode'];
 
-// Teams data lives under ~/.agents-system/teams/
-const TEAMS_DIR = path.join(getAgentsDir(), 'teams');
+// Teams data lives under ~/.agents/teams/
+const TEAMS_DIR = path.join(getUserAgentsDir(), 'teams');
 
 // Legacy paths (for migration)
 const LEGACY_CONFIG_DIR = path.join(homedir(), '.agents');
