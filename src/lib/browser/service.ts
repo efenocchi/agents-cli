@@ -1,13 +1,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { CDPClient, discoverBrowserWsUrl } from './cdp.js';
-import { getProfile, getProfileRuntimeDir } from './profiles.js';
-import {
-  launchChrome,
-  killChrome,
-  getRunningChromeInfo,
-  allocatePort,
-} from './chrome.js';
+import { getProfile, getProfileRuntimeDir, getBrowserRuntimeDir } from './profiles.js';
+import { killChrome, getRunningChromeInfo } from './chrome.js';
+import { connectLocal } from './drivers/local.js';
+import { connectSSH } from './drivers/ssh.js';
 import {
   generateTaskId,
   isValidTaskId,
@@ -232,15 +229,30 @@ export class BrowserService {
 
     const { data } = (await conn.cdp.send(
       'Page.captureScreenshot',
-      { format: 'png' },
+      { format: 'jpeg', quality: 70 },
       sessionId
     )) as { data: string };
 
-    const finalPath =
-      outputPath ||
-      path.join(getProfileRuntimeDir(task.profile), `screenshot-${Date.now()}.png`);
+    let buffer = Buffer.from(data, 'base64');
+
+    const MAX_SIZE = 100 * 1024;
+    if (buffer.length > MAX_SIZE) {
+      let quality = 50;
+      while (buffer.length > MAX_SIZE && quality > 10) {
+        const { data: resized } = (await conn.cdp.send(
+          'Page.captureScreenshot',
+          { format: 'jpeg', quality },
+          sessionId
+        )) as { data: string };
+        buffer = Buffer.from(resized, 'base64');
+        quality -= 10;
+      }
+    }
+
+    const sessionsDir = path.join(getBrowserRuntimeDir(), 'sessions', taskId);
+    const finalPath = outputPath || path.join(sessionsDir, `${Date.now()}.jpg`);
     fs.mkdirSync(path.dirname(finalPath), { recursive: true });
-    fs.writeFileSync(finalPath, Buffer.from(data, 'base64'));
+    fs.writeFileSync(finalPath, buffer);
 
     return finalPath;
   }
@@ -306,34 +318,25 @@ export class BrowserService {
     const url = new URL(endpoint);
 
     if (url.protocol === 'cdp:') {
-      const port = parseInt(url.port, 10) || 9222;
+      const conn = await connectLocal(endpoint, profile);
+      await this.enableDomains(conn.cdp);
+      return {
+        cdp: conn.cdp,
+        port: conn.port,
+        pid: conn.pid,
+        tasks: conn.pid === 0 ? this.loadTaskState(profile.name) : new Map(),
+      };
+    }
 
-      try {
-        const wsUrl = await discoverBrowserWsUrl(port);
-        const cdp = new CDPClient();
-        await cdp.connect(wsUrl);
-        await this.enableDomains(cdp);
-
-        return {
-          cdp,
-          port,
-          pid: 0,
-          tasks: this.loadTaskState(profile.name),
-        };
-      } catch {
-        const newPort = allocatePort();
-        const { pid, wsUrl } = await launchChrome(profile.name, newPort, profile.chrome);
-        const cdp = new CDPClient();
-        await cdp.connect(wsUrl);
-        await this.enableDomains(cdp);
-
-        return {
-          cdp,
-          port: newPort,
-          pid,
-          tasks: new Map(),
-        };
-      }
+    if (url.protocol === 'ssh:') {
+      const conn = await connectSSH(endpoint, profile);
+      await this.enableDomains(conn.cdp);
+      return {
+        cdp: conn.cdp,
+        port: conn.port,
+        pid: conn.pid,
+        tasks: new Map(),
+      };
     }
 
     return null;
