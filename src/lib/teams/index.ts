@@ -69,3 +69,13 @@ export {
 
 export { extractFileOpsFromBash } from './file_ops.js';
 export { debug } from './debug.js';
+
+export {
+  createWorktree,
+  removeWorktree,
+  isGitRepo,
+  getGitRoot,
+  hasUncommittedChanges,
+  getWorktreePath,
+  getWorktreeBranch,
+} from './worktree.js';
