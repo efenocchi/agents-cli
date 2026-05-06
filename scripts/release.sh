@@ -156,6 +156,20 @@ if [[ "$TMAJ$TMIN$TPAT" == "$SMAJ$SMIN$SPAT" ]] || \
 fi
 
 green "Bump: $BUMP ($PHNX_LATEST -> $TARGET)"
+
+# ----- Source of truth: npm registry says whether $TARGET is already published -----
+# Run these checks NOW (before tests) so a re-run that's already partly published
+# can short-circuit cleanly and the user can see what will actually happen.
+PHNX_TARGET_PUBLISHED=false
+SWARMIFY_TARGET_PUBLISHED=false
+if npm view "$PHNX_PKG@$TARGET" version >/dev/null 2>&1; then
+  PHNX_TARGET_PUBLISHED=true
+fi
+if npm view "$SWARMIFY_PKG@$TARGET" version >/dev/null 2>&1; then
+  SWARMIFY_TARGET_PUBLISHED=true
+fi
+gray "  $PHNX_PKG@$TARGET     $($PHNX_TARGET_PUBLISHED && echo 'already published — will skip' || echo 'will publish')"
+gray "  $SWARMIFY_PKG@$TARGET   $($SWARMIFY_TARGET_PUBLISHED && echo 'already published — will skip' || echo 'will publish')"
 echo
 
 # ----- Sync package.json with target -----
@@ -323,41 +337,26 @@ read -r -p "Publish $TARGET to BOTH $PHNX_PKG and $SWARMIFY_PKG? [y/N] " yn
 # committing it. Disable the auto-revert.
 PKG_BUMPED=false
 
-# ----- Commit (idempotent) -----
+# ----- Commit (idempotent on package.json diff alone) -----
 git add package.json
 if ! git diff --cached --quiet; then
   git commit -m "chore(release): $TARGET"
   green "Created release commit"
 else
-  # No staged change. We need a "chore(release): $TARGET" commit to exist
-  # somewhere in recent history so the tag we set anchors a real release.
-  # Allow non-shipping commits (e.g. tooling fixes) to ride on top.
-  if git log -20 --pretty=%s | grep -Fxq "chore(release): $TARGET"; then
-    gray "Release commit chore(release): $TARGET already exists in recent history, skipping"
-  else
-    die "package.json is at $TARGET but no 'chore(release): $TARGET' commit found in last 20 -- bump first"
-  fi
+  gray "package.json already at $TARGET, no commit needed"
 fi
 
-# ----- Tag (idempotent) -----
-# The tag should point at the release commit, not necessarily HEAD.
-RELEASE_COMMIT="$(git log -20 --pretty='%H %s' | awk -v s="chore(release): $TARGET" '$0 ~ s {print $1; exit}')"
-[[ -n "$RELEASE_COMMIT" ]] || die "could not locate release commit for $TARGET"
+# ----- Tag at HEAD (idempotent on tag presence) -----
 if git rev-parse --verify --quiet "refs/tags/v$TARGET" >/dev/null; then
-  EXISTING_TAG_COMMIT="$(git rev-parse "v$TARGET^{commit}")"
-  if [[ "$EXISTING_TAG_COMMIT" == "$RELEASE_COMMIT" ]]; then
-    gray "Tag v$TARGET already on the release commit, skipping"
-  else
-    die "tag v$TARGET points to $EXISTING_TAG_COMMIT, not the release commit $RELEASE_COMMIT -- delete it manually if you mean to re-tag"
-  fi
+  gray "Tag v$TARGET already exists, leaving alone"
 else
-  git tag "v$TARGET" "$RELEASE_COMMIT"
-  green "Created tag v$TARGET at $RELEASE_COMMIT"
+  git tag "v$TARGET"
+  green "Created tag v$TARGET at HEAD ($(git rev-parse --short HEAD))"
 fi
 
-# ----- Publish @phnx-labs (idempotent) -----
+# ----- Publish @phnx-labs (skip if pre-flight saw it on registry) -----
 bold "Publishing $PHNX_PKG@$TARGET..."
-if npm view "$PHNX_PKG@$TARGET" version >/dev/null 2>&1; then
+if $PHNX_TARGET_PUBLISHED; then
   yellow "$PHNX_PKG@$TARGET is already on the registry, skipping publish"
 elif ! npm publish --access=public; then
   red "publish failed for $PHNX_PKG"
@@ -368,9 +367,9 @@ else
 fi
 echo
 
-# ----- Publish @companion shim (idempotent) -----
+# ----- Publish @companion shim (skip if pre-flight saw it on registry) -----
 bold "Publishing $SWARMIFY_PKG@$TARGET shim..."
-if npm view "$SWARMIFY_PKG@$TARGET" version >/dev/null 2>&1; then
+if $SWARMIFY_TARGET_PUBLISHED; then
   yellow "$SWARMIFY_PKG@$TARGET is already on the registry, skipping publish"
 else
   pushd "$SHIM_TMP" >/dev/null
