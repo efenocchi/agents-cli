@@ -14,13 +14,23 @@ import {
   type TaskStatus,
   type BrowserProfile,
 } from './types.js';
+import { getRefs, resolveRefToCoords, type RefOpts, type RefNode } from './refs.js';
+import { clickAtCoords, hoverAtCoords, typeText, pressKey, focusNode } from './input.js';
 
 interface ProfileConnection {
   cdp: CDPClient;
   port: number;
   pid: number;
   tasks: Map<string, Task>;
+  targetCache?: { targets: TargetInfo[]; ts: number };
+  sessionCache: Map<string, string>;
 }
+
+type TargetInfo = {
+  targetId: string;
+  url?: string;
+  title?: string;
+};
 
 export class BrowserService {
   private connections = new Map<string, ProfileConnection>();
@@ -64,7 +74,7 @@ export class BrowserService {
     };
     conn.tasks.set(finalTaskId, task);
 
-    this.saveTaskState(profileName, conn.tasks);
+    await this.saveTaskState(profileName, conn.tasks);
 
     return { task: finalTaskId, windowTargetId };
   }
@@ -73,13 +83,17 @@ export class BrowserService {
     for (const [profileName, conn] of this.connections) {
       const task = conn.tasks.get(taskId);
       if (task) {
+        await Promise.all(
+          task.tabIds.map((tabId) =>
+            conn.cdp.send('Target.closeTarget', { targetId: tabId }).catch(() => {
+              // Tab already closed
+            })
+          )
+        );
         for (const tabId of task.tabIds) {
-          try {
-            await conn.cdp.send('Target.closeTarget', { targetId: tabId });
-          } catch {
-            // Tab already closed
-          }
+          conn.sessionCache.delete(tabId);
         }
+        this.invalidateTargetCache(conn);
 
         if (task.windowTargetId) {
           try {
@@ -90,7 +104,7 @@ export class BrowserService {
         }
 
         conn.tasks.delete(taskId);
-        this.saveTaskState(profileName, conn.tasks);
+        await this.saveTaskState(profileName, conn.tasks);
 
         return { ok: true, profile: profileName };
       }
@@ -134,7 +148,8 @@ export class BrowserService {
 
     const tabId = result.targetId;
     task.tabIds.push(tabId);
-    this.saveTaskState(task.profile, conn.tasks);
+    this.invalidateTargetCache(conn);
+    await this.saveTaskState(task.profile, conn.tasks);
 
     return { tabId, url };
   }
@@ -161,14 +176,21 @@ export class BrowserService {
     if (tabId !== undefined) {
       await conn.cdp.send('Target.closeTarget', { targetId: tabId });
       task.tabIds = task.tabIds.filter((id) => id !== tabId);
+      conn.sessionCache.delete(tabId);
     } else {
+      await Promise.all(
+        task.tabIds.map((id) =>
+          conn.cdp.send('Target.closeTarget', { targetId: id }).catch(() => {})
+        )
+      );
       for (const id of task.tabIds) {
-        await conn.cdp.send('Target.closeTarget', { targetId: id });
+        conn.sessionCache.delete(id);
       }
       task.tabIds = [];
     }
 
-    this.saveTaskState(task.profile, conn.tasks);
+    this.invalidateTargetCache(conn);
+    await this.saveTaskState(task.profile, conn.tasks);
   }
 
   async evaluate(
@@ -177,20 +199,13 @@ export class BrowserService {
     expression: string
   ): Promise<unknown> {
     const { conn } = await this.findTask(taskId);
-
-    const targets = (await conn.cdp.send('Target.getTargets')) as {
-      targetInfos: Array<{ targetId: string }>;
-    };
-    const target = targets.targetInfos.find((t) => t.targetId === tabId);
+    const target = await this.getTarget(conn, tabId);
 
     if (!target) {
       throw new Error(`Tab ${tabId} not found`);
     }
 
-    const { sessionId } = (await conn.cdp.send('Target.attachToTarget', {
-      targetId: target.targetId,
-      flatten: true,
-    })) as { sessionId: string };
+    const sessionId = await this.getSessionId(conn, target.targetId);
 
     const result = (await conn.cdp.send(
       'Runtime.evaluate',
@@ -213,19 +228,13 @@ export class BrowserService {
       throw new Error('No tabs open for this task');
     }
 
-    const targets = (await conn.cdp.send('Target.getTargets')) as {
-      targetInfos: Array<{ targetId: string }>;
-    };
-    const target = targets.targetInfos.find((t) => t.targetId === targetTabId);
+    const target = await this.getTarget(conn, targetTabId);
 
     if (!target) {
       throw new Error(`Tab ${targetTabId} not found`);
     }
 
-    const { sessionId } = (await conn.cdp.send('Target.attachToTarget', {
-      targetId: target.targetId,
-      flatten: true,
-    })) as { sessionId: string };
+    const sessionId = await this.getSessionId(conn, target.targetId);
 
     const { data } = (await conn.cdp.send(
       'Page.captureScreenshot',
@@ -251,10 +260,74 @@ export class BrowserService {
 
     const sessionsDir = path.join(getBrowserRuntimeDir(), 'sessions', taskId);
     const finalPath = outputPath || path.join(sessionsDir, `${Date.now()}.jpg`);
-    fs.mkdirSync(path.dirname(finalPath), { recursive: true });
-    fs.writeFileSync(finalPath, buffer);
+    await fs.promises.mkdir(path.dirname(finalPath), { recursive: true });
+    await fs.promises.writeFile(finalPath, buffer);
 
     return finalPath;
+  }
+
+  private refsCache = new Map<string, { refs: string; nodeMap: Map<number, RefNode>; ts: number }>();
+
+  async refs(
+    taskId: string,
+    tabId?: string,
+    opts: RefOpts = {}
+  ): Promise<{ refs: string; nodeMap: Map<number, RefNode> }> {
+    const { conn, task } = await this.findTask(taskId);
+    const targetTabId = tabId || task.tabIds[task.tabIds.length - 1];
+    if (!targetTabId) throw new Error('No tabs open for this task');
+
+    const target = await this.getTarget(conn, targetTabId);
+    if (!target) throw new Error(`Tab ${targetTabId} not found`);
+
+    const sessionId = await this.getSessionId(conn, target.targetId);
+    return getRefs(conn.cdp, sessionId, opts);
+  }
+
+  async click(taskId: string, tabId: string, ref: number): Promise<void> {
+    const { conn } = await this.findTask(taskId);
+    const target = await this.getTarget(conn, tabId);
+    if (!target) throw new Error(`Tab ${tabId} not found`);
+
+    const sessionId = await this.getSessionId(conn, target.targetId);
+    const { nodeMap } = await getRefs(conn.cdp, sessionId, { interactive: false, limit: 1000 });
+    const { x, y } = await resolveRefToCoords(conn.cdp, sessionId, nodeMap, ref);
+    await clickAtCoords(conn.cdp, sessionId, x, y);
+  }
+
+  async type(taskId: string, tabId: string, ref: number, text: string): Promise<void> {
+    const { conn } = await this.findTask(taskId);
+    const target = await this.getTarget(conn, tabId);
+    if (!target) throw new Error(`Tab ${tabId} not found`);
+
+    const sessionId = await this.getSessionId(conn, target.targetId);
+    const { nodeMap } = await getRefs(conn.cdp, sessionId, { interactive: false, limit: 1000 });
+    const node = nodeMap.get(ref);
+    if (!node) throw new Error(`Ref ${ref} not found`);
+    if (node.backendNodeId) {
+      await focusNode(conn.cdp, sessionId, node.backendNodeId);
+    }
+    await typeText(conn.cdp, sessionId, text);
+  }
+
+  async press(taskId: string, tabId: string, key: string): Promise<void> {
+    const { conn } = await this.findTask(taskId);
+    const target = await this.getTarget(conn, tabId);
+    if (!target) throw new Error(`Tab ${tabId} not found`);
+
+    const sessionId = await this.getSessionId(conn, target.targetId);
+    await pressKey(conn.cdp, sessionId, key);
+  }
+
+  async hover(taskId: string, tabId: string, ref: number): Promise<void> {
+    const { conn } = await this.findTask(taskId);
+    const target = await this.getTarget(conn, tabId);
+    if (!target) throw new Error(`Tab ${tabId} not found`);
+
+    const sessionId = await this.getSessionId(conn, target.targetId);
+    const { nodeMap } = await getRefs(conn.cdp, sessionId, { interactive: false, limit: 1000 });
+    const { x, y } = await resolveRefToCoords(conn.cdp, sessionId, nodeMap, ref);
+    await hoverAtCoords(conn.cdp, sessionId, x, y);
   }
 
   async status(profileName?: string): Promise<ProfileStatus[]> {
@@ -296,6 +369,7 @@ export class BrowserService {
         port: existingInfo.port,
         pid: existingInfo.pid,
         tasks,
+        sessionCache: new Map(),
       };
     }
 
@@ -325,6 +399,7 @@ export class BrowserService {
         port: conn.port,
         pid: conn.pid,
         tasks: conn.pid === 0 ? this.loadTaskState(profile.name) : new Map(),
+        sessionCache: new Map(),
       };
     }
 
@@ -336,6 +411,7 @@ export class BrowserService {
         port: conn.port,
         pid: conn.pid,
         tasks: new Map(),
+        sessionCache: new Map(),
       };
     }
 
@@ -425,12 +501,45 @@ export class BrowserService {
     };
   }
 
-  private saveTaskState(profileName: string, tasks: Map<string, Task>): void {
+  private async getTarget(
+    conn: ProfileConnection,
+    tabId: string
+  ): Promise<TargetInfo | undefined> {
+    const now = Date.now();
+    if (!conn.targetCache || now - conn.targetCache.ts > 1000) {
+      const { targetInfos } = (await conn.cdp.send('Target.getTargets')) as {
+        targetInfos: TargetInfo[];
+      };
+      conn.targetCache = { targets: targetInfos, ts: now };
+    }
+
+    return conn.targetCache.targets.find((target) => target.targetId === tabId);
+  }
+
+  private async getSessionId(conn: ProfileConnection, tabId: string): Promise<string> {
+    const cachedSessionId = conn.sessionCache.get(tabId);
+    if (cachedSessionId) {
+      return cachedSessionId;
+    }
+
+    const { sessionId } = (await conn.cdp.send('Target.attachToTarget', {
+      targetId: tabId,
+      flatten: true,
+    })) as { sessionId: string };
+    conn.sessionCache.set(tabId, sessionId);
+    return sessionId;
+  }
+
+  private invalidateTargetCache(conn: ProfileConnection): void {
+    conn.targetCache = undefined;
+  }
+
+  private async saveTaskState(profileName: string, tasks: Map<string, Task>): Promise<void> {
     const runtimeDir = getProfileRuntimeDir(profileName);
-    fs.mkdirSync(runtimeDir, { recursive: true });
+    await fs.promises.mkdir(runtimeDir, { recursive: true });
 
     const state = Object.fromEntries(tasks);
-    fs.writeFileSync(
+    await fs.promises.writeFile(
       path.join(runtimeDir, 'tasks.json'),
       JSON.stringify(state, null, 2)
     );

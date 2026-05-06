@@ -341,6 +341,105 @@ function registerTaskCommands(browser: Command): void {
         );
       }
     });
+
+  browser
+    .command('refs <task> [tabId]')
+    .description('Get DOM refs for interactive elements')
+    .option('--all', 'Include non-interactive elements')
+    .option('-l, --limit <n>', 'Max elements (default 500)', '500')
+    .action(async (task: string, tabId: string | undefined, opts) => {
+      const response = await sendIPCRequest({
+        action: 'refs',
+        task,
+        tabId,
+        interactive: !opts.all,
+        limit: parseInt(opts.limit, 10),
+      });
+
+      if (!response.ok) {
+        console.error(response.error);
+        process.exit(1);
+      }
+
+      console.log(response.refs);
+    });
+
+  browser
+    .command('click <task> <tabId> <ref>')
+    .description('Click an element by ref')
+    .action(async (task: string, tabId: string, ref: string) => {
+      const response = await sendIPCRequest({
+        action: 'click',
+        task,
+        tabId,
+        ref: parseInt(ref, 10),
+      });
+
+      if (!response.ok) {
+        console.error(response.error);
+        process.exit(1);
+      }
+
+      console.log('Clicked');
+    });
+
+  browser
+    .command('type <task> <tabId> <ref> <text>')
+    .description('Type text into an element by ref')
+    .action(async (task: string, tabId: string, ref: string, text: string) => {
+      const response = await sendIPCRequest({
+        action: 'type',
+        task,
+        tabId,
+        ref: parseInt(ref, 10),
+        text,
+      });
+
+      if (!response.ok) {
+        console.error(response.error);
+        process.exit(1);
+      }
+
+      console.log('Typed');
+    });
+
+  browser
+    .command('press <task> <tabId> <key>')
+    .description('Press a key (Enter, Tab, Escape, etc)')
+    .action(async (task: string, tabId: string, key: string) => {
+      const response = await sendIPCRequest({
+        action: 'press',
+        task,
+        tabId,
+        key,
+      });
+
+      if (!response.ok) {
+        console.error(response.error);
+        process.exit(1);
+      }
+
+      console.log('Pressed');
+    });
+
+  browser
+    .command('hover <task> <tabId> <ref>')
+    .description('Hover over an element by ref')
+    .action(async (task: string, tabId: string, ref: string) => {
+      const response = await sendIPCRequest({
+        action: 'hover',
+        task,
+        tabId,
+        ref: parseInt(ref, 10),
+      });
+
+      if (!response.ok) {
+        console.error(response.error);
+        process.exit(1);
+      }
+
+      console.log('Hovered');
+    });
 }
 
 function collect(val: string, memo: string[]): string[] {
