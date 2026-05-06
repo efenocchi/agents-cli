@@ -22,7 +22,7 @@ Clone from `phnx-labs/.agents-system` to see exactly what ships. Nothing else be
 
 **User repo (`~/.agents/`)** — your resources + all operational state:
 - **Your resources:** commands, skills, hooks, rules, mcp, permissions, profiles, subagents
-- **Operational state:** `versions/`, `shims/`, `sessions/`, `runs/`, `routines/`, `cache/`, `cloud/`, `teams/`, `browser/`, `agents.yaml`
+- **Operational state:** `versions/`, `shims/`, `sessions/`, `routines/` (with `runs/` inside), `cache/`, `cloud/`, `teams/`, `browser/`, `.trash/`, `.backups/`, `agents.yaml`
 - **Browser:** `browser/profiles/` (YAML configs) + `browser/<profile>/` (runtime: chrome-data, pids)
 
 **No `secrets/` directory anywhere.** Bundle metadata lives in macOS Keychain, not on disk.
