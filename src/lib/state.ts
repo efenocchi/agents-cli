@@ -2,9 +2,11 @@
  * Filesystem layout and persistent state for agents-cli.
  *
  * Two roots:
- *  - ~/.agents-system/ — system repo (npm-shipped resources, versions, shims, backups, runs)
+ *  - ~/.agents-system/ — system repo (npm-shipped resources and canonical read-side defaults)
  *  - ~/.agents/        — user repo  (user-authored commands, skills, hooks, rules, mcp,
- *                                    permissions, subagents, profiles, secrets, agents.yaml)
+ *                                    permissions, subagents, profiles, secrets, agents.yaml,
+ *                                    packages, routines, runs, versions, shims, backups, plugins,
+ *                                    drive, trash)
  *
  * Resolution precedence for resources: project > user > system.
  * Every module that needs a path or reads/writes agents.yaml goes through here.
@@ -46,16 +48,16 @@ const SYSTEM_PROMPTCUTS_FILE = path.join(SYSTEM_AGENTS_DIR, 'hooks', 'promptcuts
 const SYSTEM_MCP_CONFIG_FILE = path.join(SYSTEM_AGENTS_DIR, 'mcp.json');
 const SYSTEM_INSTRUCTIONS_FILE = path.join(SYSTEM_AGENTS_DIR, 'instructions.md');
 
-// System-only paths (never duplicated in user repo)
-const PACKAGES_DIR = path.join(SYSTEM_AGENTS_DIR, 'packages');
-const ROUTINES_DIR = path.join(SYSTEM_AGENTS_DIR, 'routines');
-const RUNS_DIR = path.join(SYSTEM_AGENTS_DIR, 'runs');
-const VERSIONS_DIR = path.join(SYSTEM_AGENTS_DIR, 'versions');
-const SHIMS_DIR = path.join(SYSTEM_AGENTS_DIR, 'shims');
-const BACKUPS_DIR = path.join(SYSTEM_AGENTS_DIR, 'backups');
-const PLUGINS_DIR = path.join(SYSTEM_AGENTS_DIR, 'plugins');
-const DRIVE_DIR = path.join(SYSTEM_AGENTS_DIR, 'drive');
-const TRASH_DIR = path.join(SYSTEM_AGENTS_DIR, 'trash');
+// User-level operational state
+const PACKAGES_DIR = path.join(USER_AGENTS_DIR, 'packages');
+const ROUTINES_DIR = path.join(USER_AGENTS_DIR, 'routines');
+const RUNS_DIR = path.join(USER_AGENTS_DIR, 'runs');
+const VERSIONS_DIR = path.join(USER_AGENTS_DIR, 'versions');
+const SHIMS_DIR = path.join(USER_AGENTS_DIR, 'shims');
+const BACKUPS_DIR = path.join(USER_AGENTS_DIR, 'backups');
+const PLUGINS_DIR = path.join(USER_AGENTS_DIR, 'plugins');
+const DRIVE_DIR = path.join(USER_AGENTS_DIR, 'drive');
+const TRASH_DIR = path.join(USER_AGENTS_DIR, 'trash');
 
 // ─── User resource dirs ───────────────────────────────────────────────────────
 
@@ -204,36 +206,36 @@ export function getUserSubagentsDir(): string { return USER_SUBAGENTS_DIR; }
 export function getUserSecretsDir(): string { return USER_SECRETS_DIR; }
 export function getUserPromptcutsPath(): string { return USER_PROMPTCUTS_FILE; }
 
-// ─── System-only path getters ─────────────────────────────────────────────────
+// ─── User operational path getters ────────────────────────────────────────────
 
-/** Path to cloned packages (~/.agents-system/packages/). */
+/** Path to cloned packages (~/.agents/packages/). */
 export function getPackagesDir(): string { return PACKAGES_DIR; }
 
-/** Path to routine YAML definitions (~/.agents-system/routines/). */
+/** Path to routine YAML definitions (~/.agents/routines/). */
 export function getRoutinesDir(): string { return ROUTINES_DIR; }
 
-/** Path to routine execution logs (~/.agents-system/runs/). */
+/** Path to routine execution logs (~/.agents/runs/). */
 export function getRunsDir(): string { return RUNS_DIR; }
 
-/** Path to installed agent CLI binaries (~/.agents-system/versions/). */
+/** Path to installed agent CLI binaries (~/.agents/versions/). */
 export function getVersionsDir(): string { return VERSIONS_DIR; }
 
-/** Path to version-switching shim scripts (~/.agents-system/shims/). */
+/** Path to version-switching shim scripts (~/.agents/shims/). */
 export function getShimsDir(): string { return SHIMS_DIR; }
 
-/** Path to config backups (~/.agents-system/backups/). */
+/** Path to config backups (~/.agents/backups/). */
 export function getBackupsDir(): string { return BACKUPS_DIR; }
 
-/** Path to plugin bundles (~/.agents-system/plugins/). */
+/** Path to plugin bundles (~/.agents/plugins/). */
 export function getPluginsDir(): string { return PLUGINS_DIR; }
 
-/** Path to synced remote session data (~/.agents-system/drive/). */
+/** Path to synced remote session data (~/.agents/drive/). */
 export function getDriveDir(): string { return DRIVE_DIR; }
 
-/** Path to soft-deleted resources (~/.agents-system/trash/). */
+/** Path to soft-deleted resources (~/.agents/trash/). */
 export function getTrashDir(): string { return TRASH_DIR; }
 
-/** Path to soft-deleted version dirs (~/.agents-system/trash/versions/). */
+/** Path to soft-deleted version dirs (~/.agents/trash/versions/). */
 export function getTrashVersionsDir(): string { return path.join(TRASH_DIR, 'versions'); }
 
 /**
@@ -282,7 +284,7 @@ export function ensureAgentsDir(): void {
   }
   try { fs.chmodSync(USER_AGENTS_DIR, 0o700); } catch {}
 
-  // System repo
+  // System repo plus user-level operational state
   if (!fs.existsSync(SYSTEM_AGENTS_DIR)) {
     fs.mkdirSync(SYSTEM_AGENTS_DIR, opts);
   }
@@ -391,29 +393,47 @@ export function readMeta(): Meta {
     }
   }
 
-  if (fs.existsSync(META_FILE)) {
-    let mtime = 0;
+  // Merge agents.yaml from both system and user repos. User repo wins on conflicts.
+  let systemMeta: Meta | null = null;
+  let userMeta: Meta | null = null;
+
+  if (fs.existsSync(SYSTEM_META_FILE)) {
     try {
-      mtime = fs.statSync(META_FILE).mtimeMs;
-    } catch { /* file vanished */ }
+      const content = fs.readFileSync(SYSTEM_META_FILE, 'utf-8');
+      systemMeta = yaml.parse(content) as Meta;
+    } catch { /* ignore */ }
+  }
 
-    if (metaCache && metaCache.mtime === mtime) {
-      return metaCache.meta;
-    }
-
+  if (fs.existsSync(META_FILE)) {
     try {
       const content = fs.readFileSync(META_FILE, 'utf-8');
-      const parsed = yaml.parse(content) as Meta;
-      const meta = parsed || createDefaultMeta();
-      if (applyRegistrySeeds(meta)) {
-        writeMeta(meta);
-        return meta;
-      }
-      metaCache = { mtime, meta };
-      return meta;
-    } catch {
-      return createDefaultMeta();
+      userMeta = yaml.parse(content) as Meta;
+    } catch { /* ignore */ }
+  }
+
+  if (systemMeta || userMeta) {
+    // Merge: system as base, user overwrites
+    const base = createDefaultMeta();
+    const meta: Meta = {
+      ...base,
+      ...systemMeta,
+      ...userMeta,
+      agents: { ...systemMeta?.agents, ...userMeta?.agents },
+    };
+    // Merge registries carefully to preserve type
+    if (systemMeta?.registries || userMeta?.registries) {
+      meta.registries = {
+        ...base.registries,
+        ...systemMeta?.registries,
+        ...userMeta?.registries,
+      } as Meta['registries'];
     }
+
+    if (applyRegistrySeeds(meta)) {
+      writeMeta(meta);
+      return meta;
+    }
+    return meta;
   }
 
   const meta = createDefaultMeta();

@@ -18,7 +18,7 @@ vi.mock('os', async () => {
 });
 
 // Import AFTER the mock so db.ts captures TEST_HOME as its base dir.
-const { getDB, querySessions, closeDB } = await import('../db.js');
+const { getDB, getDBPath, querySessions, closeDB } = await import('../db.js');
 
 function seed(id: string, version: string | null, timestamp: string): void {
   const db = getDB();
@@ -58,6 +58,10 @@ describe('querySessions version filter', () => {
   it('returns only sessions matching the requested version', () => {
     const rows = querySessions({ version: '2.1.112' });
     expect(rows.map(r => r.id).sort()).toEqual(['s2-newer', 's3-same']);
+  });
+
+  it('stores the sessions database under ~/.agents/sessions', () => {
+    expect(getDBPath()).toBe(path.join(TEST_HOME, '.agents', 'sessions', 'sessions.db'));
   });
 
   it('returns no sessions for an unknown version', () => {
