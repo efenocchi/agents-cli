@@ -50,9 +50,9 @@ fi
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 [[ "$BRANCH" == "main" ]] || die "must be on main (currently on $BRANCH)"
 git fetch --quiet origin main
-LOCAL="$(git rev-parse @)"
-REMOTE="$(git rev-parse @{u})"
-[[ "$LOCAL" == "$REMOTE" ]] || die "main is not in sync with origin/main"
+LOCAL="$(git rev-parse HEAD)"
+REMOTE="$(git rev-parse origin/main)"
+[[ "$LOCAL" == "$REMOTE" ]] || die "main is not in sync with origin/main (run 'git push' first)"
 
 # Must be logged into npm
 NPM_USER="$(npm whoami 2>/dev/null || true)"
