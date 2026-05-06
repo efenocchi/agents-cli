@@ -98,7 +98,10 @@ NPM_TOKEN="${NPM_TOKEN#\'}"
 
 NPMRC_TMP="$(mktemp -t agents-cli-npmrc)"
 chmod 600 "$NPMRC_TMP"
-printf '//registry.npmjs.org/:_authToken=%s\nalways-auth=true\n' "$NPM_TOKEN" > "$NPMRC_TMP"
+# Use ${NPM_TOKEN} env var reference - npm expands it at runtime.
+# Writing the token directly causes 404 errors for scoped packages.
+printf '//registry.npmjs.org/:_authToken=${NPM_TOKEN}\nalways-auth=true\n' > "$NPMRC_TMP"
+export NPM_TOKEN
 export NPM_CONFIG_USERCONFIG="$NPMRC_TMP"
 
 # Verify the token works.
