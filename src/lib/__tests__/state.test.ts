@@ -34,14 +34,14 @@ describe('state paths', () => {
 
     expect(getPackagesDir()).toBe(path.join(userRoot, 'packages'));
     expect(getRoutinesDir()).toBe(path.join(userRoot, 'routines'));
-    expect(getRunsDir()).toBe(path.join(userRoot, 'runs'));
+    expect(getRunsDir()).toBe(path.join(userRoot, 'routines', 'runs'));
     expect(getVersionsDir()).toBe(path.join(userRoot, 'versions'));
     expect(getShimsDir()).toBe(path.join(userRoot, 'shims'));
-    expect(getBackupsDir()).toBe(path.join(userRoot, 'backups'));
+    expect(getBackupsDir()).toBe(path.join(userRoot, '.backups'));
     expect(getPluginsDir()).toBe(path.join(userRoot, 'plugins'));
     expect(getDriveDir()).toBe(path.join(userRoot, 'drive'));
-    expect(getTrashDir()).toBe(path.join(userRoot, 'trash'));
-    expect(getTrashVersionsDir()).toBe(path.join(userRoot, 'trash', 'versions'));
+    expect(getTrashDir()).toBe(path.join(userRoot, '.trash'));
+    expect(getTrashVersionsDir()).toBe(path.join(userRoot, '.trash', 'versions'));
   });
 });
 
