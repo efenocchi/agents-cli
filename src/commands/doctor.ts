@@ -1,29 +1,49 @@
 /**
  * `agents doctor` — diagnostic readout across the install.
  *
- * Three sections:
- *   1. CLI availability — which agent binaries can be invoked.
- *   2. Sync status — per (agent, default-version), is the version-home sync
- *      manifest fresh? (sync runs at launch; this surfaces what would happen.)
- *   3. Orphans — per resource type per default version, count of files that
- *      would be removed by `agents prune`.
+ * Two modes:
  *
- * Read-only: doctor never mutates state. Run `agents prune` to act on the
- * orphan readout, or just launch the agent to apply pending sync.
+ *   1. Overview (no target): three sections —
+ *      - CLI availability (which agent binaries can be invoked).
+ *      - Sync status per default version (fresh / stale / never-synced).
+ *      - Orphans per default version per resource type.
+ *
+ *   2. Target mode: `agents doctor <agent>[@version]` — full per-resource
+ *      diff for a single (agent, version) against the current cwd's resolved
+ *      sources. Reports ok / DIFF / MISS / EXTRA per resource with the source
+ *      layer (project, user, system, extra repo). With `--diff`, renders a
+ *      unified diff body for each divergent file. Mirrors the resolution that
+ *      the shim drives at runtime: project > user > system > extras.
+ *
+ * Read-only: doctor never mutates state. Run `agents prune` to act on orphan
+ * readouts, or just launch the agent to apply pending sync.
  */
 import type { Command } from 'commander';
 import chalk from 'chalk';
 import { checkAllClis } from '../lib/teams/agents.js';
-import { AGENTS, ALL_AGENT_IDS } from '../lib/agents.js';
+import { AGENTS, ALL_AGENT_IDS, resolveAgentName, formatAgentError } from '../lib/agents.js';
 import type { AgentId } from '../lib/types.js';
 import {
   getAvailableResources,
   getGlobalDefault,
+  getVersionHomePath,
+  isVersionInstalled,
+  listInstalledVersions,
+  parseAgentSpec,
 } from '../lib/versions.js';
 import { loadSyncManifest, isSyncStale } from '../lib/sync-manifest.js';
 import { diffVersionCommands, iterCommandsCapableVersions } from '../lib/commands.js';
 import { diffVersionSkills, iterSkillsCapableVersions } from '../lib/skills.js';
 import { diffVersionHooks, iterHooksCapableVersions } from '../lib/hooks.js';
+import {
+  diffVersionResources,
+  DOCTOR_ALL_KINDS,
+  type DoctorKind,
+  type ResourceDiff,
+  type VersionResourceReport,
+} from '../lib/doctor-diff.js';
+import { unifiedDiff, colorizeUnifiedDiff } from '../lib/diff-text.js';
+import * as fs from 'fs';
 
 const AGENT_NAMES: Record<string, string> = Object.fromEntries(
   ALL_AGENT_IDS.map((id) => [id, AGENTS[id].name]),
@@ -31,6 +51,9 @@ const AGENT_NAMES: Record<string, string> = Object.fromEntries(
 
 interface DoctorOptions {
   json?: boolean;
+  diff?: boolean;
+  kind?: string;
+  cwd?: string;
 }
 
 interface SyncStatusRow {
@@ -46,6 +69,8 @@ interface OrphanRow {
   skills: number;
   hooks: number;
 }
+
+// ─── overview mode (no target) ────────────────────────────────────────────────
 
 function checkSyncStatus(cwd: string): SyncStatusRow[] {
   const rows: SyncStatusRow[] = [];
@@ -96,7 +121,7 @@ function countOrphans(): OrphanRow[] {
   return Array.from(byKey.values()).filter((r) => r.commands + r.skills + r.hooks > 0);
 }
 
-function renderText(
+function renderOverviewText(
   clis: ReturnType<typeof checkAllClis>,
   syncRows: SyncStatusRow[],
   orphanRows: OrphanRow[],
@@ -149,22 +174,263 @@ function renderText(
   }
 }
 
+// ─── target mode ──────────────────────────────────────────────────────────────
+
+interface ResolvedTarget {
+  agent: AgentId;
+  versions: string[];
+}
+
+function parseTargetArg(arg: string): ResolvedTarget | { error: string } {
+  const at = arg.indexOf('@');
+  const agentPart = at === -1 ? arg : arg.slice(0, at);
+  const versionPart = at === -1 ? '' : arg.slice(at + 1);
+
+  const agent = resolveAgentName(agentPart);
+  if (!agent) return { error: formatAgentError(agentPart) };
+
+  if (!versionPart) {
+    const versions = listInstalledVersions(agent);
+    if (versions.length === 0) return { error: `${AGENTS[agent].name} has no installed versions. Run \`agents add ${agent}@<version>\` first.` };
+    return { agent, versions };
+  }
+
+  if (versionPart === 'default') {
+    const def = getGlobalDefault(agent);
+    if (!def) return { error: `${AGENTS[agent].name} has no default version pinned. Run \`agents use ${agent}@<version>\`.` };
+    return { agent, versions: [def] };
+  }
+
+  const spec = parseAgentSpec(`${agent}@${versionPart}`);
+  if (!spec) return { error: `Invalid version: ${versionPart}` };
+  if (!isVersionInstalled(agent, versionPart)) {
+    return { error: `${AGENTS[agent].name}@${versionPart} is not installed. Installed: ${listInstalledVersions(agent).join(', ') || '(none)'}` };
+  }
+  return { agent, versions: [versionPart] };
+}
+
+function parseKindFilter(arg: string | undefined): DoctorKind[] | { error: string } {
+  if (!arg) return DOCTOR_ALL_KINDS as DoctorKind[];
+  const requested = arg.split(',').map((s) => s.trim()).filter(Boolean);
+  const valid = new Set<DoctorKind>(DOCTOR_ALL_KINDS);
+  const out: DoctorKind[] = [];
+  for (const k of requested) {
+    if (!valid.has(k as DoctorKind)) {
+      return { error: `Unknown kind: ${k}. Valid: ${DOCTOR_ALL_KINDS.join(', ')}` };
+    }
+    out.push(k as DoctorKind);
+  }
+  return out;
+}
+
+function statusLabel(status: ResourceDiff['status']): string {
+  switch (status) {
+    case 'ok': return chalk.green('ok   ');
+    case 'diff': return chalk.yellow('DIFF ');
+    case 'missing': return chalk.red('MISS ');
+    case 'extra': return chalk.magenta('EXTRA');
+  }
+}
+
+function sourceLabel(diff: ResourceDiff, layers: VersionResourceReport['layers']): string {
+  if (!diff.source) return '';
+  if (diff.source === 'extra') {
+    // Find which extra repo this came from.
+    const sourcePath = diff.sourcePath;
+    if (sourcePath) {
+      for (const e of layers.extras) {
+        if (sourcePath.startsWith(e.dir + '/') || sourcePath === e.dir) {
+          return chalk.gray(`source=extra:${e.alias}`);
+        }
+      }
+    }
+    return chalk.gray('source=extra');
+  }
+  return chalk.gray(`source=${diff.source}`);
+}
+
+function countByStatus(rows: ResourceDiff[]): { ok: number; diff: number; missing: number; extra: number } {
+  let ok = 0, diff = 0, missing = 0, extra = 0;
+  for (const r of rows) {
+    if (r.status === 'ok') ok++;
+    else if (r.status === 'diff') diff++;
+    else if (r.status === 'missing') missing++;
+    else if (r.status === 'extra') extra++;
+  }
+  return { ok, diff, missing, extra };
+}
+
+function renderKindSection(
+  kind: DoctorKind,
+  rows: ResourceDiff[],
+  layers: VersionResourceReport['layers'],
+  options: { showDiff: boolean; requestedKinds?: Set<DoctorKind> },
+): void {
+  const counts = countByStatus(rows);
+  const total = rows.length;
+  const summaryParts: string[] = [];
+  if (counts.ok) summaryParts.push(`${counts.ok} ok`);
+  if (counts.diff) summaryParts.push(chalk.yellow(`${counts.diff} diff`));
+  if (counts.missing) summaryParts.push(chalk.red(`${counts.missing} missing`));
+  if (counts.extra) summaryParts.push(chalk.magenta(`${counts.extra} extra`));
+  const summary = total === 0 ? chalk.gray('(none)') : summaryParts.join(', ');
+  console.log(`  ${chalk.bold(kind.padEnd(11))} ${chalk.gray(`${total} item${total === 1 ? '' : 's'}`)}  ${summary}`);
+
+  if (total === 0) return;
+
+  // Hide ok rows by default for big lists; show them only with --diff so the
+  // operator can verify presence; otherwise keep output focused on problems.
+  const visible = options.showDiff ? rows : rows.filter((r) => r.status !== 'ok');
+  if (visible.length === 0) {
+    console.log(`    ${chalk.gray('all ok')}`);
+    return;
+  }
+
+  for (const r of visible) {
+    const src = sourceLabel(r, layers);
+    console.log(`    ${statusLabel(r.status)}  ${r.name.padEnd(28)} ${src}`);
+
+    if (options.showDiff && r.status === 'diff' && r.sourcePath && r.homePath) {
+      const expected = readExpectedForDiff(kind, r);
+      const actual = safeRead(r.homePath);
+      if (expected != null && actual != null) {
+        const patch = unifiedDiff(expected, actual, {
+          fromLabel: r.sourcePath,
+          toLabel: r.homePath,
+          context: 2,
+        });
+        if (patch) console.log(colorizeUnifiedDiff(patch, '      '));
+      }
+    }
+  }
+}
+
+function safeRead(p: string): string | null {
+  try { return fs.readFileSync(p, 'utf-8'); } catch { return null; }
+}
+
+function readExpectedForDiff(kind: DoctorKind, row: ResourceDiff): string | null {
+  // Skills are directories; per-file diffs would need recursive walking.
+  // Keep the v1 behaviour minimal: the row already says DIFF, the user can
+  // open the source path to inspect.
+  if (kind === 'skills') return null;
+  if (!row.sourcePath) return null;
+  return safeRead(row.sourcePath);
+}
+
+function renderTargetText(report: VersionResourceReport, options: { showDiff: boolean; requestedKinds?: Set<DoctorKind> }): void {
+  const label = `${AGENT_NAMES[report.agent] || report.agent}@${report.version}`;
+  console.log(chalk.bold(label));
+  console.log(chalk.gray(`  home: ${report.home}`));
+  console.log(chalk.gray(`  cwd:  ${report.cwd}`));
+  const layerStr = [
+    report.layers.project ? `project=${report.layers.project}` : null,
+    `user=${report.layers.user}`,
+    `system=${report.layers.system}`,
+    report.layers.extras.length > 0
+      ? `extras=[${report.layers.extras.map((e) => e.alias).join(',')}]`
+      : null,
+  ].filter(Boolean).join(' ');
+  console.log(chalk.gray(`  layers: ${layerStr}`));
+  console.log();
+
+  for (const kind of DOCTOR_ALL_KINDS) {
+    const rows = report.kinds[kind];
+    // Skip kinds that weren't requested (kind filter narrowed the report).
+    // We detect this by checking whether the kind has any rows AND was in
+    // scope; absent kinds with empty arrays still render so the operator
+    // sees what was checked. options.requestedKinds drives this.
+    if (options.requestedKinds && !options.requestedKinds.has(kind)) continue;
+    renderKindSection(kind, rows, report.layers, options);
+  }
+
+  console.log();
+  const { ok, diff, missing, extra } = report.summary;
+  const verdictParts: string[] = [];
+  if (diff) verdictParts.push(chalk.yellow(`${diff} divergent`));
+  if (missing) verdictParts.push(chalk.red(`${missing} missing`));
+  if (extra) verdictParts.push(chalk.magenta(`${extra} extra`));
+  if (verdictParts.length === 0) {
+    console.log(chalk.green(`  Verdict: ${ok} resource${ok === 1 ? '' : 's'} reconciled. Version home matches resolved sources.`));
+  } else {
+    console.log(`  Verdict: ${verdictParts.join(', ')}.`);
+    console.log(chalk.gray(`  Run \`agents sync --agent ${report.agent} --agent-version ${report.version}\` to reconcile, or \`agents prune\` to drop extras.`));
+  }
+}
+
+// ─── command registration ────────────────────────────────────────────────────
+
 export function registerDoctorCommand(program: Command): void {
   program
-    .command('doctor')
-    .description('Diagnose CLI availability, sync status, and orphan resources')
+    .command('doctor [target]')
+    .description('Diagnose CLI availability, sync status, and resource divergence (optionally for a specific agent[@version])')
     .option('--json', 'Output machine-readable JSON')
-    .action((opts: DoctorOptions) => {
-      const cwd = process.cwd();
-      const clis = checkAllClis();
-      const syncRows = checkSyncStatus(cwd);
-      const orphanRows = countOrphans();
+    .option('--diff', 'In target mode, include unified diffs for divergent files')
+    .option('--kind <kinds>', 'Restrict to comma-separated resource kinds (commands,skills,hooks,rules,mcp,permissions,subagents,plugins,promptcuts)')
+    .option('--cwd <path>', 'Resolution cwd for project layer detection (default: process.cwd())')
+    .addHelpText('after', `
+Examples:
+  # Overview across default versions (CLI availability + sync + orphans)
+  agents doctor
 
-      if (opts.json) {
-        console.log(JSON.stringify({ clis, sync: syncRows, orphans: orphanRows }, null, 2));
+  # Full per-resource report for the active default
+  agents doctor claude@default
+
+  # Pin to a specific installed version
+  agents doctor codex@0.117.0
+
+  # All installed versions for one agent
+  agents doctor gemini
+
+  # Only inspect rules and hooks, with full diffs
+  agents doctor claude@default --kind rules,hooks --diff
+`)
+    .action((target: string | undefined, opts: DoctorOptions) => {
+      const cwd = opts.cwd ? opts.cwd : process.cwd();
+
+      if (!target) {
+        const clis = checkAllClis();
+        const syncRows = checkSyncStatus(cwd);
+        const orphanRows = countOrphans();
+        if (opts.json) {
+          console.log(JSON.stringify({ clis, sync: syncRows, orphans: orphanRows }, null, 2));
+          return;
+        }
+        renderOverviewText(clis, syncRows, orphanRows);
         return;
       }
 
-      renderText(clis, syncRows, orphanRows);
+      const parsed = parseTargetArg(target);
+      if ('error' in parsed) {
+        console.error(chalk.red(parsed.error));
+        process.exit(1);
+      }
+
+      const kinds = parseKindFilter(opts.kind);
+      if (!Array.isArray(kinds)) {
+        console.error(chalk.red(kinds.error));
+        process.exit(1);
+      }
+
+      const reports: VersionResourceReport[] = parsed.versions.map((v) =>
+        diffVersionResources(parsed.agent, v, { cwd, kinds }),
+      );
+
+      if (opts.json) {
+        console.log(JSON.stringify(reports.length === 1 ? reports[0] : reports, null, 2));
+        return;
+      }
+
+      const showDiff = !!opts.diff;
+      const requestedKinds = opts.kind ? new Set(kinds) : undefined;
+      reports.forEach((r, i) => {
+        if (i > 0) console.log();
+        const home = getVersionHomePath(r.agent, r.version);
+        if (!fs.existsSync(home)) {
+          console.log(chalk.red(`${AGENT_NAMES[r.agent] || r.agent}@${r.version}: version home not found at ${home}`));
+          return;
+        }
+        renderTargetText(r, { showDiff, requestedKinds });
+      });
     });
 }
