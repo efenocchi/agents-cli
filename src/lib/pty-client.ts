@@ -10,7 +10,7 @@ import * as fs from 'fs';
 import { spawn, execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import * as path from 'path';
-import { getSocketPath, getPtyPidPath, isPtyServerRunning } from './pty-server.js';
+import { getSocketPath, getPtyPidPath, getPtyLogPath, isPtyServerRunning } from './pty-server.js';
 
 const CONNECT_TIMEOUT_MS = 5000;
 const RESPONSE_TIMEOUT_MS = 30000;
@@ -45,7 +45,7 @@ async function ensureServer(): Promise<void> {
   // Find the entry point to spawn the server
   const { bin, args } = getServerSpawnArgs();
 
-  const logPath = path.join(path.dirname(getSocketPath()), 'pty.log');
+  const logPath = getPtyLogPath();
   const logFd = fs.openSync(logPath, 'a');
 
   const child = spawn(bin, args, {
@@ -71,7 +71,7 @@ async function ensureServer(): Promise<void> {
     await new Promise(r => setTimeout(r, 100));
   }
 
-  throw new Error('PTY server failed to start within 5 seconds. Check ~/.agents/pty.log');
+  throw new Error('PTY server failed to start within 5 seconds. Check ~/.agents-system/helpers/pty/logs.jsonl');
 }
 
 function getServerSpawnArgs(): { bin: string; args: string[] } {
