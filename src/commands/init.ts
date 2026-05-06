@@ -14,8 +14,8 @@ import * as os from 'os';
 import { confirm } from '@inquirer/prompts';
 import type { AgentId } from '../lib/types.js';
 import { DEFAULT_SYSTEM_REPO, systemRepoSlug } from '../lib/types.js';
-import { getAgentsDir, getVersionsDir } from '../lib/state.js';
-import { isGitRepo } from '../lib/git.js';
+import { getAgentsDir, getVersionsDir, ensureAgentsDir } from '../lib/state.js';
+import { isGitRepo, cloneIntoExisting, pullRepo } from '../lib/git.js';
 import { isPromptCancelled, isInteractiveTerminal } from './utils.js';
 import { AGENTS, getUnmanagedAgentInstalls, countSessionFiles, agentLabel } from '../lib/agents.js';
 import { setGlobalDefault } from '../lib/versions.js';
@@ -64,15 +64,14 @@ async function importAgent(agentId: AgentId, version: string): Promise<{ success
   }
 }
 
-/** First-run setup. Delegates to `agents pull`, which clones the system repo if needed. */
+/** First-run setup. Clones ~/.agents-system/ from the system repo if needed. */
 export async function runInit(program: Command, options: { force?: boolean } = {}): Promise<void> {
   const agentsDir = getAgentsDir();
-  const metaFile = path.join(agentsDir, 'agents.yaml');
-  const alreadyConfigured = fs.existsSync(metaFile) || isGitRepo(agentsDir);
+  const alreadyConfigured = isGitRepo(agentsDir);
 
   if (alreadyConfigured && !options.force) {
     console.log(chalk.gray('~/.agents-system/ is already set up.'));
-    console.log(chalk.gray('\nTo sync updates:      agents pull'));
+    console.log(chalk.gray('\nTo sync updates:      agents repo pull system'));
     console.log(chalk.gray('To re-initialize:     agents init --force'));
     return;
   }
@@ -87,16 +86,27 @@ export async function runInit(program: Command, options: { force?: boolean } = {
   console.log(chalk.bold('\nWelcome to agents-cli.'));
   console.log(chalk.gray(`Cloning the system repo from ${systemRepoSlug(DEFAULT_SYSTEM_REPO)} into ~/.agents-system/.\n`));
 
-  console.log();
-  await program.parseAsync(['node', 'agents', 'pull']);
+  ensureAgentsDir();
 
-  // `agents pull` prints its own error but doesn't throw — verify the clone actually
-  // landed before claiming success. Without this check the wizard would celebrate even
-  // when pull failed (e.g. empty repo, bad ref, network error).
-  if (!isGitRepo(agentsDir)) {
-    console.log(chalk.red('\nSetup did not complete — see errors above.'));
-    console.log(chalk.gray('Fix the issue and re-run: agents init --force'));
-    process.exit(1);
+  const spinner = ora('Cloning system repo...').start();
+
+  if (isGitRepo(agentsDir)) {
+    // --force on an existing repo: pull instead of re-clone
+    const result = await pullRepo(agentsDir);
+    if (!result.success) {
+      spinner.fail(`Pull failed: ${result.error}`);
+      console.log(chalk.gray('Fix the issue and re-run: agents init --force'));
+      process.exit(1);
+    }
+    spinner.succeed(`Updated to ${result.commit}`);
+  } else {
+    const result = await cloneIntoExisting(DEFAULT_SYSTEM_REPO, agentsDir);
+    if (!result.success) {
+      spinner.fail(`Clone failed: ${result.error}`);
+      console.log(chalk.gray('Fix the issue and re-run: agents init --force'));
+      process.exit(1);
+    }
+    spinner.succeed(`Cloned ${systemRepoSlug(DEFAULT_SYSTEM_REPO)} (${result.commit})`);
   }
 
   // Offer to import existing unmanaged installations

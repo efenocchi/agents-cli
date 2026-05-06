@@ -244,18 +244,53 @@ Examples:
   repoCmd
     .command('list')
     .alias('ls')
-    .description('Show the primary ~/.agents-system/ repo and every registered extra')
+    .description('Show all repos: system, user, and any registered extras')
     .action(async () => {
       const meta = readMeta();
-      const primaryUrl = meta.source || DEFAULT_SYSTEM_REPO;
-      const primaryDir = getSystemAgentsDir();
-      const primaryOnDisk = fs.existsSync(primaryDir);
-      const primaryCommit = primaryOnDisk ? await getShortCommit(primaryDir) : null;
-      const primaryStatus = !primaryOnDisk ? chalk.red('missing') : chalk.green('cloned');
-      const primaryCommitLabel = primaryCommit ? chalk.gray(`(${primaryCommit})`) : '';
-      console.log(chalk.bold('\nPrimary:'));
-      console.log(`  ${chalk.cyan('(primary)'.padEnd(12))}  ${primaryUrl}  ${primaryStatus}  ${primaryCommitLabel}`);
+      console.log('');
 
+      // System repo
+      const systemUrl = meta.source || DEFAULT_SYSTEM_REPO;
+      const systemDir = getSystemAgentsDir();
+      const systemOnDisk = fs.existsSync(systemDir);
+      const systemIsGit = systemOnDisk && isGitRepo(systemDir);
+      const systemCommit = systemIsGit ? await getShortCommit(systemDir) : null;
+      const systemStatus = !systemOnDisk
+        ? chalk.red('missing')
+        : !systemIsGit
+          ? chalk.yellow('not a git repo — run: agents init')
+          : chalk.green('cloned');
+      const systemCommitLabel = systemCommit ? chalk.gray(`(${systemCommit})`) : '';
+      console.log(chalk.bold('System  (~/.agents-system/)'));
+      console.log(`  ${chalk.cyan('system'.padEnd(12))}  ${systemUrl}  ${systemStatus}  ${systemCommitLabel}`);
+
+      // User repo
+      const userDir = getUserAgentsDir();
+      const userOnDisk = fs.existsSync(userDir);
+      const userIsGit = userOnDisk && isGitRepo(userDir);
+      const userCommit = userIsGit ? await getShortCommit(userDir) : null;
+      let userRemoteUrl = '';
+      if (userIsGit) {
+        try {
+          const git = simpleGit(userDir);
+          const remotes = await git.getRemotes(true);
+          const origin = remotes.find(r => r.name === 'origin');
+          userRemoteUrl = origin?.refs?.fetch || '';
+        } catch { /* no remote */ }
+      }
+      const userStatus = !userOnDisk
+        ? chalk.gray('not created')
+        : !userIsGit
+          ? chalk.gray('local (no remote)')
+          : chalk.green('cloned');
+      const userCommitLabel = userCommit ? chalk.gray(`(${userCommit})`) : '';
+      console.log(chalk.bold('\nUser  (~/.agents/)'));
+      console.log(`  ${chalk.cyan('user'.padEnd(12))}  ${userRemoteUrl || '~/.agents/'}  ${userStatus}  ${userCommitLabel}`);
+      if (!userIsGit) {
+        console.log(chalk.gray(`  ${''.padEnd(12)}  scaffold one with: agents repo init`));
+      }
+
+      // Extra repos
       const extras = meta.extraRepos || {};
       const aliases = Object.keys(extras);
       console.log(chalk.bold('\nExtras:'));
