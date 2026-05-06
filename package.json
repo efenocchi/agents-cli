@@ -1,6 +1,6 @@
 {
   "name": "@phnx-labs/agents-cli",
-  "version": "1.13.6",
+  "version": "1.14.0",
   "description": "One CLI for all your AI coding agents - versions, config, cloud dispatch, sessions, and teams",
   "type": "module",
   "main": "dist/index.js",
@@ -37,7 +37,7 @@
   },
   "scripts": {
     "build": "tsc && rm -rf dist/lib/secrets/AgentsKeychain.app && cp -R bin/AgentsKeychain.app dist/lib/secrets/AgentsKeychain.app",
-    "prepublishOnly": "tsc",
+    "prepublishOnly": "npm run build",
     "postinstall": "node scripts/postinstall.js",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
