@@ -1786,14 +1786,17 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
 
   if (memoryToSync.length > 0 && COMMANDS_CAPABLE_AGENTS.includes(agent)) {
     const centralMemory = getResolvedRulesDir();
-    const projectMemoryDir = projectAgentsDir ? path.join(projectAgentsDir, 'rules') : null;
     const userMemoryDir = getUserRulesDir();
     const syncedMemory: string[] = [];
     const agentSupportsImports = !!agentConfig.capabilities.memoryImports;
 
+    // Project rules are NOT synced into the version home. They are written to
+    // the workspace itself by compileMemoryForProject(cwd), where each agent
+    // natively reads cwd/<INSTRUCTIONS_FILE>. The version home holds only
+    // user/system/extras — these become the agent's user-level memory; the
+    // agent's own loader merges that with the project file at runtime.
     for (const mem of memoryToSync) {
       const candidates: Array<string | null> = [
-        projectMemoryDir ? safeJoin(projectMemoryDir, `${mem}.md`) : null,
         safeJoin(userMemoryDir, `${mem}.md`),
         safeJoin(centralMemory, `${mem}.md`),
         ...extraRepos.map((e) => safeJoin(path.join(e.dir, 'rules'), `${mem}.md`)),
