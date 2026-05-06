@@ -17,8 +17,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import simpleGit from 'simple-git';
-import { confirm } from '@inquirer/prompts';
-import { isInteractiveTerminal } from './utils.js';
+import { confirm, input } from '@inquirer/prompts';
+import { isInteractiveTerminal, isPromptCancelled } from './utils.js';
 
 const HOME = os.homedir();
 
@@ -121,7 +121,38 @@ Examples:
     .option('--from <source>', 'Template repo to clone from', DEFAULT_SYSTEM_REPO)
     .option('--as <alias>', 'Alias to register under (defaults to the directory name)')
     .action(async (target: string | undefined, options: { from: string; as?: string }) => {
-      const targetDir = resolveRepoPath(target);
+      let targetDir = resolveRepoPath(target);
+
+      if (!target && fs.existsSync(targetDir)) {
+        if (!isInteractiveTerminal()) {
+          console.log(chalk.red(`Path already exists: ${targetDir}`));
+          console.log(chalk.gray('Pass a name (e.g. `agents repo init work` -> ~/.agents-work) or a path.'));
+          process.exitCode = 1;
+          return;
+        }
+        try {
+          const name = await input({
+            message: 'Name for your repo:',
+            default: 'work',
+            validate: (raw: string) => {
+              const v = raw.trim();
+              if (!v) return 'Required';
+              if (!ALIAS_PATTERN.test(v)) return 'Letters, digits, "_" or "-"; must start with letter/digit';
+              const candidate = path.join(HOME, `.agents-${v}`);
+              if (fs.existsSync(candidate)) return `~/.agents-${v} already exists`;
+              return true;
+            },
+            theme: { prefix: chalk.gray('Will be created at $HOME/.agents-<name>/') } as any,
+          });
+          targetDir = path.join(HOME, `.agents-${name.trim()}`);
+        } catch (err) {
+          if (isPromptCancelled(err)) {
+            process.exit(130);
+          }
+          throw err;
+        }
+      }
+
       const alias = options.as ? options.as.trim() : (path.basename(targetDir).replace(/^\.+/, '') || 'repo');
       if (!ALIAS_PATTERN.test(alias)) {
         console.log(chalk.red(`Invalid alias "${alias}".`));
@@ -491,6 +522,7 @@ Examples:
         return;
       }
       console.log('');
+      console.log(`  ${chalk.gray('REPO'.padEnd(12))} ${chalk.gray('BRANCH'.padEnd(28))}  ${chalk.gray('REMOTE'.padEnd(12))}  ${chalk.gray('LOCAL')}`);
       for (const t of targets) {
         if (!fs.existsSync(t.dir)) {
           console.log(`  ${chalk.cyan(t.alias.padEnd(12))} ${chalk.red('missing')} ${chalk.gray(t.dir)}`);
@@ -504,12 +536,19 @@ Examples:
           const git = simpleGit(t.dir);
           const status = await git.status();
           const branch = status.tracking || status.current || '(detached)';
-          const aheadBehind =
+          const remoteRaw =
             (status.ahead ?? 0) === 0 && (status.behind ?? 0) === 0
-              ? chalk.green('up to date')
-              : chalk.yellow(`+${status.ahead ?? 0} -${status.behind ?? 0}`);
-          const tree = status.isClean() ? chalk.green('clean') : chalk.yellow('dirty');
-          console.log(`  ${chalk.cyan(t.alias.padEnd(12))} ${branch.padEnd(28)}  ${aheadBehind}  ${tree}`);
+              ? 'in sync'
+              : `+${status.ahead ?? 0} -${status.behind ?? 0}`;
+          const remoteColored =
+            (status.ahead ?? 0) === 0 && (status.behind ?? 0) === 0
+              ? chalk.green(remoteRaw)
+              : chalk.yellow(remoteRaw);
+          const tree = status.isClean()
+            ? chalk.green('clean')
+            : chalk.yellow(`${status.files.length} uncommitted`);
+          const remotePad = ' '.repeat(Math.max(0, 12 - remoteRaw.length));
+          console.log(`  ${chalk.cyan(t.alias.padEnd(12))} ${branch.padEnd(28)}  ${remoteColored}${remotePad}  ${tree}`);
         } catch (err) {
           console.log(`  ${chalk.cyan(t.alias.padEnd(12))} ${chalk.red('error')} ${(err as Error).message}`);
         }
