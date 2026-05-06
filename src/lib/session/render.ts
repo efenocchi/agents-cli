@@ -484,6 +484,7 @@ export function renderSummary(events: SessionEvent[], cwd?: string): string {
   // Plan items
   const todoItems: string[] = [];
   let exitPlanContent: string | null = null;
+  let planFilePath: string | null = null;
 
   // Subagent spawns
   const subagents: Array<{ description: string; subagentType: string }> = [];
@@ -509,7 +510,13 @@ export function renderSummary(events: SessionEvent[], cwd?: string): string {
       if (['Read', 'read_file', 'view_file', 'cat_file', 'get_file'].includes(tool)) {
         if (p) filesReadAbs.add(p);
       } else if (['Write', 'Edit', 'write_file', 'edit_file', 'create_file', 'replace', 'patch'].includes(tool)) {
-        if (p) (isInsideCwd(p) || !cwd ? filesModifiedAbs : filesModifiedExternal).add(p);
+        if (p) {
+          if (p.includes('.claude/plans/') && p.endsWith('.md')) {
+            planFilePath = p;
+          } else {
+            (isInsideCwd(p) || !cwd ? filesModifiedAbs : filesModifiedExternal).add(p);
+          }
+        }
       }
 
       if (event.command) {
@@ -611,12 +618,17 @@ export function renderSummary(events: SessionEvent[], cwd?: string): string {
   if (firstUserMessage || attachments.length > 0) lines.push('');
 
   // 2. Plan
-  if (todoItems.length > 0 || exitPlanContent) {
+  if (todoItems.length > 0 || exitPlanContent || planFilePath) {
     lines.push(chalk.bold('Plan'));
+    if (planFilePath) {
+      const home = process.env.HOME ?? '';
+      const displayPath = home && planFilePath.startsWith(home) ? planFilePath.replace(home, '~') : planFilePath;
+      lines.push('  ' + chalk.cyan(displayPath));
+    }
     if (exitPlanContent) {
       const planLines = exitPlanContent.split('\n').slice(0, 10);
       for (const l of planLines) lines.push('  ' + l);
-    } else {
+    } else if (todoItems.length > 0) {
       for (const item of todoItems.slice(0, 20)) {
         lines.push('  · ' + item);
       }
@@ -643,12 +655,14 @@ export function renderSummary(events: SessionEvent[], cwd?: string): string {
   }
 
   // 4b. External edits (files edited outside the project root — typically /tmp)
-  if (filesModifiedExternal.size > 0) {
-    const externalList = [...filesModifiedExternal].sort();
+  // Filter out plan files (already shown in Plan section)
+  const externalNonPlan = [...filesModifiedExternal].filter(p => !(p.includes('.claude/plans/') && p.endsWith('.md')));
+  if (externalNonPlan.length > 0) {
+    const externalList = externalNonPlan.sort();
     const home = process.env.HOME ?? '';
     const display = externalList.slice(0, 3).map(p => home && p.startsWith(home) ? p.replace(home, '~') : p);
     const more = externalList.length > 3 ? chalk.gray(` +${externalList.length - 3} more`) : '';
-    lines.push(chalk.gray(`External edits (${filesModifiedExternal.size}): ${display.join(', ')}${more}`));
+    lines.push(chalk.gray(`External edits (${externalList.length}): ${display.join(', ')}${more}`));
     lines.push('');
   }
 
