@@ -20,6 +20,14 @@ import {
   type UsageSnapshot,
 } from './usage.js';
 
+const ROTATE_DIR = 'helpers/rotate';
+
+function getRotateDir(): string {
+  const dir = path.join(getAgentsDir(), ROTATE_DIR);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 export interface RotateCandidate {
   agent: AgentId;
   version: string;
@@ -331,7 +339,7 @@ export async function selectAvailableVersion(
  * a torn write just means the next reader sees a stale timestamp (harmless).
  */
 function recordRotationPick(agent: AgentId, version: string): void {
-  const stampPath = path.join(getAgentsDir(), `rotate-stamp-${agent}.json`);
+  const stampPath = path.join(getRotateDir(), `stamp-${agent}.json`);
   try {
     fs.writeFileSync(stampPath, JSON.stringify({ version, ts: Date.now() }), 'utf-8');
   } catch { /* best effort — doesn't block the run */ }
@@ -342,7 +350,7 @@ function recordRotationPick(agent: AgentId, version: string): void {
  * or stamp is older than 60 seconds (stale).
  */
 function readRotationStamp(agent: AgentId): string | null {
-  const stampPath = path.join(getAgentsDir(), `rotate-stamp-${agent}.json`);
+  const stampPath = path.join(getRotateDir(), `stamp-${agent}.json`);
   try {
     const raw = JSON.parse(fs.readFileSync(stampPath, 'utf-8')) as { version: string; ts: number };
     if (Date.now() - raw.ts < 60_000) return raw.version;

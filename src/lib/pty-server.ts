@@ -54,9 +54,12 @@ export function captureProcessStartTime(pid: number): string | null {
 // --- Constants ---
 
 const SENTINEL = '__AGENTS_PTY_DONE__';
+const PTY_DIR = 'helpers/pty';
 const SOCKET_NAME = 'pty.sock';
 const PID_FILE = 'pty.pid';
-const LOG_FILE = 'pty.log';
+const LOG_FILE = 'logs.jsonl';
+const LOG_MAX_SIZE = 5 * 1024 * 1024; // 5 MB
+const LOG_ROTATE_COUNT = 3;
 const SESSION_IDLE_MS = 30 * 60 * 1000; // 30 min
 const SERVER_IDLE_MS = 60 * 60 * 1000;  // 1 hour
 
@@ -104,19 +107,27 @@ function buildPtyEnv(): Record<string, string> {
   return env;
 }
 
+/** Get the PTY helper directory, creating it if needed. */
+function getPtyDir(): string {
+  const dir = path.join(getAgentsDir(), PTY_DIR);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 /** Get the unix socket path for the PTY server. */
 export function getSocketPath(): string {
-  return path.join(getAgentsDir(), SOCKET_NAME);
+  return path.join(getPtyDir(), SOCKET_NAME);
 }
 
 /** Get the path to the PTY server PID file. */
 export function getPtyPidPath(): string {
-  return path.join(getAgentsDir(), PID_FILE);
+  return path.join(getPtyDir(), PID_FILE);
 }
 
 /** Get the path to the PTY server log file. */
 export function getPtyLogPath(): string {
-  return path.join(getAgentsDir(), LOG_FILE);
+  const logDir = getPtyDir();
+  return path.join(logDir, LOG_FILE);
 }
 
 /** Check if the PTY server process is alive by probing the stored PID. */
@@ -136,11 +147,29 @@ export function isPtyServerRunning(): boolean {
 
 // --- Logging ---
 
-function log(level: string, message: string): void {
-  const ts = new Date().toISOString();
-  const line = `[${ts}] [${level}] ${message}\n`;
+function rotateLogsIfNeeded(logPath: string): void {
   try {
-    fs.appendFileSync(getPtyLogPath(), line, 'utf-8');
+    const stat = fs.statSync(logPath);
+    if (stat.size < LOG_MAX_SIZE) return;
+    for (let i = LOG_ROTATE_COUNT - 1; i >= 1; i--) {
+      const older = `${logPath}.${i}`;
+      const newer = i === 1 ? logPath : `${logPath}.${i - 1}`;
+      if (fs.existsSync(newer)) {
+        fs.renameSync(newer, older);
+      }
+    }
+    if (fs.existsSync(logPath)) {
+      fs.renameSync(logPath, `${logPath}.1`);
+    }
+  } catch {}
+}
+
+function log(level: string, message: string): void {
+  const logPath = getPtyLogPath();
+  rotateLogsIfNeeded(logPath);
+  const entry = { ts: new Date().toISOString(), level, message };
+  try {
+    fs.appendFileSync(logPath, JSON.stringify(entry) + '\n', 'utf-8');
   } catch {}
 }
 

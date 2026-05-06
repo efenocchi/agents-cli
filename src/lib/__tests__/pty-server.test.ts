@@ -35,7 +35,7 @@ const { runPtyServer, captureProcessStartTime, getSocketPath } = await import('.
 afterEach(async () => {
   // Belt-and-braces cleanup so a hanging server from one test doesn't
   // bleed into the next.
-  const sock = path.join(TEST_HOME, '.agents-system', 'pty.sock');
+  const sock = path.join(TEST_HOME, '.agents-system', 'helpers', 'pty', 'pty.sock');
   await fsp.rm(sock, { force: true });
 });
 

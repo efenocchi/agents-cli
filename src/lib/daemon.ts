@@ -18,18 +18,27 @@ import { executeJobDetached, monitorRunningJobs } from './runner.js';
 import { BrowserService } from './browser/service.js';
 import { BrowserIPCServer } from './browser/ipc.js';
 
+const DAEMON_DIR = 'helpers/daemon';
 const PID_FILE = 'daemon.pid';
 const LOCK_FILE = 'daemon.lock';
-const LOG_FILE = 'daemon.log';
+const LOG_FILE = 'logs.jsonl';
+const LOG_MAX_SIZE = 5 * 1024 * 1024; // 5 MB
+const LOG_ROTATE_COUNT = 3;
 const PLIST_NAME = 'com.phnx-labs.agents-daemon';
 const SYSTEMD_UNIT = 'agents-daemon.service';
 
+function getDaemonDir(): string {
+  const dir = path.join(getAgentsDir(), DAEMON_DIR);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 function getPidPath(): string {
-  return path.join(getAgentsDir(), PID_FILE);
+  return path.join(getDaemonDir(), PID_FILE);
 }
 
 function getLockPath(): string {
-  return path.join(getAgentsDir(), LOCK_FILE);
+  return path.join(getDaemonDir(), LOCK_FILE);
 }
 
 /**
@@ -69,7 +78,7 @@ function acquireStartLock(): (() => void) | null {
 }
 
 function getLogPath(): string {
-  return path.join(getAgentsDir(), LOG_FILE);
+  return path.join(getDaemonDir(), LOG_FILE);
 }
 
 function getLaunchdPlistPath(): string {
@@ -128,12 +137,25 @@ function redactSecrets(message: string): string {
   return safe;
 }
 
-/** Append a timestamped log line to the daemon log file (owner-only permissions). */
+function rotateLogsIfNeeded(logPath: string): void {
+  try {
+    const stat = fs.statSync(logPath);
+    if (stat.size < LOG_MAX_SIZE) return;
+    for (let i = LOG_ROTATE_COUNT - 1; i >= 1; i--) {
+      const older = `${logPath}.${i}`;
+      const newer = i === 1 ? logPath : `${logPath}.${i - 1}`;
+      if (fs.existsSync(newer)) fs.renameSync(newer, older);
+    }
+    if (fs.existsSync(logPath)) fs.renameSync(logPath, `${logPath}.1`);
+  } catch {}
+}
+
+/** Append a JSONL log entry to the daemon log file (owner-only permissions). */
 export function log(level: string, message: string): void {
-  const timestamp = new Date().toISOString();
-  const line = `[${timestamp}] [${level.toUpperCase()}] ${redactSecrets(message)}\n`;
   const logPath = getLogPath();
-  fs.appendFileSync(logPath, line, 'utf-8');
+  rotateLogsIfNeeded(logPath);
+  const entry = { ts: new Date().toISOString(), level: level.toUpperCase(), message: redactSecrets(message) };
+  fs.appendFileSync(logPath, JSON.stringify(entry) + '\n', 'utf-8');
   try { fs.chmodSync(logPath, 0o600); } catch { /* best effort */ }
 }
 
