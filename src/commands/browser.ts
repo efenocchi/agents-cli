@@ -18,6 +18,11 @@ export function registerBrowserCommand(program: Command): void {
   registerTaskCommands(browser);
 }
 
+export function registerBrowserSubcommands(program: Command): void {
+  registerProfilesCommands(program);
+  registerTaskCommands(program);
+}
+
 function registerProfilesCommands(browser: Command): void {
   const profiles = browser
     .command('profiles')
