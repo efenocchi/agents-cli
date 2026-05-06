@@ -30,10 +30,6 @@ import {
   type RotateResult,
 } from '../lib/rotate.js';
 import { getGlobalDefault, resolveVersion, resolveVersionAlias } from '../lib/versions.js';
-import {
-  formatNewerDuplicateNotice,
-  getNewerDuplicateVersions,
-} from '../lib/version-duplicates.js';
 
 const VALID_AGENTS = Object.keys(AGENT_COMMANDS);
 
@@ -362,19 +358,6 @@ Examples:
         } catch (err) {
           console.error(chalk.red(`ACP run failed for ${agent}: ${(err as Error).message}`));
           process.exit(1);
-        }
-      }
-
-      // Show what we're running (stderr so stdout stays clean for piping)
-      if (!fromProfile) {
-        const effectiveVersion = version ?? resolveVersion(agent, cwd);
-        if (effectiveVersion) {
-          const duplicates = await getNewerDuplicateVersions(agent, effectiveVersion);
-          const selectedLabel = effectiveVersion === getGlobalDefault(agent) ? 'default' : '';
-          const notice = formatNewerDuplicateNotice(agent, effectiveVersion, duplicates, selectedLabel);
-          if (notice) {
-            process.stderr.write(chalk.gray(notice) + '\n\n');
-          }
         }
       }
 
