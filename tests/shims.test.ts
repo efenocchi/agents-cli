@@ -376,15 +376,15 @@ describe('shims - generateShimScript', () => {
     expect(script).toContain('agents sync --agent "$AGENT" --agent-version "$VERSION" --project-dir "$PROJECT_AGENTS_DIR"');
   });
 
-  test('non-@-capable agents get a refresh-memory shim hook', () => {
+  test('non-@-capable agents get a refresh-rules shim hook', () => {
     const script = generateShimScript('codex');
-    expect(script).toContain('agents refresh-memory --agent "$AGENT" --agent-version "$VERSION"');
+    expect(script).toContain('agents refresh-rules --agent "$AGENT" --agent-version "$VERSION"');
   });
 
   test('shim does not use --version flag, which collides with the top-level CLI version flag', () => {
     // Commander's `.version()` on the top-level program intercepts any
     // `--version <value>` before subcommands see it — passing --version to
-    // `sync` or `refresh-memory` would silently print the CLI version and
+    // `sync` or `refresh-rules` would silently print the CLI version and
     // exit 0 instead of running the subcommand. Guard against regression.
     for (const agent of ['claude', 'codex', 'gemini', 'cursor', 'opencode', 'openclaw'] as const) {
       const script = generateShimScript(agent);
@@ -392,11 +392,11 @@ describe('shims - generateShimScript', () => {
     }
   });
 
-  test('@-capable agents do NOT get a refresh-memory shim hook', () => {
+  test('@-capable agents do NOT get a refresh-rules shim hook', () => {
     const claudeScript = generateShimScript('claude');
-    expect(claudeScript).not.toContain('agents refresh-memory');
+    expect(claudeScript).not.toContain('agents refresh-rules');
     const geminiScript = generateShimScript('gemini');
-    expect(geminiScript).not.toContain('agents refresh-memory');
+    expect(geminiScript).not.toContain('agents refresh-rules');
   });
 
   test('scopes Claude keychain auth to the selected version config dir', () => {

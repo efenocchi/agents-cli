@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
-import { discoverInstructionsFromRepo, discoverMemoryFilesFromRepo } from '../memory.js';
+import { discoverInstructionsFromRepo, discoverRuleFilesFromRepo } from '../rules.js';
 
 let tmpDir: string;
 
@@ -36,7 +36,7 @@ describe('rules repo discovery', () => {
     writeFile('rules/presets/proactive.md', '@../default/core.md');
     writeFile('rules/default/core.md', 'be precise');
 
-    const discovered = discoverMemoryFilesFromRepo(tmpDir);
+    const discovered = discoverRuleFilesFromRepo(tmpDir);
 
     expect(discovered).toEqual([
       'AGENTS.md',

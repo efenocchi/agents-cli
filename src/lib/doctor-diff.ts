@@ -39,7 +39,7 @@ import {
   getVersionHomePath,
 } from './versions.js';
 import { markdownToToml } from './convert.js';
-import { resolveImports, supportsMemoryImports } from './memory-compile.js';
+import { resolveImports, supportsRulesImports } from './rules-compile.js';
 import { listCommandsInVersionHome, getVersionCommandsDir } from './commands.js';
 import { listSkillsInVersionHome, getVersionSkillsDir } from './skills.js';
 import { listHooksInVersionHome, getVersionHooksDir, listHookEntriesFromDir } from './hooks.js';
@@ -376,7 +376,7 @@ function listRulesNames(cwd: string): Map<string, SourceCandidate> {
 
 function expectedRuleContent(agent: AgentId, name: string, sourcePath: string): string | null {
   // AGENTS.md on agents without native @-import support is compiled with imports inlined.
-  if (name === 'AGENTS' && !supportsMemoryImports(agent)) {
+  if (name === 'AGENTS' && !supportsRulesImports(agent)) {
     const root = readSafe(sourcePath);
     if (root == null) return null;
     // Compile relative to the source's own dir so project-layer AGENTS.md resolves

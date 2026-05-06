@@ -11,7 +11,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { AGENTS, ALL_AGENT_IDS } from './agents.js';
-import { getMemoryDir, getResolvedRulesDir, getUserRulesDir, getProjectAgentsDir } from './state.js';
+import { getResolvedRulesDir, getUserRulesDir, getProjectAgentsDir } from './state.js';
 import { getEffectiveHome } from './versions.js';
 import type { AgentId } from './types.js';
 
@@ -34,7 +34,7 @@ export interface DiscoveredInstructions {
  * Central rules filename constant.
  * All agents map to this file in ~/.agents/rules/, renamed per-agent when synced.
  */
-export const CENTRAL_MEMORY_FILENAME = 'AGENTS.md';
+export const CENTRAL_RULES_FILENAME = 'AGENTS.md';
 const RULES_DOC_FILENAME = 'README.md';
 
 function isSyncableRuleMarkdown(filename: string): boolean {
@@ -71,7 +71,7 @@ function listRuleMarkdownFiles(rulesDir: string): string[] {
  *   - Cursor: AGENTS.md → .cursorrules
  *   - Codex/OpenCode: AGENTS.md → AGENTS.md (no rename)
  */
-export function getCentralMemoryFileName(agentId: AgentId): string {
+export function getCentralRulesFileName(agentId: AgentId): string {
   const agent = AGENTS[agentId];
   const instrFile = agent.instructionsFile;
 
@@ -79,8 +79,8 @@ export function getCentralMemoryFileName(agentId: AgentId): string {
   const filename = instrFile.includes('/') ? path.basename(instrFile) : instrFile;
 
   // If the agent's instructionsFile isn't AGENTS.md, it was renamed FROM AGENTS.md
-  if (filename !== CENTRAL_MEMORY_FILENAME) {
-    return CENTRAL_MEMORY_FILENAME;
+  if (filename !== CENTRAL_RULES_FILENAME) {
+    return CENTRAL_RULES_FILENAME;
   }
   return filename;
 }
@@ -105,7 +105,7 @@ export function getInstructionsPath(agentId: AgentId, scope: InstructionsScope, 
   const projectAgentsDir = getProjectAgentsDir(cwd);
   if (projectAgentsDir) {
     const projectRulesDir = path.join(projectAgentsDir, 'rules');
-    const centralName = getCentralMemoryFileName(agentId);
+    const centralName = getCentralRulesFileName(agentId);
     const candidates = [
       path.join(projectRulesDir, centralName),
       path.join(projectRulesDir, agent.instructionsFile),
@@ -184,7 +184,7 @@ export function resolveInstructionsSource(repoPath: string, agentId: AgentId): s
   return null;
 }
 
-export function discoverMemoryFilesFromRepo(repoPath: string): string[] {
+export function discoverRuleFilesFromRepo(repoPath: string): string[] {
   const rulesDir = path.join(repoPath, 'rules');
   if (!fs.existsSync(rulesDir)) {
     return [];
@@ -357,7 +357,7 @@ export function installInstructionsCentrally(
 /**
  * List top-level rules files from user and system dirs (user wins on collision).
  */
-export function listCentralMemory(): string[] {
+export function listCentralRules(): string[] {
   const seen = new Set<string>();
   for (const dir of [getUserRulesDir(), getResolvedRulesDir()]) {
     if (!fs.existsSync(dir)) continue;
