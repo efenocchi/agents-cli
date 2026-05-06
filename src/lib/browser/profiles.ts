@@ -12,7 +12,7 @@ export function getBrowserProfilesDir(): string {
 }
 
 export function getBrowserRuntimeDir(): string {
-  const agentsDir = path.join(os.homedir(), '.agents-system');
+  const agentsDir = path.join(os.homedir(), '.agents');
   return path.join(agentsDir, 'browser');
 }
 

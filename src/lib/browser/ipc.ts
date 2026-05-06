@@ -153,6 +153,49 @@ export class BrowserIPCServer {
         return { ok: true, path: resultPath };
       }
 
+      case 'refs': {
+        if (!request.task) {
+          return { ok: false, error: 'Task required' };
+        }
+        const { refs } = await this.service.refs(request.task, request.tabId, {
+          interactive: request.interactive ?? true,
+          limit: request.limit ?? 500,
+        });
+        return { ok: true, refs };
+      }
+
+      case 'click': {
+        if (!request.task || !request.tabId || request.ref === undefined) {
+          return { ok: false, error: 'Task, tabId, and ref required' };
+        }
+        await this.service.click(request.task, request.tabId, request.ref);
+        return { ok: true };
+      }
+
+      case 'type': {
+        if (!request.task || !request.tabId || request.ref === undefined || !request.text) {
+          return { ok: false, error: 'Task, tabId, ref, and text required' };
+        }
+        await this.service.type(request.task, request.tabId, request.ref, request.text);
+        return { ok: true };
+      }
+
+      case 'press': {
+        if (!request.task || !request.tabId || !request.key) {
+          return { ok: false, error: 'Task, tabId, and key required' };
+        }
+        await this.service.press(request.task, request.tabId, request.key);
+        return { ok: true };
+      }
+
+      case 'hover': {
+        if (!request.task || !request.tabId || request.ref === undefined) {
+          return { ok: false, error: 'Task, tabId, and ref required' };
+        }
+        await this.service.hover(request.task, request.tabId, request.ref);
+        return { ok: true };
+      }
+
       default:
         return { ok: false, error: `Unknown action: ${request.action}` };
     }
@@ -163,10 +206,35 @@ export async function sendIPCRequest(request: IPCRequest): Promise<IPCResponse> 
   const socketPath = getSocketPath();
 
   if (!fs.existsSync(socketPath)) {
+    await fs.promises.mkdir(path.dirname(socketPath), { recursive: true });
     startDaemon();
-    for (let i = 0; i < 30; i++) {
-      await new Promise((r) => setTimeout(r, 200));
-      if (fs.existsSync(socketPath)) break;
+    if (!fs.existsSync(socketPath)) {
+      await new Promise<void>((resolve, reject) => {
+        const socketDir = path.dirname(socketPath);
+        const socketName = path.basename(socketPath);
+        const watcher = fs.watch(socketDir, (_event, file) => {
+          if (file === socketName) {
+            clearTimeout(timeout);
+            watcher.close();
+            resolve();
+          }
+        });
+        watcher.on('error', (error) => {
+          clearTimeout(timeout);
+          watcher.close();
+          reject(error);
+        });
+        const timeout = setTimeout(() => {
+          watcher.close();
+          reject(new Error('Timeout waiting for browser daemon socket'));
+        }, 6000);
+
+        if (fs.existsSync(socketPath)) {
+          clearTimeout(timeout);
+          watcher.close();
+          resolve();
+        }
+      });
     }
     if (!fs.existsSync(socketPath)) {
       throw new Error('Failed to start browser daemon');
