@@ -16,6 +16,7 @@ import { getUserAgentsDir } from '../state.js';
 export interface TeamMeta {
   created_at: string;
   description?: string;
+  enable_worktrees?: boolean;
 }
 
 /** Map of team name to team metadata. */
@@ -100,8 +101,13 @@ async function saveTeams(reg: TeamRegistry): Promise<void> {
   await atomicWriteJson(p, reg);
 }
 
+export interface CreateTeamOptions {
+  description?: string;
+  enableWorktrees?: boolean;
+}
+
 /** Create a new team. Throws if a team with the same name already exists. */
-export async function createTeam(name: string, description?: string): Promise<TeamMeta> {
+export async function createTeam(name: string, options?: CreateTeamOptions): Promise<TeamMeta> {
   const p = await registryPath();
   return withRegistryLock(p, async () => {
     const reg = await loadTeams();
@@ -110,7 +116,8 @@ export async function createTeam(name: string, description?: string): Promise<Te
     }
     const meta: TeamMeta = {
       created_at: new Date().toISOString(),
-      ...(description ? { description } : {}),
+      ...(options?.description ? { description: options.description } : {}),
+      ...(options?.enableWorktrees ? { enable_worktrees: true } : {}),
     };
     reg[name] = meta;
     await saveTeams(reg);
@@ -147,4 +154,10 @@ export async function removeTeam(name: string): Promise<boolean> {
 export async function teamExists(name: string): Promise<boolean> {
   const reg = await loadTeams();
   return Boolean(reg[name]);
+}
+
+/** Get metadata for a specific team. Returns null if team does not exist. */
+export async function getTeam(name: string): Promise<TeamMeta | null> {
+  const reg = await loadTeams();
+  return reg[name] ?? null;
 }

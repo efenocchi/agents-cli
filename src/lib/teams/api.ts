@@ -170,7 +170,9 @@ export async function handleSpawn(
   cloudProvider: string | null = null,
   cloudSessionId: string | null = null,
   cloudRepo: string | null = null,
-  cloudBranch: string | null = null
+  cloudBranch: string | null = null,
+  worktreeName: string | null = null,
+  worktreePath: string | null = null
 ): Promise<SpawnResult> {
   const defaultMode = manager.getDefaultMode();
   const resolvedMode = resolveMode(mode, defaultMode);
@@ -198,7 +200,9 @@ export async function handleSpawn(
     cloudProvider,
     cloudSessionId,
     cloudRepo,
-    cloudBranch
+    cloudBranch,
+    worktreeName,
+    worktreePath
   );
 
   debug(`[spawn] Spawned ${agentType} agent ${agent.agentId} for task "${taskName}"`);
