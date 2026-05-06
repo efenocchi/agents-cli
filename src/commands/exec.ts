@@ -21,7 +21,7 @@ import {
 } from '../lib/exec.js';
 import type { AgentId } from '../lib/types.js';
 import { profileExists, resolveProfileForRun } from '../lib/profiles.js';
-import { readBundle, resolveBundleEnv } from '../lib/secrets-bundles.js';
+import { readBundle, resolveBundleEnv } from '../lib/secrets/bundles.js';
 import {
   getConfiguredRunStrategy,
   normalizeRunStrategy,

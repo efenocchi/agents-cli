@@ -9,20 +9,22 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'yaml';
-import { getSecretsDir, getUserSecretsDir } from './state.js';
+import { getSecretsDir, getUserSecretsDir } from '../state.js';
 import {
   parseBundleValue,
   resolveRef,
   secretsKeychainItem,
   type BundleValue,
   type SecretRef,
-} from './secrets.js';
+} from './index.js';
 
 /** A named set of environment variable definitions backed by various secret providers. */
 export interface SecretsBundle {
   name: string;
   description?: string;
   allow_exec?: boolean;
+  /** When true, keychain-backed values are stored in iCloud Keychain so they sync across the user's Macs. */
+  icloud_sync?: boolean;
   vars: Record<string, BundleValue>;
 }
 
@@ -70,6 +72,7 @@ export function readBundle(name: string): SecretsBundle {
     name: parsed.name || name,
     description: parsed.description,
     allow_exec: Boolean(parsed.allow_exec),
+    icloud_sync: Boolean(parsed.icloud_sync),
     vars: parsed.vars && typeof parsed.vars === 'object' ? parsed.vars : {},
   };
   for (const key of Object.keys(bundle.vars)) {
@@ -89,6 +92,7 @@ export function writeBundle(bundle: SecretsBundle): void {
     name: bundle.name,
     description: bundle.description,
     allow_exec: bundle.allow_exec ? true : undefined,
+    icloud_sync: bundle.icloud_sync ? true : undefined,
     vars: bundle.vars,
   });
   const file = bundlePath(bundle.name);
@@ -159,6 +163,7 @@ export function resolveBundleEnv(bundle: SecretsBundle): Record<string, string> 
     try {
       env[key] = resolveRef(parsed.ref, {
         allowExec: bundle.allow_exec,
+        iCloudSync: bundle.icloud_sync,
         keychainItemFor: (shortId: string) => secretsKeychainItem(bundle.name, shortId),
       });
     } catch (err) {
