@@ -77,7 +77,7 @@ const META_HEADER = `# agents-cli metadata
 
 // ─── Root getters ─────────────────────────────────────────────────────────────
 
-/** Root of the system data directory (~/.agents-system/). Legacy alias — prefer getSystemAgentsDir(). */
+/** Root of the system data directory (~/.agents-system/). */
 export function getAgentsDir(): string {
   return SYSTEM_AGENTS_DIR;
 }
