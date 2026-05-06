@@ -56,6 +56,7 @@ import { registerSyncCommand } from './commands/sync.js';
 import { registerRefreshRulesCommand } from './commands/refresh-rules.js';
 import { registerDriveCommands } from './commands/drive.js';
 import { registerPtyCommands } from './commands/pty.js';
+import { registerBrowserCommand } from './commands/browser.js';
 import { registerProfilesCommands } from './commands/profiles.js';
 import { registerSecretsCommands } from './commands/secrets.js';
 import { registerFactoryCommands } from './commands/factory.js';
@@ -509,6 +510,7 @@ registerFactoryCommands(program);
 registerUsageCommand(program);
 registerAliasCommand(program);
 registerPtyCommands(program);
+registerBrowserCommand(program);
 
 // Deprecated 'jobs' and 'cron' aliases for 'routines'
 for (const alias of ['jobs', 'cron']) {
