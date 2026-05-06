@@ -371,7 +371,10 @@ async function maybeBootstrapShimIntegration(requestedCommand: string | undefine
   // Also check for shell aliases that shadow the shim
   const aliased = defaultAgents.filter((agent) => hasAliasShadowingShim(agent));
 
-  if (shadowed.length === 0 && aliased.length === 0 && isShimsInPath()) {
+  // If shims are in PATH and nothing is binary-shadowing, we're done.
+  // Shell aliases that call the same command with extra flags are intentional
+  // customization and don't break shim integration.
+  if (shadowed.length === 0 && isShimsInPath()) {
     return;
   }
 
@@ -666,5 +669,12 @@ if (!firstRun && requestedCommand && SYSTEM_REPO_COMMANDS.has(requestedCommand))
   await ensureInitialized(program);
 }
 
-await maybeBootstrapShimIntegration(requestedCommand);
-await program.parseAsync();
+try {
+  await maybeBootstrapShimIntegration(requestedCommand);
+  await program.parseAsync();
+} catch (err) {
+  if (err instanceof Error && err.name === 'ExitPromptError') {
+    process.exit(130);
+  }
+  throw err;
+}
