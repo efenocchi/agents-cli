@@ -26,19 +26,19 @@ export async function connectSSH(
   const remotePort = parseInt(url.searchParams.get('port') || '9222', 10);
   const localPort = allocatePort();
 
-  const tunnel = await startSSHTunnel(user, host, localPort, remotePort);
-
-  try {
-    await waitForPort(localPort, 5000);
-  } catch {
-    tunnel.kill();
-    throw new Error(`SSH tunnel failed to establish to ${host}`);
-  }
-
   try {
     await ensureRemoteBrowser(user, host, profile.browser, remotePort);
   } catch {
     // Browser may already be running, continue
+  }
+
+  const tunnel = await startSSHTunnel(user, host, localPort, remotePort);
+
+  try {
+    await waitForPort(localPort, 8000);
+  } catch {
+    tunnel.kill();
+    throw new Error(`SSH tunnel failed to establish to ${host}`);
   }
 
   const wsUrl = await discoverBrowserWsUrl(localPort);
@@ -145,7 +145,7 @@ async function ensureRemoteBrowser(
     throw new Error(`Unknown browser type: ${browserType}`);
   }
 
-  const remoteCmd = `${browserPath} --remote-debugging-port=${port} --remote-allow-origins=* --disable-background-timer-throttling --user-data-dir=/tmp/agents-browser-${port} </dev/null >/dev/null 2>&1 &`;
+  const remoteCmd = `${browserPath} --remote-debugging-port=${port} '--remote-allow-origins=*' --disable-background-timer-throttling --user-data-dir=/tmp/agents-browser-${port} </dev/null >/dev/null 2>&1 &`;
 
   return new Promise((resolve, reject) => {
     const child = spawn(
