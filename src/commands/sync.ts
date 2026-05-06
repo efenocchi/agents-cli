@@ -6,10 +6,12 @@
  * into a specific agent version home before launch.
  */
 
+import * as path from 'path';
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { AGENTS } from '../lib/agents.js';
 import { isVersionInstalled, syncResourcesToVersion } from '../lib/versions.js';
+import { compileRulesForProject } from '../lib/rules-compile.js';
 
 /** Register the hidden `agents sync` command. */
 export function registerSyncCommand(program: Command): void {
@@ -46,6 +48,15 @@ export function registerSyncCommand(program: Command): void {
 
       const result = syncResourcesToVersion(agentId, version, undefined, { projectDir, cwd });
 
+      // Compile project-scope rules into the workspace itself so each agent's
+      // native loader picks up cwd/<INSTRUCTIONS_FILE>. projectDir is the
+      // .agents/ directory; the workspace root is its parent.
+      let projectCompile: ReturnType<typeof compileRulesForProject> | null = null;
+      if (projectDir) {
+        const projectRoot = path.dirname(projectDir);
+        projectCompile = compileRulesForProject(projectRoot);
+      }
+
       if (quiet) {
         return;
       }
@@ -64,6 +75,18 @@ export function registerSyncCommand(program: Command): void {
         console.log(chalk.green(`Synced ${synced.join(', ')} to ${agentId}@${version}`));
       } else {
         console.log(chalk.gray('No resources to sync'));
+      }
+
+      if (projectCompile?.compiled) {
+        const linkInfo = projectCompile.symlinks.length > 0
+          ? ` (+ ${projectCompile.symlinks.join(', ')})`
+          : '';
+        console.log(chalk.gray(`Compiled project rules → ${projectCompile.agentsPath}${linkInfo}`));
+      }
+      if (projectCompile && projectCompile.skippedClobber.length > 0) {
+        console.log(chalk.yellow(
+          `Skipped (user-authored, not overwritten): ${projectCompile.skippedClobber.join(', ')}`,
+        ));
       }
     });
 }

@@ -132,7 +132,7 @@ Resource      In manifest   Notes
 commands      ✓ FileEntry   first-wins per name (project > user > system > extra)
 skills        ✓ DirEntry    first-wins per name, full recursive dir fingerprint
 hooks         ✓ FileEntry   first-wins per name
-rules         ✓ FileEntry   first-wins per name; @-imports via isMemoryStale()
+rules         ✓ FileEntry   first-wins per name; @-imports via isRulesStale()
 mcp           ✓ FileEntry   first-wins per name (project > user > system)
 permissions   ✓ FileEntry   first-wins per group name; env-var set captured
 subagents     ✓ DirEntry    user > system, first-wins (matches sync code path)
@@ -169,13 +169,13 @@ checks only run if name sets match.
 
 #### Rules compilation
 
-For agents that don't support native `@`-import resolution (Codex, Gemini),
+For agents that don't support native `@`-import resolution (Codex, Cursor),
 `AGENTS.md` is pre-compiled into a flat file with all `@path` references inlined.
 This path has its own sidecar manifest (`{compiledFile}.manifest.json`) managed
-by `memory-compile.ts`. The sync manifest delegates rules staleness to
-`isMemoryStale(agent, version)` rather than duplicating that logic.
+by `rules-compile.ts`. The sync manifest delegates rules staleness to
+`isRulesStale(agent, version)` rather than duplicating that logic.
 
-`isMemoryStale` was also improved to use the same two-tier fingerprint — the
+`isRulesStale` was also improved to use the same two-tier fingerprint — the
 original implementation called `sha256(readFile)` on every source file on every
 check. The updated version records `mtime` and `size` alongside `sha256` and
 skips the read when both match.
@@ -238,4 +238,4 @@ trades correctness guarantees for speed.
 | File | Change |
 |------|--------|
 | `src/lib/versions.ts` | Guard + manifest write in `syncResourcesToVersion`; `force?` option; skip dotfiles in `copyDir` |
-| `src/lib/memory-compile.ts` | Add `mtime?`/`size?` to `CompileManifest`; two-tier fast path in `isMemoryStale` |
+| `src/lib/rules-compile.ts` | Add `mtime?`/`size?` to `CompileManifest`; two-tier fast path in `isRulesStale` |

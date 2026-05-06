@@ -53,7 +53,7 @@ import { registerDoctorCommand } from './commands/doctor.js';
 import { registerSubagentsCommands } from './commands/subagents.js';
 import { registerPluginsCommands } from './commands/plugins.js';
 import { registerSyncCommand } from './commands/sync.js';
-import { registerRefreshMemoryCommand } from './commands/refresh-memory.js';
+import { registerRefreshRulesCommand } from './commands/refresh-rules.js';
 import { registerDriveCommands } from './commands/drive.js';
 import { registerPtyCommands } from './commands/pty.js';
 import { registerProfilesCommands } from './commands/profiles.js';
@@ -345,7 +345,7 @@ async function maybeBootstrapShimIntegration(requestedCommand: string | undefine
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     return;
   }
-  if (requestedCommand === 'sync' || requestedCommand === 'refresh-memory') {
+  if (requestedCommand === 'sync' || requestedCommand === 'refresh-rules') {
     return;
   }
 
@@ -503,7 +503,7 @@ registerProfilesCommands(program);
 registerSecretsCommands(program);
 registerBetaCommands(program);
 registerSyncCommand(program);
-registerRefreshMemoryCommand(program);
+registerRefreshRulesCommand(program);
 registerDriveCommands(program);
 registerFactoryCommands(program);
 registerUsageCommand(program);

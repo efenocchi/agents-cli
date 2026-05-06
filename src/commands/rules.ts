@@ -25,14 +25,14 @@ import type { AgentId } from '../lib/types.js';
 import { cloneRepo } from '../lib/git.js';
 import {
   discoverInstructionsFromRepo,
-  discoverMemoryFilesFromRepo,
+  discoverRuleFilesFromRepo,
   installInstructionsCentrally,
   uninstallInstructions,
   listInstalledInstructionsWithScope,
   instructionsExists,
   getInstructionsContent,
-  listCentralMemory,
-} from '../lib/memory.js';
+  listCentralRules,
+} from '../lib/rules.js';
 import {
   listInstalledVersions,
   getGlobalDefault,
@@ -262,7 +262,7 @@ Examples:
         let ruleNames: string[];
 
         if (!source) {
-          const centralRules = listCentralMemory();
+          const centralRules = listCentralRules();
           if (centralRules.length === 0) {
             console.log(chalk.yellow('No rule files in ~/.agents/rules/'));
             console.log(chalk.gray('\nTo add rule files from a repo:'));
@@ -334,7 +334,7 @@ Examples:
           }
 
           const agentInstructions = discoverInstructionsFromRepo(localPath);
-          const ruleFiles = discoverMemoryFilesFromRepo(localPath);
+          const ruleFiles = discoverRuleFilesFromRepo(localPath);
 
           const totalFiles = agentInstructions.length + ruleFiles.length;
           console.log(chalk.bold(`\nFound ${totalFiles} rule file(s):`));

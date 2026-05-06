@@ -180,7 +180,7 @@ export const AGENTS: Record<AgentId, AgentConfig> = {
     format: 'markdown',
     variableSyntax: '$ARGUMENTS',
     supportsHooks: true,
-    capabilities: { hooks: true, mcp: true, allowlist: true, skills: true, commands: true, plugins: true, memoryImports: true },
+    capabilities: { hooks: true, mcp: true, allowlist: true, skills: true, commands: true, plugins: true, rulesImports: true },
   },
   // codex hooks: gated to >= 0.116.0 (introduced [features] codex_hooks flag).
   codex: {
@@ -217,7 +217,7 @@ export const AGENTS: Record<AgentId, AgentConfig> = {
     supportsHooks: true,
     nativeAgentsSkillsDir: true,
     // gemini hooks: shipped in v0.26.0 (Jan 2026); older binaries silently ignore the `hooks` key.
-    capabilities: { hooks: { since: '0.26.0' }, mcp: true, allowlist: false, skills: true, commands: true, plugins: false, memoryImports: true },
+    capabilities: { hooks: { since: '0.26.0' }, mcp: true, allowlist: false, skills: true, commands: true, plugins: false, rulesImports: true },
   },
   cursor: {
     id: 'cursor',

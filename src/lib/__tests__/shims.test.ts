@@ -84,8 +84,8 @@ describe('addShimsToPath', () => {
 });
 
 describe('SHIM_SCHEMA_VERSION', () => {
-  it('is 6', () => {
-    expect(SHIM_SCHEMA_VERSION).toBe(6);
+  it('is 7', () => {
+    expect(SHIM_SCHEMA_VERSION).toBe(7);
   });
 });
 

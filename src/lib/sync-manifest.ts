@@ -42,7 +42,7 @@ import {
 } from './state.js';
 import { resolveResource } from './resources.js';
 import { listMcpServerConfigs } from './mcp.js';
-import { isMemoryStale } from './memory-compile.js';
+import { isRulesStale } from './rules-compile.js';
 import { getActivePermissionSetName } from './permissions.js';
 import { listInstalledSubagents } from './subagents.js';
 import { safeJoin } from './paths.js';
@@ -379,8 +379,8 @@ export function buildManifest(
  * Returns true (stale) at the first detected mismatch — no need to scan everything.
  * Returns false (clean) only after all checks pass.
  *
- * For rules, also delegates to isMemoryStale() to catch @-import changes
- * for agents that pre-compile their memory file.
+ * For rules, also delegates to isRulesStale() to catch @-import changes
+ * for agents that pre-compile their rules file.
  */
 export function isSyncStale(
   manifest: SyncManifest,
@@ -423,7 +423,7 @@ export function isSyncStale(
     if (!entry || isFileStale(entry.source, hookPath)) return true;
   }
 
-  // ── Rules/memory ──────────────────────────────────────────────────────────
+  // ── Rules ─────────────────────────────────────────────────────────────────
   if (nameSetDiffers(Object.keys(manifest.rules.files), available.memory)) return true;
   for (const name of available.memory) {
     const srcPath = resolveRuleFile(name, cwd);
@@ -432,7 +432,7 @@ export function isSyncStale(
     if (!entry || isFileStale(entry.source, srcPath)) return true;
   }
   // Also catch @-import changes for non-native-import agents
-  if (isMemoryStale(agent, version)) return true;
+  if (isRulesStale(agent, version)) return true;
 
   // ── MCP ───────────────────────────────────────────────────────────────────
   const mcpServers = listMcpServerConfigs(cwd);

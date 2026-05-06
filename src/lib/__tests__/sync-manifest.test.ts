@@ -37,8 +37,8 @@ vi.mock('../mcp.js', () => ({
   listMcpServerConfigs: () => [],
 }));
 
-vi.mock('../memory-compile.js', () => ({
-  isMemoryStale: () => false,
+vi.mock('../rules-compile.js', () => ({
+  isRulesStale: () => false,
 }));
 
 vi.mock('../permissions.js', () => ({

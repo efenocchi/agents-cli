@@ -1,29 +1,29 @@
 /**
- * Internal memory refresh command.
+ * Internal rules refresh command.
  *
- * Registers the hidden `agents refresh-memory` command invoked by
- * shims for agents that do not natively resolve @-imports in their
- * memory file. Recompiles memory only when source files have changed.
+ * Registers the hidden `agents refresh-rules` command invoked by shims for
+ * agents that do not natively resolve @-imports in their rules file.
+ * Recompiles only when source files have changed.
  */
 
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { AGENTS } from '../lib/agents.js';
 import { isVersionInstalled } from '../lib/versions.js';
-import { ensureMemoryFresh, supportsMemoryImports } from '../lib/memory-compile.js';
+import { ensureRulesFresh, supportsRulesImports } from '../lib/rules-compile.js';
 
 /**
  * Hidden command invoked by shims for agents that don't natively resolve
- * @-imports in their memory file. Fast-path check first (sha256 of tracked
+ * @-imports in their rules file. Fast-path check first (sha256 of tracked
  * source files); only recompiles if a source has changed since the last
- * sync. Typical cost: 10-20ms when memory is fresh.
+ * sync. Typical cost: 10-20ms when rules are fresh.
  */
-export function registerRefreshMemoryCommand(program: Command): void {
+export function registerRefreshRulesCommand(program: Command): void {
   program
-    .command('refresh-memory', { hidden: true })
-    .description('Internal: recompile memory for an agent if sources have changed. Called by shims.')
+    .command('refresh-rules', { hidden: true })
+    .description('Internal: recompile rules for an agent if sources have changed. Called by shims.')
     .requiredOption('--agent <agent>', 'Agent identifier (codex, opencode, cursor, etc.)')
-    .requiredOption('--agent-version <version>', 'Installed version whose memory file should be refreshed')
+    .requiredOption('--agent-version <version>', 'Installed version whose rules file should be refreshed')
     .option('--quiet', 'Suppress all output (exit code indicates success)', false)
     .action((opts) => {
       const agentId = opts.agent as keyof typeof AGENTS;
@@ -36,7 +36,7 @@ export function registerRefreshMemoryCommand(program: Command): void {
         return;
       }
 
-      if (supportsMemoryImports(agentId)) {
+      if (supportsRulesImports(agentId)) {
         // Nothing to do — agent resolves @-imports natively.
         return;
       }
@@ -49,9 +49,9 @@ export function registerRefreshMemoryCommand(program: Command): void {
         return;
       }
 
-      const recompiled = ensureMemoryFresh(agentId, version);
+      const recompiled = ensureRulesFresh(agentId, version);
       if (!quiet && recompiled) {
-        console.log(chalk.gray(`Refreshed memory for ${agentId}@${version}`));
+        console.log(chalk.gray(`Refreshed rules for ${agentId}@${version}`));
       }
     });
 }
