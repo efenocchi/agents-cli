@@ -1,9 +1,11 @@
 /**
  * macOS Keychain integration for secure credential storage.
  *
- * Calls a compiled Swift helper (keychain-helper.swift) to store and retrieve
- * API keys and tokens via the Security framework, with kSecAttrSynchronizable
- * set so iCloud Keychain syncs them across the user's Macs.
+ * All reads/writes go through a signed Swift helper (keychain-helper.swift)
+ * compiled into AgentsKeychain.app. The .app embeds a provisioning profile
+ * that grants the application-identifier + keychain-access-groups entitlement
+ * macOS requires for kSecAttrSynchronizable writes (iCloud Keychain).
+ * For device-local writes the helper is invoked with the `nosync` arg.
  */
 
 import { fileURLToPath } from 'url';
@@ -26,13 +28,13 @@ export interface SecretRef {
 const REF_PATTERN = /^(keychain|env|file|exec):(.+)$/s;
 
 /**
- * A bundle YAML value: either a string (literal or provider-prefixed ref) or
+ * A bundle value: either a string (literal or provider-prefixed ref) or
  * an object `{value: string}` used to escape a literal that would otherwise
  * be parsed as a ref (e.g. a URL that happens to start with 'env:').
  */
 export type BundleValue = string | { value: string };
 
-/** Parse a bundle YAML value into either a literal string or a typed secret ref. */
+/** Parse a bundle value into either a literal string or a typed secret ref. */
 export function parseBundleValue(raw: BundleValue): { literal: string } | { ref: SecretRef } {
   if (typeof raw === 'object' && raw !== null && typeof (raw as any).value === 'string') {
     return { literal: (raw as { value: string }).value };
@@ -78,21 +80,46 @@ function ensureKeychainHelper(): string {
   const binPath = path.join(here, 'AgentsKeychain.app', 'Contents', 'MacOS', 'AgentsKeychain');
   if (!fs.existsSync(binPath)) {
     throw new Error(
-      `iCloud Keychain helper missing at ${binPath}. ` +
-      'This npm package was built without the signed helper bundle. ' +
-      'Reinstall agents-cli, or create the bundle without --icloud-sync to use device-local storage.'
+      `Keychain helper missing at ${binPath}. ` +
+      'This npm package was built without the signed helper bundle. Reinstall agents-cli.'
     );
   }
   return binPath;
 }
 
-// iCloud Keychain sync is opt-in per bundle. When sync=true we route through
-// the Swift helper (kSecAttrSynchronizable=true). When sync is false/undefined
-// we use /usr/bin/security, which is always present on macOS — so a user who
-// never opts in to iCloud sync never needs Xcode Command Line Tools.
+/**
+ * Test seam: lets bundle storage tests swap the keychain backend for an
+ * in-memory map without touching the user's real keychain. Mocking is
+ * justified here because the alternative (touching real keychain in unit
+ * tests) is destructive and would require an interactive Keychain unlock.
+ */
+export interface KeychainBackend {
+  has(item: string, sync: boolean): boolean;
+  get(item: string, sync: boolean): string;
+  set(item: string, value: string, sync: boolean): void;
+  delete(item: string, sync: boolean): boolean;
+  list(prefix: string): string[];
+}
+
+let backend: KeychainBackend | null = null;
+
+/** Install a custom keychain backend (test only). Returns the previous backend so callers can restore. */
+export function setKeychainBackendForTest(b: KeychainBackend | null): KeychainBackend | null {
+  const prev = backend;
+  backend = b;
+  return prev;
+}
+
+// Backend routing: non-sync items go through /usr/bin/security so they share
+// an ACL identity with items created by previous CLI versions (no prompts on
+// existing data). Sync items must go through the signed .app — only the .app
+// holds the keychain-access-groups entitlement macOS requires for
+// kSecAttrSynchronizable. Enumeration also goes through the .app because the
+// security CLI doesn't expose listing by service prefix.
 
 /** Check if a keychain item exists (macOS only). */
 export function hasKeychainToken(item: string, sync = false): boolean {
+  if (backend) return backend.has(item, sync);
   assertMacOS();
   if (sync) {
     const bin = ensureKeychainHelper();
@@ -107,6 +134,7 @@ export function hasKeychainToken(item: string, sync = false): boolean {
 
 /** Retrieve a secret value from the macOS Keychain. Throws if not found. */
 export function getKeychainToken(item: string, sync = false): string {
+  if (backend) return backend.get(item, sync);
   assertMacOS();
   if (sync) {
     const bin = ensureKeychainHelper();
@@ -138,6 +166,7 @@ export function getKeychainToken(item: string, sync = false): string {
 
 /** Store or update a secret value in the macOS Keychain. iCloud-synced when sync=true. */
 export function setKeychainToken(item: string, value: string, sync = false): void {
+  if (backend) { backend.set(item, value, sync); return; }
   assertMacOS();
   if (!value || !value.trim()) throw new Error('Secret value is empty.');
   if (/[\r\n]/.test(value)) throw new Error('Secret value contains newlines, which are not supported.');
@@ -154,7 +183,7 @@ export function setKeychainToken(item: string, value: string, sync = false): voi
     }
     return;
   }
-  // The `security -i` interactive form keeps the value out of argv (and `ps`).
+  // `security -i` keeps the value out of argv (and `ps`).
   const user = os.userInfo().username;
   const cmd = `add-generic-password -a ${quoteForSecurityCli(user)} -s ${quoteForSecurityCli(item)} -w ${quoteForSecurityCli(value)} -U\n`;
   const result = spawnSync('security', ['-i'], {
@@ -168,6 +197,7 @@ export function setKeychainToken(item: string, value: string, sync = false): voi
 
 /** Delete a keychain item. Returns true if it existed. */
 export function deleteKeychainToken(item: string, sync = false): boolean {
+  if (backend) return backend.delete(item, sync);
   assertMacOS();
   if (sync) {
     const bin = ensureKeychainHelper();
@@ -180,9 +210,24 @@ export function deleteKeychainToken(item: string, sync = false): boolean {
   }).status === 0;
 }
 
-// Quote a value for `security -i`'s shell-like tokenizer so it stays out of argv.
 function quoteForSecurityCli(s: string): string {
   return '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+}
+
+/** Enumerate keychain item service names whose name starts with the given prefix. */
+export function listKeychainItems(prefix: string): string[] {
+  if (backend) return backend.list(prefix);
+  assertMacOS();
+  const bin = ensureKeychainHelper();
+  const result = spawnSync(bin, ['list', prefix], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (result.status !== 0) {
+    const msg = result.stderr?.toString().trim();
+    throw new Error(msg || `Failed to enumerate keychain items with prefix '${prefix}'.`);
+  }
+  const out = result.stdout?.toString() || '';
+  return out.split('\n').map((s) => s.trim()).filter(Boolean);
 }
 
 /** Options controlling how secret refs are resolved. */
