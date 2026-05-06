@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdirSync, rmSync, readFileSync, lstatSync } from 'fs';
+import { existsSync, mkdirSync, rmSync, readFileSync, lstatSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir, homedir } from 'os';
 import {
@@ -245,16 +245,45 @@ describe('generateGeminiConfig', () => {
       readFileSync(join(overlayHome, '.gemini', 'settings.json'), 'utf-8')
     );
     expect(settings.model).toBe('gemini-2.5-pro');
+    expect(settings.general.enableAutoUpdate).toBe(false);
   });
 
-  it('writes empty object when no config', () => {
+  it('writes auto-update disabled when no config', () => {
     const config = makeConfig({ agent: 'gemini' });
     generateGeminiConfig(overlayHome, config);
 
     const settings = JSON.parse(
       readFileSync(join(overlayHome, '.gemini', 'settings.json'), 'utf-8')
     );
-    expect(settings).toEqual({});
+    expect(settings).toEqual({
+      general: {
+        enableAutoUpdate: false,
+      },
+    });
+  });
+
+  it('merges with existing settings.json instead of replacing it', () => {
+    const settingsPath = join(overlayHome, '.gemini', 'settings.json');
+    mkdirSync(join(overlayHome, '.gemini'), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify({
+      theme: 'dark',
+      general: {
+        preferredEditor: 'vim',
+        enableAutoUpdate: true,
+      },
+    }, null, 2));
+
+    const config = makeConfig({ agent: 'gemini' });
+    generateGeminiConfig(overlayHome, config);
+
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    expect(settings).toEqual({
+      theme: 'dark',
+      general: {
+        preferredEditor: 'vim',
+        enableAutoUpdate: false,
+      },
+    });
   });
 });
 
