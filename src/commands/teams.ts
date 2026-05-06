@@ -31,10 +31,17 @@ import {
 import {
   createTeam,
   ensureTeam,
+  getTeam,
   loadTeams,
   removeTeam,
   teamExists,
 } from '../lib/teams/registry.js';
+import {
+  createWorktree,
+  isGitRepo,
+  hasUncommittedChanges,
+  removeWorktree,
+} from '../lib/teams/worktree.js';
 import { isVersionInstalled, resolveVersionAlias, resolveVersionAliasLoose } from '../lib/versions.js';
 import type { AgentId } from '../lib/types.js';
 import { discoverSessions, parseTimeFilter, resolveSessionById } from '../lib/session/discover.js';
@@ -777,19 +784,28 @@ Name teammates with --name alice to refer to them as 'alice' instead of a UUID.
     .aliases(['c', 'new'])
     .description('Start a new team. No teammates yet; add them with `teams add`.')
     .option('-d, --description <text>', 'One-line summary of what this team is working on')
+    .option('--enable-worktrees', 'Each teammate works in its own git worktree (requires --worktree on add)')
     .option('--json', 'Output machine-readable JSON')
-    .action(async (team: string, opts: { description?: string; json?: boolean }) => {
+    .action(async (team: string, opts: { description?: string; enableWorktrees?: boolean; json?: boolean }) => {
       try {
-        const meta = await createTeam(team, opts.description);
+        const meta = await createTeam(team, {
+          description: opts.description,
+          enableWorktrees: opts.enableWorktrees,
+        });
         if (isJsonMode(opts)) {
           console.log(JSON.stringify({ team, ...meta }, null, 2));
           return;
         }
         console.log(chalk.green(`New team: ${chalk.cyan(team)}`));
         if (meta.description) console.log(chalk.gray(`  ${meta.description}`));
+        if (meta.enable_worktrees) console.log(chalk.gray(`  worktrees: enabled`));
         console.log();
         console.log(chalk.gray('Add your first teammate:'));
-        console.log(chalk.gray(`  agents teams add ${team} claude "your task here"`));
+        if (meta.enable_worktrees) {
+          console.log(chalk.gray(`  agents teams add ${team} claude "your task here" --name alice --worktree feature-name`));
+        } else {
+          console.log(chalk.gray(`  agents teams add ${team} claude "your task here"`));
+        }
       } catch (err) {
         die((err as Error).message);
       }
@@ -811,6 +827,7 @@ Name teammates with --name alice to refer to them as 'alice' instead of a UUID.
       []
     )
     .option('--cwd <dir>', 'Working directory for this teammate (default: current directory)')
+    .option('--worktree <name>', 'Run this teammate in a dedicated git worktree (required when team has --enable-worktrees)')
     .option('--after <names>', "DAG dependencies: comma-separated teammate names to wait for. Stages as PENDING; run 'teams start' to launch when ready.")
     .option('--task-type <type>', `Factory label: ${VALID_TASK_TYPES.join('|')}. Drives planner fan-out + test-oracle bugfix loop.`)
     .option('--cloud <provider>', `Dispatch to cloud backend instead of local CLI: ${VALID_CLOUD_PROVIDERS.join('|')}`)
@@ -819,7 +836,7 @@ Name teammates with --name alice to refer to them as 'alice' instead of a UUID.
     .option('--json', 'Output machine-readable JSON')
     .action(async (team: string, teammate: string, task: string, opts: {
       name?: string; mode: string; effort: string; model?: string; env: string[];
-      cwd?: string; after?: string; json?: boolean;
+      cwd?: string; worktree?: string; after?: string; json?: boolean;
       taskType?: string; cloud?: string; repo?: string; branch?: string;
     }) => {
       if (!(VALID_MODES as readonly string[]).includes(opts.mode)) {
@@ -880,7 +897,34 @@ Name teammates with --name alice to refer to them as 'alice' instead of a UUID.
       // Auto-create the team if it doesn't exist yet (friendlier UX than erroring).
       await ensureTeam(team);
 
-      const cwd = opts.cwd ?? process.cwd();
+      // Check if team has worktrees enabled
+      const teamMeta = await getTeam(team);
+      const worktreesEnabled = teamMeta?.enable_worktrees ?? false;
+      let worktreeName: string | null = null;
+      let worktreePath: string | null = null;
+
+      if (worktreesEnabled) {
+        if (!opts.worktree) {
+          die(`Team '${team}' has worktrees enabled. Use --worktree <name> to specify a worktree name.`);
+        }
+        if (!opts.name) {
+          die(`Team '${team}' has worktrees enabled. Use --name <name> to identify this teammate.`);
+        }
+        const baseCwd = opts.cwd ?? process.cwd();
+        if (!(await isGitRepo(baseCwd))) {
+          die(`Worktrees require a git repository. ${baseCwd} is not inside a git repo.`);
+        }
+        try {
+          worktreeName = opts.worktree;
+          worktreePath = await createWorktree(baseCwd, worktreeName);
+        } catch (err) {
+          die(`Failed to create worktree '${opts.worktree}': ${(err as Error).message}`);
+        }
+      } else if (opts.worktree) {
+        die(`--worktree requires --enable-worktrees on the team. Recreate the team with: agents teams create ${team} --enable-worktrees`);
+      }
+
+      const cwd = worktreePath ?? opts.cwd ?? process.cwd();
       const mgr = mkManager();
 
       // Factory teammates: prepend the worker-skill preamble to every task
@@ -951,7 +995,9 @@ Name teammates with --name alice to refer to them as 'alice' instead of a UUID.
           cloudProviderId,
           cloudSessionId,
           opts.repo ?? null,
-          opts.branch ?? null
+          opts.branch ?? null,
+          worktreeName,
+          worktreePath
         );
 
         if (isJsonMode(opts)) {
@@ -972,6 +1018,9 @@ Name teammates with --name alice to refer to them as 'alice' instead of a UUID.
         console.log(`  ${chalk.gray('status  ')}  ${statusColor(result.status)(result.status)}`);
         console.log(`  ${chalk.gray('mode    ')}  ${opts.mode}`);
         console.log(`  ${chalk.gray('working ')}  ${cwd}`);
+        if (worktreeName) {
+          console.log(`  ${chalk.gray('worktree')}  ${chalk.cyan(worktreeName)}`);
+        }
         if (result.task_type) {
           console.log(`  ${chalk.gray('task    ')}  ${chalk.cyan(result.task_type)}`);
         }
@@ -1193,6 +1242,21 @@ Name teammates with --name alice to refer to them as 'alice' instead of a UUID.
       const stopRes = await handleStop(mgr, team, agentId);
       if ('error' in stopRes) die(stopRes.error);
 
+      // Clean up worktree if this teammate had one
+      if (agent?.worktreeName && agent?.worktreePath) {
+        try {
+          const dirty = await hasUncommittedChanges(agent.worktreePath);
+          if (dirty) {
+            console.log(chalk.yellow(`Worktree '${agent.worktreeName}' has uncommitted changes. Keeping it at: ${agent.worktreePath}`));
+          } else {
+            const baseCwd = process.cwd();
+            await removeWorktree(baseCwd, agent.worktreeName);
+          }
+        } catch {
+          // best-effort cleanup
+        }
+      }
+
       if (!opts.keepLogs && stopRes.not_found.length === 0) {
         try {
           const dir = path.join(await getAgentsDir(), agentId);
@@ -1239,6 +1303,24 @@ Name teammates with --name alice to refer to them as 'alice' instead of a UUID.
       if ('error' in stopRes) die(stopRes.error);
 
       const status = await handleStatus(mgr, team, 'all');
+
+      // Clean up worktrees for all teammates
+      const baseCwd = process.cwd();
+      const keptWorktrees: string[] = [];
+      for (const a of status.agents) {
+        const agent = await mgr.get(a.agent_id);
+        if (agent?.worktreeName && agent?.worktreePath) {
+          try {
+            const dirty = await hasUncommittedChanges(agent.worktreePath);
+            if (dirty) {
+              keptWorktrees.push(agent.worktreeName);
+            } else {
+              await removeWorktree(baseCwd, agent.worktreeName);
+            }
+          } catch { /* best-effort */ }
+        }
+      }
+
       const removedIds: string[] = [];
       if (!opts.keepLogs) {
         const base = await getAgentsDir();
@@ -1262,6 +1344,9 @@ Name teammates with --name alice to refer to them as 'alice' instead of a UUID.
       console.log(chalk.green(`Team ${chalk.cyan(team)} disbanded.`));
       if (stopRes.stopped.length) console.log(chalk.gray(`  Stopped ${stopRes.stopped.length} working teammate(s).`));
       if (removedIds.length) console.log(chalk.gray(`  Cleared ${removedIds.length} teammate log(s).`));
+      if (keptWorktrees.length) {
+        console.log(chalk.yellow(`  Kept ${keptWorktrees.length} worktree(s) with uncommitted changes: ${keptWorktrees.join(', ')}`));
+      }
     });
 
   // logs

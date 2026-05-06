@@ -514,6 +514,9 @@ export class AgentProcess {
   // options the user originally supplied.
   cloudRepo: string | null = null;
   cloudBranch: string | null = null;
+  // Worktree isolation: when non-null, this teammate runs in its own git worktree.
+  worktreeName: string | null = null;
+  worktreePath: string | null = null;
   private eventsCache: any[] = [];
   private lastReadPos: number = 0;
   private baseDir: string | null = null;
@@ -544,7 +547,9 @@ export class AgentProcess {
     envOverrides: Record<string, string> | null = null,
     taskType: TaskType | null = null,
     cloudRepo: string | null = null,
-    cloudBranch: string | null = null
+    cloudBranch: string | null = null,
+    worktreeName: string | null = null,
+    worktreePath: string | null = null
   ) {
     this.agentId = agentId;
     this.remoteSessionId = remoteSessionId;
@@ -556,6 +561,8 @@ export class AgentProcess {
     this.taskType = taskType;
     this.cloudRepo = cloudRepo;
     this.cloudBranch = cloudBranch;
+    this.worktreeName = worktreeName;
+    this.worktreePath = worktreePath;
     this.taskName = taskName;
     this.agentType = agentType;
     this.prompt = prompt;
@@ -792,6 +799,8 @@ export class AgentProcess {
       task_type: this.taskType,
       cloud_repo: this.cloudRepo,
       cloud_branch: this.cloudBranch,
+      worktree_name: this.worktreeName,
+      worktree_path: this.worktreePath,
     };
     const metaPath = await this.getMetaPath();
     await fs.writeFile(metaPath, JSON.stringify(meta, null, 2));
@@ -858,7 +867,9 @@ export class AgentProcess {
           ? (meta.task_type as TaskType)
           : null,
         meta.cloud_repo || null,
-        meta.cloud_branch || null
+        meta.cloud_branch || null,
+        meta.worktree_name || null,
+        meta.worktree_path || null
       );
       agent.startTime = typeof meta.start_time === 'string' ? meta.start_time : null;
       return agent;
@@ -1165,7 +1176,9 @@ export class AgentManager {
     cloudProvider: string | null = null,
     cloudSessionId: string | null = null,
     cloudRepo: string | null = null,
-    cloudBranch: string | null = null
+    cloudBranch: string | null = null,
+    worktreeName: string | null = null,
+    worktreePath: string | null = null
   ): Promise<AgentProcess> {
     await this.initialize();
     const resolvedMode = resolveMode(mode, this.defaultMode);
@@ -1266,7 +1279,9 @@ export class AgentManager {
       envOverrides && Object.keys(envOverrides).length > 0 ? envOverrides : null,
       taskType,
       cloudRepo,
-      cloudBranch
+      cloudBranch,
+      worktreeName,
+      worktreePath
     );
 
     const agentDir = await agent.getAgentDir();
