@@ -64,6 +64,8 @@ vi.mock('../src/lib/state.js', () => {
     get recordVersionResources() { return () => {}; },
     get clearVersionResources() { return () => {}; },
     get getVersionResources() { return () => null; },
+    get getActiveRulesPreset() { return () => 'default'; },
+    get setActiveRulesPreset() { return () => {}; },
   };
 });
 
@@ -547,16 +549,17 @@ describe('getAvailableResources', () => {
     expect(resources.hooks).not.toContain('.hidden');
   });
 
-  it('finds memory files excluding symlinks', () => {
-    const memoryDir = path.join(AGENTS_DIR, 'memory');
-    fs.mkdirSync(memoryDir, { recursive: true });
-    fs.writeFileSync(path.join(memoryDir, 'AGENTS.md'), '# Instructions');
-    // Create a symlink CLAUDE.md -> AGENTS.md (should be excluded)
-    fs.symlinkSync(path.join(memoryDir, 'AGENTS.md'), path.join(memoryDir, 'CLAUDE.md'));
+  it('lists rule preset names from rules.yaml', () => {
+    const rulesDir = path.join(AGENTS_DIR, 'memory');
+    fs.mkdirSync(rulesDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(rulesDir, 'rules.yaml'),
+      'presets:\n  default:\n    subrules: []\n  proactive:\n    subrules: []\n'
+    );
 
     const resources = getAvailableResources();
-    expect(resources.memory).toContain('AGENTS');
-    expect(resources.memory).not.toContain('CLAUDE');
+    expect(resources.memory).toContain('default');
+    expect(resources.memory).toContain('proactive');
   });
 
   it('finds MCP configs from *.yaml and *.yml', () => {
@@ -645,11 +648,16 @@ describe('syncResourcesToVersion', () => {
     fs.mkdirSync(hooksDir, { recursive: true });
     fs.writeFileSync(path.join(hooksDir, 'pre-commit.sh'), '#!/bin/bash\necho "pre-commit"');
 
-    // Memory
-    const memoryDir = path.join(AGENTS_DIR, 'memory');
-    fs.mkdirSync(memoryDir, { recursive: true });
-    fs.writeFileSync(path.join(memoryDir, 'AGENTS.md'), '# Agent Instructions\nDo good work.');
-    fs.writeFileSync(path.join(memoryDir, 'SOUL.md'), '# Soul\nBe kind.');
+    // Rules — composer-model layout: subrules/ + rules.yaml. The state mock
+    // points all rules-dir getters at <AGENTS_DIR>/memory, so we write here.
+    const rulesDir = path.join(AGENTS_DIR, 'memory');
+    fs.mkdirSync(path.join(rulesDir, 'subrules'), { recursive: true });
+    fs.writeFileSync(path.join(rulesDir, 'subrules', 'core.md'), '# Agent Instructions\nDo good work.');
+    fs.writeFileSync(path.join(rulesDir, 'subrules', 'soul.md'), '# Soul\nBe kind.');
+    fs.writeFileSync(
+      path.join(rulesDir, 'rules.yaml'),
+      'presets:\n  default:\n    subrules: [core, soul]\n'
+    );
 
     // Version home
     const versionHome = path.join(AGENTS_DIR, 'versions', 'claude', '2.0.65', 'home');
@@ -844,19 +852,21 @@ describe('syncResourcesToVersion', () => {
   });
 
   describe('memory syncing', () => {
-    it('maps AGENTS.md to agent-specific instructions file for claude', () => {
+    it('writes the composed rules file as the agent-specific instruction file for claude', () => {
       setupCentralResources();
 
       const result = syncResourcesToVersion('claude', '2.0.65');
 
       const versionHome = getVersionHomePath('claude', '2.0.65');
-      // AGENTS.md -> CLAUDE.md
+      // Composer writes a single instruction file per agent.
       expect(result.memory).toContain('CLAUDE.md');
       const content = fs.readFileSync(path.join(versionHome, '.claude', 'CLAUDE.md'), 'utf-8');
+      // The default preset includes both subrules — both bodies should be inlined.
       expect(content).toContain('Agent Instructions');
+      expect(content).toContain('Be kind');
     });
 
-    it('maps AGENTS.md to GEMINI.md for gemini', () => {
+    it('writes GEMINI.md for gemini', () => {
       setupCentralResources();
       const versionHome = path.join(AGENTS_DIR, 'versions', 'gemini', '1.0.0', 'home');
       fs.mkdirSync(versionHome, { recursive: true });
@@ -867,15 +877,18 @@ describe('syncResourcesToVersion', () => {
       expect(fs.existsSync(path.join(versionHome, '.gemini', 'GEMINI.md'))).toBe(true);
     });
 
-    it('preserves non-AGENTS memory files with original name', () => {
+    it('inlines all subrules listed in the active preset', () => {
       setupCentralResources();
 
-      const result = syncResourcesToVersion('claude', '2.0.65');
+      syncResourcesToVersion('claude', '2.0.65');
 
       const versionHome = getVersionHomePath('claude', '2.0.65');
-      // SOUL.md should keep its name
-      expect(result.memory).toContain('SOUL.md');
-      expect(fs.existsSync(path.join(versionHome, '.claude', 'SOUL.md'))).toBe(true);
+      const composed = fs.readFileSync(path.join(versionHome, '.claude', 'CLAUDE.md'), 'utf-8');
+      // No per-subrule files are written — only the single composed file.
+      expect(fs.existsSync(path.join(versionHome, '.claude', 'core.md'))).toBe(false);
+      expect(fs.existsSync(path.join(versionHome, '.claude', 'SOUL.md'))).toBe(false);
+      expect(composed).toContain('Do good work');
+      expect(composed).toContain('Be kind');
     });
 
     it('skips memory for agents without commands capability', () => {
@@ -887,7 +900,7 @@ describe('syncResourcesToVersion', () => {
       expect(result.memory).toEqual([]);
     });
 
-    it('overwrites existing memory file', () => {
+    it('overwrites existing instruction file', () => {
       setupCentralResources();
       const versionHome = getVersionHomePath('claude', '2.0.65');
       const claudeDir = path.join(versionHome, '.claude');
@@ -1094,30 +1107,21 @@ describe('getActuallySyncedResources', () => {
     expect(synced.hooks).not.toContain('pre-commit.sh');
   });
 
-  it('detects memory when content matches (with AGENTS.md mapping)', () => {
-    // Central: AGENTS.md
-    const memoryDir = path.join(AGENTS_DIR, 'memory');
-    fs.mkdirSync(memoryDir, { recursive: true });
-    fs.writeFileSync(path.join(memoryDir, 'AGENTS.md'), '# Instructions');
-
-    // Version: CLAUDE.md (mapped from AGENTS.md)
+  it('reports the active preset as synced when the instruction file exists', () => {
+    // Version home with composed CLAUDE.md present.
     const { agentDir } = setupVersionHome('claude', '2.0.65');
-    fs.writeFileSync(path.join(agentDir, 'CLAUDE.md'), '# Instructions');
+    fs.writeFileSync(path.join(agentDir, 'CLAUDE.md'), '# composed body');
 
     const synced = getActuallySyncedResources('claude', '2.0.65');
-    expect(synced.memory).toContain('AGENTS');
+    // Mock returns 'default' from getActiveRulesPreset.
+    expect(synced.memory).toContain('default');
   });
 
-  it('marks memory as NOT synced when content differs', () => {
-    const memoryDir = path.join(AGENTS_DIR, 'memory');
-    fs.mkdirSync(memoryDir, { recursive: true });
-    fs.writeFileSync(path.join(memoryDir, 'AGENTS.md'), '# Updated Instructions');
-
-    const { agentDir } = setupVersionHome('claude', '2.0.65');
-    fs.writeFileSync(path.join(agentDir, 'CLAUDE.md'), '# Old Instructions');
-
+  it('reports no synced rules when the instruction file is absent', () => {
+    setupVersionHome('claude', '2.0.65');
+    // No CLAUDE.md written — composer hasn't run.
     const synced = getActuallySyncedResources('claude', '2.0.65');
-    expect(synced.memory).not.toContain('AGENTS');
+    expect(synced.memory).toEqual([]);
   });
 
   it('detects subagents for claude', () => {
@@ -1177,18 +1181,24 @@ describe('sync then detect roundtrip', () => {
     expect(synced.skills).toContain('mq');
   });
 
-  it('synced memory is detected as synced (with name mapping)', () => {
-    const memoryDir = path.join(AGENTS_DIR, 'memory');
-    fs.mkdirSync(memoryDir, { recursive: true });
-    fs.writeFileSync(path.join(memoryDir, 'AGENTS.md'), '# Instructions');
+  it('synced rules surface in getActuallySyncedResources', () => {
+    const rulesDir = path.join(AGENTS_DIR, 'memory');
+    fs.mkdirSync(path.join(rulesDir, 'subrules'), { recursive: true });
+    fs.writeFileSync(path.join(rulesDir, 'subrules', 'core.md'), '# Instructions');
+    fs.writeFileSync(
+      path.join(rulesDir, 'rules.yaml'),
+      'presets:\n  default:\n    subrules: [core]\n'
+    );
 
     const versionHome = path.join(AGENTS_DIR, 'versions', 'claude', '2.0.65', 'home');
     fs.mkdirSync(versionHome, { recursive: true });
 
     syncResourcesToVersion('claude', '2.0.65', { memory: 'all' });
 
+    // The composer wrote ~/.claude/CLAUDE.md — getActuallySyncedResources
+    // should detect a synced instruction file at that path.
     const synced = getActuallySyncedResources('claude', '2.0.65');
-    expect(synced.memory).toContain('AGENTS');
+    expect(synced.memory.length).toBeGreaterThan(0);
   });
 
   it('synced hooks are detected as synced', () => {

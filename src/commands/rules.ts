@@ -42,7 +42,9 @@ import {
   getVersionHomePath,
   resolveAgentVersionTargets,
 } from '../lib/versions.js';
-import { recordVersionResources } from '../lib/state.js';
+import { recordVersionResources, getActiveRulesPreset, setActiveRulesPreset } from '../lib/state.js';
+import { discoverRulesLayers } from '../lib/rules/compose.js';
+import * as yaml from 'yaml';
 import {
   isPromptCancelled,
   formatPath,
@@ -569,6 +571,99 @@ Examples:
         console.log(chalk.green(`Removed ${AGENTS[agentId].instructionsFile}`));
       } else {
         console.log(chalk.yellow(`No rule file found for ${agentLabel(agentId)}`));
+      }
+    });
+
+  rulesCmd
+    .command('switch <target>')
+    .description('Choose the active rule preset for an agent version (persists in agents.yaml)')
+    .option('-p, --preset <name>', 'Preset to activate; omit for an interactive picker')
+    .addHelpText('after', `
+Targets are <agent>@<version>. Use 'default' for the alias of the global default version.
+
+Examples:
+  # Persist the cautious preset for claude 2.1.111
+  agents rules switch claude@2.1.111 --preset cautious
+
+  # Reset back to the literal default preset
+  agents rules switch claude@default --preset default
+
+  # Pick interactively
+  agents rules switch codex@0.116.0
+`)
+    .action(async (target: string, options: { preset?: string }) => {
+      try {
+        const [rawAgent, rawVersion] = target.split('@');
+        const agentId = resolveAgentName(rawAgent);
+        if (!agentId) {
+          console.log(chalk.red(formatAgentError(rawAgent)));
+          process.exit(1);
+        }
+        const version = resolveVersionAlias(agentId, rawVersion);
+        if (!version) {
+          console.log(chalk.red(`Pass a version: ${agentId}@<version>. Try 'default' or 'agents list ${agentId}'.`));
+          process.exit(1);
+        }
+        const installed = listInstalledVersions(agentId);
+        if (!installed.includes(version)) {
+          console.log(chalk.red(`Version ${version} not installed for ${agentLabel(agentId)}.`));
+          console.log(chalk.gray(`Installed: ${installed.join(', ') || 'none'}`));
+          process.exit(1);
+        }
+
+        // Discover available presets across layers (highest-priority defines, lowers union in).
+        const layers = discoverRulesLayers();
+        const presetSet = new Set<string>();
+        for (const layer of layers) {
+          const yamlPath = path.join(layer.rulesDir, 'rules.yaml');
+          if (!fs.existsSync(yamlPath)) continue;
+          try {
+            const parsed = yaml.parse(fs.readFileSync(yamlPath, 'utf-8')) as { presets?: Record<string, unknown> } | null;
+            for (const name of Object.keys(parsed?.presets || {})) presetSet.add(name);
+          } catch { /* malformed yaml — skip */ }
+        }
+        const presets = Array.from(presetSet).sort();
+        if (presets.length === 0) {
+          console.log(chalk.red('No presets found. Define presets in ~/.agents-system/rules/rules.yaml or ~/.agents/rules/rules.yaml.'));
+          process.exit(1);
+        }
+
+        let chosen = options.preset;
+        if (chosen) {
+          if (!presets.includes(chosen)) {
+            console.log(chalk.red(`Unknown preset: ${chosen}`));
+            console.log(chalk.gray(`Available: ${presets.join(', ')}`));
+            process.exit(1);
+          }
+        } else {
+          if (!isInteractiveTerminal()) {
+            requireInteractiveSelection('Selecting a rule preset', [
+              `agents rules switch ${agentId}@${version} --preset default`,
+              `agents rules switch ${agentId}@${version} --preset cautious`,
+            ]);
+          }
+          const current = getActiveRulesPreset(agentId, version);
+          chosen = await select({
+            message: `Active rule preset for ${agentLabel(agentId)}@${version}`,
+            default: current,
+            choices: presets.map((p) => ({ name: p === current ? `${p} (current)` : p, value: p })),
+          });
+        }
+
+        setActiveRulesPreset(agentId, version, chosen);
+        const spinner = ora(`Re-syncing ${agentLabel(agentId)}@${version} with preset '${chosen}'`).start();
+        const result = syncResourcesToVersion(agentId, version);
+        spinner.succeed(`Switched ${agentLabel(agentId)}@${version} to '${chosen}'`);
+        if (result.memory.length > 0) {
+          console.log(chalk.gray(`  Wrote ${result.memory[0]} from preset '${chosen}'.`));
+        }
+      } catch (err) {
+        if (isPromptCancelled(err)) {
+          console.log(chalk.gray('\nCancelled'));
+          return;
+        }
+        console.error(chalk.red(`Failed to switch preset: ${(err as Error).message}`));
+        process.exit(1);
       }
     });
 
