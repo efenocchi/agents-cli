@@ -17,6 +17,8 @@ export interface TeamMeta {
   created_at: string;
   description?: string;
   enable_worktrees?: boolean;
+  /** Shared worktree path for all teammates (mutually exclusive with enable_worktrees). */
+  use_worktree?: string;
 }
 
 /** Map of team name to team metadata. */
@@ -104,10 +106,15 @@ async function saveTeams(reg: TeamRegistry): Promise<void> {
 export interface CreateTeamOptions {
   description?: string;
   enableWorktrees?: boolean;
+  /** Path to an existing worktree for all teammates to share. */
+  useWorktree?: string;
 }
 
 /** Create a new team. Throws if a team with the same name already exists. */
 export async function createTeam(name: string, options?: CreateTeamOptions): Promise<TeamMeta> {
+  if (options?.enableWorktrees && options?.useWorktree) {
+    throw new Error('Cannot use both --enable-worktrees and --use-worktree. Pick one.');
+  }
   const p = await registryPath();
   return withRegistryLock(p, async () => {
     const reg = await loadTeams();
@@ -118,6 +125,7 @@ export async function createTeam(name: string, options?: CreateTeamOptions): Pro
       created_at: new Date().toISOString(),
       ...(options?.description ? { description: options.description } : {}),
       ...(options?.enableWorktrees ? { enable_worktrees: true } : {}),
+      ...(options?.useWorktree ? { use_worktree: options.useWorktree } : {}),
     };
     reg[name] = meta;
     await saveTeams(reg);
