@@ -41,3 +41,9 @@ scripts/scrub-history.sh
 
 # Other
 .refs/
+
+# Agents (recurisve)
+**/.claude
+**/.codex
+**/.gemini
+**/.tmp-bun
