@@ -14,6 +14,7 @@ import * as yaml from 'yaml';
 import * as TOML from 'smol-toml';
 import { AGENTS, ALL_AGENT_IDS, HOOKS_CAPABLE_AGENTS } from './agents.js';
 import { supports, explainSkip } from './capabilities.js';
+import { setGeminiAutoUpdateDisabled, updateGeminiSettings } from './gemini-settings.js';
 import { getAgentsDir, getHooksDir as getSystemHooksDir, getUserHooksDir, getUserAgentsDir, getProjectAgentsDir } from './state.js';
 
 function getCentralHooksDir(): string { return getUserHooksDir(); }
@@ -953,101 +954,87 @@ function registerHooksForGemini(
   const registered: string[] = [];
   const errors: string[] = [];
 
-  const configDir = path.join(versionHome, '.gemini');
-  const settingsPath = path.join(configDir, 'settings.json');
-
-  let config: Record<string, unknown> = {};
-  if (fs.existsSync(settingsPath)) {
-    try {
-      config = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-    } catch {
-      errors.push('Failed to parse gemini settings.json');
-      return { registered, errors };
-    }
-  }
-
-  if (!config.hooks || typeof config.hooks !== 'object') {
-    config.hooks = {};
-  }
-  const hooks = config.hooks as Record<string, unknown[]>;
-
-  // Build set of current manifest command paths for gemini to GC stale entries
-  const managedHooksPrefix = path.join(agentsDir, 'hooks') + path.sep;
-  const currentManifestPaths = new Set<string>();
-  for (const hookDef of Object.values(manifest)) {
-    if (!hookDef.events || hookDef.events.length === 0) continue;
-    currentManifestPaths.add(path.join(agentsDir, 'hooks', hookDef.script));
-  }
-
-  // Remove stale entries
-  for (const eventEntries of Object.values(hooks)) {
-    if (!Array.isArray(eventEntries)) continue;
-    for (const group of eventEntries as Array<{
-      hooks?: Array<{ type: string; command: string; timeout?: number }>;
-    }>) {
-      if (!group.hooks) continue;
-      group.hooks = group.hooks.filter(
-        (h) => !h.command.startsWith(managedHooksPrefix) || currentManifestPaths.has(h.command)
-      );
-    }
-  }
-  for (const [event, eventEntries] of Object.entries(hooks)) {
-    if (!Array.isArray(eventEntries)) continue;
-    hooks[event] = (eventEntries as Array<{ hooks?: unknown[] }>).filter(
-      (g) => g.hooks && g.hooks.length > 0
-    );
-  }
-
-  for (const [name, hookDef] of Object.entries(manifest)) {
-    if (!hookDef.events || hookDef.events.length === 0) continue;
-
-    const commandPath = path.join(agentsDir, 'hooks', hookDef.script);
-    if (!fs.existsSync(commandPath)) {
-      errors.push(`${name}: script not found at ${commandPath}`);
-      continue;
-    }
-
-    // Gemini timeouts are in milliseconds; manifest timeouts are seconds.
-    const timeoutMs = (hookDef.timeout || 600) * 1000;
-
-    for (const event of hookDef.events) {
-      const geminiEvent = GEMINI_EVENT_MAP[event] ?? event;
-
-      if (!hooks[geminiEvent]) {
-        hooks[geminiEvent] = [];
-      }
-
-      const eventEntries = hooks[geminiEvent] as Array<{
-        matcher?: string;
-        hooks?: Array<{ name?: string; type: string; command: string; timeout?: number }>;
-      }>;
-
-      const matcher = hookDef.matcher || '';
-      let matcherGroup = eventEntries.find((e) => (e.matcher || '') === matcher);
-      if (!matcherGroup) {
-        matcherGroup = { matcher, hooks: [] };
-        eventEntries.push(matcherGroup);
-      }
-      if (!matcherGroup.hooks) {
-        matcherGroup.hooks = [];
-      }
-
-      const existingIdx = matcherGroup.hooks.findIndex((h) => h.command === commandPath);
-      const hookEntry = { name, type: 'command' as const, command: commandPath, timeout: timeoutMs };
-
-      if (existingIdx >= 0) {
-        matcherGroup.hooks[existingIdx] = hookEntry;
-      } else {
-        matcherGroup.hooks.push(hookEntry);
-      }
-
-      registered.push(`${name} -> ${geminiEvent}`);
-    }
-  }
-
+  const settingsPath = path.join(versionHome, '.gemini', 'settings.json');
   try {
-    fs.mkdirSync(configDir, { recursive: true });
-    fs.writeFileSync(settingsPath, JSON.stringify(config, null, 2), 'utf-8');
+    updateGeminiSettings(settingsPath, (config) => {
+      setGeminiAutoUpdateDisabled(config);
+
+      if (!config.hooks || typeof config.hooks !== 'object') {
+        config.hooks = {};
+      }
+      const hooks = config.hooks as Record<string, unknown[]>;
+
+      const managedHooksPrefix = path.join(agentsDir, 'hooks') + path.sep;
+      const currentManifestPaths = new Set<string>();
+      for (const hookDef of Object.values(manifest)) {
+        if (!hookDef.events || hookDef.events.length === 0) continue;
+        currentManifestPaths.add(path.join(agentsDir, 'hooks', hookDef.script));
+      }
+
+      for (const eventEntries of Object.values(hooks)) {
+        if (!Array.isArray(eventEntries)) continue;
+        for (const group of eventEntries as Array<{
+          hooks?: Array<{ type: string; command: string; timeout?: number }>;
+        }>) {
+          if (!group.hooks) continue;
+          group.hooks = group.hooks.filter(
+            (h) => !h.command.startsWith(managedHooksPrefix) || currentManifestPaths.has(h.command)
+          );
+        }
+      }
+      for (const [event, eventEntries] of Object.entries(hooks)) {
+        if (!Array.isArray(eventEntries)) continue;
+        hooks[event] = (eventEntries as Array<{ hooks?: unknown[] }>).filter(
+          (g) => g.hooks && g.hooks.length > 0
+        );
+      }
+
+      for (const [name, hookDef] of Object.entries(manifest)) {
+        if (!hookDef.events || hookDef.events.length === 0) continue;
+
+        const commandPath = path.join(agentsDir, 'hooks', hookDef.script);
+        if (!fs.existsSync(commandPath)) {
+          errors.push(`${name}: script not found at ${commandPath}`);
+          continue;
+        }
+
+        const timeoutMs = (hookDef.timeout || 600) * 1000;
+
+        for (const event of hookDef.events) {
+          const geminiEvent = GEMINI_EVENT_MAP[event] ?? event;
+
+          if (!hooks[geminiEvent]) {
+            hooks[geminiEvent] = [];
+          }
+
+          const eventEntries = hooks[geminiEvent] as Array<{
+            matcher?: string;
+            hooks?: Array<{ name?: string; type: string; command: string; timeout?: number }>;
+          }>;
+
+          const matcher = hookDef.matcher || '';
+          let matcherGroup = eventEntries.find((e) => (e.matcher || '') === matcher);
+          if (!matcherGroup) {
+            matcherGroup = { matcher, hooks: [] };
+            eventEntries.push(matcherGroup);
+          }
+          if (!matcherGroup.hooks) {
+            matcherGroup.hooks = [];
+          }
+
+          const existingIdx = matcherGroup.hooks.findIndex((h) => h.command === commandPath);
+          const hookEntry = { name, type: 'command' as const, command: commandPath, timeout: timeoutMs };
+
+          if (existingIdx >= 0) {
+            matcherGroup.hooks[existingIdx] = hookEntry;
+          } else {
+            matcherGroup.hooks.push(hookEntry);
+          }
+
+          registered.push(`${name} -> ${geminiEvent}`);
+        }
+      }
+    });
   } catch (err) {
     errors.push(`Failed to write gemini settings.json: ${(err as Error).message}`);
   }

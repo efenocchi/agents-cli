@@ -17,6 +17,7 @@ import { resolveAgentsDir, type ModelOverrides, type AgentConfig, type ReadConfi
 import { normalizeEvents, AgentType } from './parsers.js';
 import { debug } from './debug.js';
 import { buildReasoningFlags } from '../models.js';
+import { setGeminiAutoUpdateDisabled, updateGeminiSettings } from '../gemini-settings.js';
 import type { AgentId } from '../types.js';
 import { getAgentsDir as getSystemAgentsDir } from '../state.js';
 
@@ -405,20 +406,21 @@ export function resolveMode(
 export async function ensureGeminiPlanMode(): Promise<void> {
   const settingsPath = path.join(os.homedir(), '.gemini', 'settings.json');
   try {
-    let settings: Record<string, any> = {};
-    try {
-      const raw = await fs.readFile(settingsPath, 'utf-8');
-      settings = JSON.parse(raw);
-    } catch {
-      // No settings file or invalid JSON
+    let changed = false;
+    const settings = updateGeminiSettings(settingsPath, (nextSettings) => {
+      setGeminiAutoUpdateDisabled(nextSettings);
+      const experimental = typeof nextSettings.experimental === 'object' && nextSettings.experimental !== null
+        ? nextSettings.experimental as Record<string, unknown>
+        : {};
+      if (experimental.plan === true) {
+        return;
+      }
+      nextSettings.experimental = { ...experimental, plan: true };
+      changed = true;
+    });
+    if (changed && settings.experimental && typeof settings.experimental === 'object' && (settings.experimental as Record<string, unknown>).plan === true) {
+      console.error('[Swarm] Enabled Gemini experimental.plan in', settingsPath);
     }
-
-    if (settings.experimental?.plan === true) return;
-
-    settings.experimental = { ...settings.experimental, plan: true };
-    await fs.mkdir(path.dirname(settingsPath), { recursive: true });
-    await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2) + '\n');
-    console.error('[Swarm] Enabled Gemini experimental.plan in', settingsPath);
   } catch (err) {
     console.warn('[Swarm] Could not enable Gemini plan mode:', err);
   }
