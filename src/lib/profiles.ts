@@ -11,7 +11,7 @@ import * as path from 'path';
 import * as yaml from 'yaml';
 import type { AgentId } from './types.js';
 import { getUserAgentsDir } from './state.js';
-import { getKeychainToken, keychainItemName } from './profiles-keychain.js';
+import { getKeychainToken, keychainItemName } from './secrets/profiles.js';
 import { getPreset, type Preset } from './profiles-presets.js';
 
 /** A named profile binding an agent host, env vars, and optional keychain auth. */
