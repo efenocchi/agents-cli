@@ -121,13 +121,13 @@ export function setKeychainBackendForTest(b: KeychainBackend | null): KeychainBa
 export function hasKeychainToken(item: string, sync = false): boolean {
   if (backend) return backend.has(item, sync);
   assertMacOS();
-  if (sync) {
-    const bin = ensureKeychainHelper();
-    return spawnSync(bin, ['has', item, os.userInfo().username], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }).status === 0;
-  }
-  return spawnSync('security', ['find-generic-password', '-a', os.userInfo().username, '-s', item, '-w'], {
+  // Try security first (no prompts for local items), fall back to binary for synced items.
+  if (spawnSync('security', ['find-generic-password', '-a', os.userInfo().username, '-s', item, '-w'], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).status === 0) return true;
+  // Fallback: binary searches both synced and non-synced via kSecAttrSynchronizableAny
+  const bin = ensureKeychainHelper();
+  return spawnSync(bin, ['has', item, os.userInfo().username], {
     stdio: ['ignore', 'pipe', 'pipe'],
   }).status === 0;
 }
@@ -136,28 +136,23 @@ export function hasKeychainToken(item: string, sync = false): boolean {
 export function getKeychainToken(item: string, sync = false): string {
   if (backend) return backend.get(item, sync);
   assertMacOS();
-  if (sync) {
-    const bin = ensureKeychainHelper();
-    const result = spawnSync(bin, ['get', item, os.userInfo().username], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    if (result.status === 1) throw new Error(`Keychain item '${item}' not found.`);
-    if (result.status !== 0) {
-      const msg = result.stderr?.toString().trim();
-      throw new Error(msg || `Failed to read keychain item '${item}'.`);
-    }
-    const token = result.stdout?.toString().trim();
-    if (!token) throw new Error(`Keychain item '${item}' exists but is empty.`);
-    return token;
-  }
-  const result = spawnSync('security', ['find-generic-password', '-a', os.userInfo().username, '-s', item, '-w'], {
+  // Try security first (no prompts for local items)
+  const secResult = spawnSync('security', ['find-generic-password', '-a', os.userInfo().username, '-s', item, '-w'], {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  if (result.status === 44) throw new Error(`Keychain item '${item}' not found.`);
+  if (secResult.status === 0) {
+    const token = secResult.stdout?.toString().trim();
+    if (token) return token;
+  }
+  // Fallback: binary searches both synced and non-synced via kSecAttrSynchronizableAny
+  const bin = ensureKeychainHelper();
+  const result = spawnSync(bin, ['get', item, os.userInfo().username], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (result.status === 1) throw new Error(`Keychain item '${item}' not found.`);
   if (result.status !== 0) {
-    const stderr = result.stderr?.toString() || '';
-    if (/could not be found/i.test(stderr)) throw new Error(`Keychain item '${item}' not found.`);
-    throw new Error(`Failed to read keychain item '${item}': ${stderr.trim() || `exit ${result.status}`}`);
+    const msg = result.stderr?.toString().trim();
+    throw new Error(msg || `Failed to read keychain item '${item}'.`);
   }
   const token = result.stdout?.toString().trim();
   if (!token) throw new Error(`Keychain item '${item}' exists but is empty.`);
