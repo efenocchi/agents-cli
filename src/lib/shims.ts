@@ -1126,6 +1126,37 @@ export function getPathShadowingExecutable(agent: AgentId): string | null {
 }
 
 /**
+ * Check if the agent's CLI command is shadowed by a shell alias.
+ *
+ * Shell aliases live in the user's session and aren't visible from a Node.js
+ * child process. We do a best-effort scan of common RC files for `alias
+ * <command>=` patterns. Returns false when detection is inconclusive.
+ */
+export function hasAliasShadowingShim(agent: AgentId): boolean {
+  const cliCommand = AGENTS[agent].cliCommand;
+  const HOME = os.homedir();
+  const rcFiles = [
+    path.join(HOME, '.zshrc'),
+    path.join(HOME, '.bashrc'),
+    path.join(HOME, '.bash_profile'),
+    path.join(HOME, '.profile'),
+  ];
+
+  const pattern = new RegExp(`^\\s*alias\\s+${cliCommand}\\s*=`, 'm');
+
+  for (const rcFile of rcFiles) {
+    try {
+      if (!fs.existsSync(rcFile)) continue;
+      const content = fs.readFileSync(rcFile, 'utf-8');
+      if (pattern.test(content)) return true;
+    } catch {
+      // unreadable rc file — skip
+    }
+  }
+  return false;
+}
+
+/**
  * Check if shims directory is in PATH.
  */
 export function isShimsInPath(): boolean {
