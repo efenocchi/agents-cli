@@ -164,7 +164,7 @@ function redact(value: string, reveal: boolean): string {
 export function registerSecretsCommands(program: Command): void {
   const cmd = program
     .command('secrets')
-    .description('Named bundles of env variables backed by macOS Keychain. Inject into agents via `agents run --secrets <name>`.')
+    .description('Named bundles of env variables backed by macOS Keychain (with optional iCloud sync). Inject into agents via `agents run --secrets <name>`.')
     .addHelpText('after', `
 Workflow:
   Bundles are containers; secrets are the variables inside them. Create a
@@ -172,9 +172,16 @@ Workflow:
   run with --secrets <name>. Keychain-backed values never touch disk in
   plaintext.
 
+  Pass --icloud-sync at create time to store values in the iCloud-synced
+  keychain so they appear automatically on your other Macs (same iCloud
+  account, iCloud Keychain enabled). Without the flag, values are device-local.
+
 Examples:
   # Create a bundle for production credentials
   agents secrets create prod --description "Production keys for the api stack"
+
+  # Create a bundle that syncs to your other Macs via iCloud Keychain
+  agents secrets create npm-tokens --icloud-sync
 
   # Add a keychain-backed secret (prompts for the value)
   agents secrets add prod STRIPE_API_KEY

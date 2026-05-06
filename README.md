@@ -260,6 +260,24 @@ agents run claude "charge a test card" --secrets prod-stripe
 
 Merge order: profile env < `--secrets` < `--env K=V`. A missing keychain item aborts before the child starts.
 
+### Cross-machine sync via iCloud Keychain
+
+Pass `--icloud-sync` when creating a bundle and the values are written to the iCloud-synced keychain. Sign into the same iCloud account on another Mac (with iCloud Keychain enabled) and the values appear there within seconds — no copy-paste, no `.env` files emailed to yourself, no shared secret stores.
+
+```bash
+# On laptop:
+agents secrets create npm-tokens --icloud-sync
+agents secrets add npm-tokens NPM_TOKEN          # value lives in iCloud Keychain
+
+# On another Mac (same iCloud account):
+agents secrets add npm-tokens NPM_TOKEN          # the value is already there;
+                                                 # you only need the bundle YAML locally
+```
+
+Under the hood, `--icloud-sync` routes writes through a notarized helper app (`AgentsKeychain.app`) that holds the entitlement macOS requires for `kSecAttrSynchronizable`. Bundles without `--icloud-sync` use `/usr/bin/security` and stay device-local.
+
+Bundle YAML files (`~/.agents/secrets/*.yml`) are not synced — only the secret values. Push the YAMLs across machines via `agents repo push` if you want full bundle definitions to follow.
+
 ---
 
 ## Routines
@@ -403,7 +421,7 @@ No. API keys come from your shell environment or each agent CLI's existing auth.
 
 macOS and Linux. Windows via WSL works but isn't first-class yet.
 
-**macOS-only features:** Keychain-based secrets (`agents secrets`, `agents profiles login`) require macOS. On Linux, use environment variables or `.env` files for API keys. Native Linux credential store support is planned.
+**macOS-only features:** Keychain-based secrets (`agents secrets`, `agents profiles login`) require macOS. The `--icloud-sync` flag on bundles requires macOS + iCloud Keychain enabled. On Linux, use environment variables or `.env` files for API keys. Native Linux credential store support is planned.
 
 ### Do I need Node.js?
 
