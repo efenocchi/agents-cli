@@ -634,7 +634,8 @@ Examples:
   # Pull the live log of one teammate
   agents teams logs frontend
 
-  # A teammate is stuck — pull them out, the rest keeps going
+  # A teammate is stuck — stop them, then remove if needed
+  agents teams stop pricing-page frontend
   agents teams remove pricing-page frontend
 
   # Ship done — wind everyone down
@@ -1194,11 +1195,94 @@ Name teammates with --name alice to refer to them as 'alice' instead of a UUID.
       }
     });
 
+  // stop
+  teams
+    .command('stop [team] [teammate]')
+    .description('Stop a running teammate. Can be restarted later. Cleans up worktree if no uncommitted changes.')
+    .option('--json', 'Output machine-readable JSON')
+    .action(async (team: string | undefined, ref: string | undefined, opts: { json?: boolean }) => {
+      const mgr = mkManager();
+
+      if (!team) {
+        const { names } = await loadTeamRows(mgr);
+        requireDestructiveArg({
+          argName: 'team',
+          command: 'agents teams stop',
+          itemNoun: 'team',
+          available: names,
+          emptyHint: "You don't have any teams yet.",
+        });
+      }
+      if (!ref) {
+        const roster = await mgr.listByTask(team);
+        const running = roster.filter((a) => a.status === 'running');
+        requireDestructiveArg({
+          argName: 'teammate',
+          command: `agents teams stop ${team}`,
+          itemNoun: 'teammate',
+          available: running.map((a) => a.name || shortId(a.agentId)),
+          emptyHint: `Team ${team} has no running teammates.`,
+        });
+      }
+
+      const lookup = await mgr.resolveAgentIdInTask(team, ref);
+      if (lookup.kind === 'none') {
+        die(`No teammate matching '${ref}' in team ${team}`, 2);
+      }
+      if (lookup.kind === 'ambiguous') {
+        const shorts = lookup.matches.map(shortId).join(', ');
+        die(`'${ref}' matches multiple teammates: ${shorts}. Use more characters or a name.`, 2);
+      }
+      const agentId = lookup.agentId;
+
+      const agent = await mgr.get(agentId);
+      const display = agent?.name || shortId(agentId);
+
+      const stopRes = await handleStop(mgr, team, agentId);
+      if ('error' in stopRes) die(stopRes.error);
+
+      // Clean up worktree if this teammate had one
+      let worktreeKept = false;
+      if (agent?.worktreeName && agent?.worktreePath) {
+        try {
+          const dirty = await hasUncommittedChanges(agent.worktreePath);
+          if (dirty) {
+            worktreeKept = true;
+          } else {
+            const baseCwd = process.cwd();
+            await removeWorktree(baseCwd, agent.worktreeName);
+          }
+        } catch {
+          // best-effort cleanup
+        }
+      }
+
+      if (isJsonMode(opts)) {
+        console.log(JSON.stringify({
+          team,
+          agent_id: agentId,
+          name: agent?.name ?? null,
+          stopped: stopRes.stopped.length > 0,
+          worktree_kept: worktreeKept,
+        }, null, 2));
+        return;
+      }
+
+      if (stopRes.stopped.length) {
+        console.log(chalk.green(`Stopped ${chalk.cyan(display)} in team ${chalk.cyan(team)}.`));
+      } else if (stopRes.already_stopped.length) {
+        console.log(chalk.gray(`${display} was already stopped.`));
+      }
+      if (worktreeKept && agent?.worktreeName) {
+        console.log(chalk.yellow(`Worktree '${agent.worktreeName}' has uncommitted changes. Keeping it at: ${agent.worktreePath}`));
+      }
+    });
+
   // remove
   teams
     .command('remove [team] [teammate]')
     .alias('rm')
-    .description("Remove a teammate from the team. Stops them cleanly if still working. Accepts name, UUID, or UUID prefix.")
+    .description("Remove a stopped teammate's logs and metadata. Use 'stop' first to end a running teammate.")
     .option('--keep-logs', 'Keep their log files on disk (default: delete them)')
     .option('--json', 'Output machine-readable JSON')
     .action(async (team: string | undefined, ref: string | undefined, opts: { keepLogs?: boolean; json?: boolean }) => {
@@ -1216,12 +1300,13 @@ Name teammates with --name alice to refer to them as 'alice' instead of a UUID.
       }
       if (!ref) {
         const roster = await mgr.listByTask(team);
+        const stopped = roster.filter((a) => a.status !== 'running' && a.status !== 'pending');
         requireDestructiveArg({
           argName: 'teammate',
           command: `agents teams remove ${team}`,
-          itemNoun: 'teammate',
-          available: roster.map((a) => a.name || shortId(a.agentId)),
-          emptyHint: `Team ${team} has no teammates.`,
+          itemNoun: 'stopped teammate',
+          available: stopped.map((a) => a.name || shortId(a.agentId)),
+          emptyHint: `Team ${team} has no stopped teammates. Use 'agents teams stop' first.`,
         });
       }
 
@@ -1235,29 +1320,15 @@ Name teammates with --name alice to refer to them as 'alice' instead of a UUID.
       }
       const agentId = lookup.agentId;
 
-      // Look up the display handle (name if they had one) before we tear down.
       const agent = await mgr.get(agentId);
       const display = agent?.name || shortId(agentId);
 
-      const stopRes = await handleStop(mgr, team, agentId);
-      if ('error' in stopRes) die(stopRes.error);
-
-      // Clean up worktree if this teammate had one
-      if (agent?.worktreeName && agent?.worktreePath) {
-        try {
-          const dirty = await hasUncommittedChanges(agent.worktreePath);
-          if (dirty) {
-            console.log(chalk.yellow(`Worktree '${agent.worktreeName}' has uncommitted changes. Keeping it at: ${agent.worktreePath}`));
-          } else {
-            const baseCwd = process.cwd();
-            await removeWorktree(baseCwd, agent.worktreeName);
-          }
-        } catch {
-          // best-effort cleanup
-        }
+      // Require agent to be stopped first
+      if (agent?.status === 'running' || agent?.status === 'pending') {
+        die(`Teammate '${display}' is still ${agent.status}. Run 'agents teams stop ${team} ${display}' first.`);
       }
 
-      if (!opts.keepLogs && stopRes.not_found.length === 0) {
+      if (!opts.keepLogs) {
         try {
           const dir = path.join(await getAgentsDir(), agentId);
           await fs.rm(dir, { recursive: true, force: true });
@@ -1267,15 +1338,11 @@ Name teammates with --name alice to refer to them as 'alice' instead of a UUID.
       }
 
       if (isJsonMode(opts)) {
-        console.log(JSON.stringify({ team, agent_id: agentId, name: agent?.name ?? null, result: stopRes }, null, 2));
+        console.log(JSON.stringify({ team, agent_id: agentId, name: agent?.name ?? null, removed: true }, null, 2));
         return;
       }
 
-      if (stopRes.stopped.length) {
-        console.log(chalk.green(`${display} has left team ${chalk.cyan(team)} (was working, now stopped).`));
-      } else {
-        console.log(chalk.green(`${display} has left team ${chalk.cyan(team)}.`));
-      }
+      console.log(chalk.green(`Removed ${chalk.cyan(display)} from team ${chalk.cyan(team)}.`));
     });
 
   // disband
