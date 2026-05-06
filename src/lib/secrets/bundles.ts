@@ -64,14 +64,28 @@ export interface SecretsBundle {
   meta?: Record<string, VarMeta>;
 }
 
-const BUNDLE_NAME_PATTERN = /^[a-z0-9][a-z0-9-_]{0,48}$/i;
+const BUNDLE_NAME_PATTERN = /^[a-z0-9][a-z0-9\-_.]{0,48}$/i;
 const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const BUNDLE_META_PREFIX = 'agents-cli.bundles.';
+
+export const RESERVED_ENV_NAMES = new Set([
+  'PATH', 'HOME', 'USER', 'USERNAME', 'SHELL', 'PWD', 'OLDPWD',
+  'TERM', 'LANG', 'LC_ALL', 'DISPLAY', 'EDITOR', 'VISUAL',
+  'TMPDIR', 'TMP', 'TEMP', 'LOGNAME', 'UID', 'EUID', 'HOSTNAME',
+]);
+
+export function bundleToEnvPrefix(name: string): string {
+  return name.replace(/[-\.]/g, '_').toUpperCase();
+}
+
+export function isReservedEnvName(key: string): boolean {
+  return RESERVED_ENV_NAMES.has(key);
+}
 
 /** Validate a bundle name against the allowed pattern. Throws on invalid input. */
 export function validateBundleName(name: string): void {
   if (!BUNDLE_NAME_PATTERN.test(name)) {
-    throw new Error(`Invalid bundle name '${name}'. Use letters, digits, dash, underscore (max 48 chars).`);
+    throw new Error(`Invalid bundle name '${name}'. Use letters, digits, dash, underscore, dot (max 48 chars).`);
   }
 }
 
