@@ -37,7 +37,7 @@ vi.mock('../mcp.js', () => ({
   listMcpServerConfigs: () => [],
 }));
 
-vi.mock('../rules-compile.js', () => ({
+vi.mock('../rules/compile.js', () => ({
   isRulesStale: () => false,
 }));
 

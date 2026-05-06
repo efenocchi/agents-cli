@@ -42,7 +42,7 @@ import {
 } from './state.js';
 import { resolveResource } from './resources.js';
 import { listMcpServerConfigs } from './mcp.js';
-import { isRulesStale } from './rules-compile.js';
+import { isRulesStale } from './rules/compile.js';
 import { getActivePermissionSetName } from './permissions.js';
 import { listInstalledSubagents } from './subagents.js';
 import { safeJoin } from './paths.js';
