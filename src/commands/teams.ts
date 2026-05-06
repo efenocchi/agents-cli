@@ -786,12 +786,14 @@ Name teammates with --name alice to refer to them as 'alice' instead of a UUID.
     .description('Start a new team. No teammates yet; add them with `teams add`.')
     .option('-d, --description <text>', 'One-line summary of what this team is working on')
     .option('--enable-worktrees', 'Each teammate works in its own git worktree (requires --worktree on add)')
+    .option('--use-worktree <path>', 'All teammates share this existing worktree path (mutually exclusive with --enable-worktrees)')
     .option('--json', 'Output machine-readable JSON')
-    .action(async (team: string, opts: { description?: string; enableWorktrees?: boolean; json?: boolean }) => {
+    .action(async (team: string, opts: { description?: string; enableWorktrees?: boolean; useWorktree?: string; json?: boolean }) => {
       try {
         const meta = await createTeam(team, {
           description: opts.description,
           enableWorktrees: opts.enableWorktrees,
+          useWorktree: opts.useWorktree,
         });
         if (isJsonMode(opts)) {
           console.log(JSON.stringify({ team, ...meta }, null, 2));
@@ -799,7 +801,8 @@ Name teammates with --name alice to refer to them as 'alice' instead of a UUID.
         }
         console.log(chalk.green(`New team: ${chalk.cyan(team)}`));
         if (meta.description) console.log(chalk.gray(`  ${meta.description}`));
-        if (meta.enable_worktrees) console.log(chalk.gray(`  worktrees: enabled`));
+        if (meta.enable_worktrees) console.log(chalk.gray(`  worktrees: per-teammate`));
+        if (meta.use_worktree) console.log(chalk.gray(`  worktree: ${meta.use_worktree}`));
         console.log();
         console.log(chalk.gray('Add your first teammate:'));
         if (meta.enable_worktrees) {
@@ -898,13 +901,29 @@ Name teammates with --name alice to refer to them as 'alice' instead of a UUID.
       // Auto-create the team if it doesn't exist yet (friendlier UX than erroring).
       await ensureTeam(team);
 
-      // Check if team has worktrees enabled
+      // Check if team has worktrees enabled or a shared worktree
       const teamMeta = await getTeam(team);
       const worktreesEnabled = teamMeta?.enable_worktrees ?? false;
+      const sharedWorktree = teamMeta?.use_worktree ?? null;
       let worktreeName: string | null = null;
       let worktreePath: string | null = null;
 
-      if (worktreesEnabled) {
+      if (sharedWorktree) {
+        // Team uses a shared worktree for all teammates
+        const fsp = await import('fs/promises');
+        try {
+          const stat = await fsp.stat(sharedWorktree);
+          if (!stat.isDirectory()) {
+            die(`Shared worktree path is not a directory: ${sharedWorktree}`);
+          }
+        } catch {
+          die(`Shared worktree path does not exist: ${sharedWorktree}`);
+        }
+        worktreePath = sharedWorktree;
+        if (opts.worktree) {
+          die(`Team '${team}' uses --use-worktree (shared). Don't pass --worktree on add.`);
+        }
+      } else if (worktreesEnabled) {
         if (!opts.worktree) {
           die(`Team '${team}' has worktrees enabled. Use --worktree <name> to specify a worktree name.`);
         }
