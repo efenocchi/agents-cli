@@ -256,6 +256,10 @@ function runAgents(args: string[], cwd: string, home: string) {
       ...process.env,
       HOME: home,
       PATH: `${path.join(home, 'bin')}${path.delimiter}${process.env.PATH || ''}`,
+      // Some fixtures place files at $HOME/.agents/versions/<agent>/<ver>/ as
+      // legacy / synthetic state. The bootstrap-time migration would otherwise
+      // move those into ~/.agents-system/, breaking workspace-scoped lookups.
+      AGENTS_SKIP_MIGRATION: '1',
     },
     encoding: 'utf-8',
   });

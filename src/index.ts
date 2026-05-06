@@ -48,6 +48,7 @@ import { registerRoutinesCommands } from './commands/routines.js';
 import { registerRunCommand } from './commands/exec.js';
 import { registerModelsCommand } from './commands/models.js';
 import { registerPruneCommand } from './commands/prune.js';
+import { registerTrashCommands } from './commands/trash.js';
 import { registerDoctorCommand } from './commands/doctor.js';
 import { registerSubagentsCommands } from './commands/subagents.js';
 import { registerPluginsCommands } from './commands/plugins.js';
@@ -74,6 +75,7 @@ import {
   hasAliasShadowingShim,
   isShimsInPath,
   listAgentsWithInstalledVersions,
+  removeLegacyUserShim,
 } from './lib/shims.js';
 
 const program = new Command();
@@ -363,6 +365,14 @@ async function maybeBootstrapShimIntegration(requestedCommand: string | undefine
     console.log(chalk.green(notice));
   }
 
+  // Best-effort: remove leftover ~/.agents/shims/<cli> files from the pre-split
+  // layout BEFORE running detection. These cause false-positive "shadowing"
+  // results that make the repair prompt loop forever (the prompt user said
+  // "yes" to never deletes the file; next invocation finds it again).
+  for (const agent of installedAgents) {
+    removeLegacyUserShim(agent);
+  }
+
   const defaultAgents = installedAgents.filter((agent) => getGlobalDefault(agent));
   const shadowed = defaultAgents
     .map((agent) => ({ agent, shadowedBy: getPathShadowingExecutable(agent) }))
@@ -375,6 +385,16 @@ async function maybeBootstrapShimIntegration(requestedCommand: string | undefine
   // Shell aliases that call the same command with extra flags are intentional
   // customization and don't break shim integration.
   if (shadowed.length === 0 && isShimsInPath()) {
+    return;
+  }
+
+  // Suppress repeated prompts within the same shell. A successful rc-file
+  // edit doesn't reload the parent shell, so the next invocation sees the
+  // same PATH and re-fires detection. The sentinel survives only as long as
+  // the parent shell process — once the user opens a new terminal, the
+  // PPID changes and the prompt is allowed again.
+  const sentinelPath = path.join(os.tmpdir(), `agents-shim-prompted-${process.ppid}`);
+  if (fs.existsSync(sentinelPath)) {
     return;
   }
 
@@ -400,6 +420,7 @@ async function maybeBootstrapShimIntegration(requestedCommand: string | undefine
   if (!shouldRepair) {
     console.log(chalk.yellow('Shim integration still needs attention.'));
     console.log(chalk.gray(getPathSetupInstructions()));
+    try { fs.writeFileSync(sentinelPath, '1'); } catch { /* best-effort */ }
     return;
   }
 
@@ -416,6 +437,7 @@ async function maybeBootstrapShimIntegration(requestedCommand: string | undefine
     console.log(chalk.green(`Repaired shim PATH setup in ~/${pathResult.rcFile}`));
   }
   console.log(chalk.gray(getPathSetupInstructions()));
+  try { fs.writeFileSync(sentinelPath, '1'); } catch { /* best-effort */ }
 }
 
 
@@ -462,6 +484,7 @@ registerRoutinesCommands(program);
 registerRunCommand(program);
 registerModelsCommand(program);
 registerPruneCommand(program);
+registerTrashCommands(program);
 registerDoctorCommand(program);
 
 // Deprecated 'exec' alias for 'run'
@@ -667,6 +690,33 @@ const SYSTEM_REPO_COMMANDS = new Set([
 if (!firstRun && requestedCommand && SYSTEM_REPO_COMMANDS.has(requestedCommand)) {
   const { ensureInitialized } = await import('./commands/init.js');
   await ensureInitialized(program);
+}
+
+// One-shot idempotent migrations (split-layout, legacy file moves).
+// Each step is internally guarded by existence checks so it's safe to run
+// every invocation. A sentinel file in the system dir short-circuits the
+// scan once a migration version has run, so the hot path stays cheap.
+// AGENTS_SKIP_MIGRATION=1 disables the bootstrap-time run for tests and
+// scripted invocations that prepare their own legacy fixtures.
+if (process.env.AGENTS_SKIP_MIGRATION !== '1') {
+  try {
+    const { runMigration } = await import('./lib/migrate.js');
+    const sentinel = path.join(getAgentsDir(), '.migrated');
+    const sentinelValue = `${VERSION}-v2`;
+    let needRun = true;
+    try {
+      if (fs.existsSync(sentinel) && fs.readFileSync(sentinel, 'utf-8').trim() === sentinelValue) {
+        needRun = false;
+      }
+    } catch { /* best-effort — fall through to run */ }
+    if (needRun) {
+      runMigration();
+      try {
+        fs.mkdirSync(path.dirname(sentinel), { recursive: true });
+        fs.writeFileSync(sentinel, sentinelValue);
+      } catch { /* best-effort */ }
+    }
+  } catch { /* migration must never block CLI startup */ }
 }
 
 try {

@@ -75,10 +75,84 @@ function migratePromptcutsIntoHooks(): void {
   }
 }
 
+/**
+ * Move installed agent versions from the legacy single-root layout
+ * (~/.agents/versions/<agent>/<ver>/) into the system root
+ * (~/.agents-system/versions/<agent>/<ver>/).
+ *
+ * Pre-split installs put binaries and home dirs under ~/.agents/. After the
+ * split, the system code only scans ~/.agents-system/versions/, so without
+ * this migration the versions become invisible to listInstalledVersions and
+ * every command that depends on it (view, prune, run).
+ *
+ * Idempotent and non-destructive: if a same-named dest already exists we
+ * leave the legacy copy in place so the user can reconcile manually.
+ */
+function migrateUserVersionsToSystem(): void {
+  const userVersions = path.join(USER_DIR, 'versions');
+  const sysVersions = path.join(SYSTEM_DIR, 'versions');
+  if (!fs.existsSync(userVersions)) return;
+
+  let movedCount = 0;
+  let skippedCount = 0;
+
+  let agentEntries: fs.Dirent[];
+  try {
+    agentEntries = fs.readdirSync(userVersions, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const agent of agentEntries) {
+    if (!agent.isDirectory()) continue;
+    const srcAgentDir = path.join(userVersions, agent.name);
+    const dstAgentDir = path.join(sysVersions, agent.name);
+    try {
+      fs.mkdirSync(dstAgentDir, { recursive: true, mode: 0o700 });
+    } catch { /* best-effort */ }
+
+    let verEntries: fs.Dirent[];
+    try {
+      verEntries = fs.readdirSync(srcAgentDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const ver of verEntries) {
+      if (!ver.isDirectory()) continue;
+      const src = path.join(srcAgentDir, ver.name);
+      const dst = path.join(dstAgentDir, ver.name);
+      if (fs.existsSync(dst)) {
+        skippedCount++;
+        continue;
+      }
+      try {
+        fs.renameSync(src, dst);
+        movedCount++;
+      } catch { /* best-effort, leave legacy in place */ }
+    }
+    try {
+      if (fs.readdirSync(srcAgentDir).length === 0) fs.rmdirSync(srcAgentDir);
+    } catch { /* best-effort */ }
+  }
+
+  try {
+    if (fs.readdirSync(userVersions).length === 0) fs.rmdirSync(userVersions);
+  } catch { /* best-effort */ }
+
+  if (movedCount > 0) {
+    console.log(`Migrated ${movedCount} version dir${movedCount === 1 ? '' : 's'} from ~/.agents/versions/ to ~/.agents-system/versions/`);
+  }
+  if (skippedCount > 0) {
+    console.log(`Skipped ${skippedCount} version dir${skippedCount === 1 ? '' : 's'} already present in ~/.agents-system/versions/ (kept legacy copy at ~/.agents/versions/)`);
+  }
+}
+
 /** Run all idempotent migrations. Safe to call multiple times. */
 export function runMigration(): void {
   migrateAgentsYaml();
   deleteSystemPromptsJson();
   migrateSystemConfigJson();
   migratePromptcutsIntoHooks();
+  migrateUserVersionsToSystem();
 }

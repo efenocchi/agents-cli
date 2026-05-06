@@ -7,6 +7,7 @@ import {
   addShimsToPath,
   generateShimScript,
   generateVersionedAliasScript,
+  removeLegacyUserShim,
   SHIM_SCHEMA_VERSION,
   VERSIONED_ALIAS_SCHEMA_VERSION,
 } from '../shims.js';
@@ -115,6 +116,47 @@ describe('generateVersionedAliasScript', () => {
     expect(VERSIONED_ALIAS_SCHEMA_VERSION).toBe(5);
     expect(script).toContain('$HOME/.agents-system/versions/codex/0.125.0');
     expect(script).not.toContain('$HOME/.agents/versions/codex/0.125.0');
+  });
+});
+
+describe('removeLegacyUserShim', () => {
+  let home: string;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-legacy-shim-'));
+    process.env.HOME = home;
+  });
+
+  afterEach(() => {
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it('removes ~/.agents/shims/<cli> when it exists and returns true', () => {
+    const legacyShimsDir = path.join(home, '.agents', 'shims');
+    const legacyShim = path.join(legacyShimsDir, 'claude');
+    fs.mkdirSync(legacyShimsDir, { recursive: true });
+    fs.writeFileSync(legacyShim, '#!/bin/sh\necho legacy\n');
+
+    expect(removeLegacyUserShim('claude', { homeDir: home })).toBe(true);
+    expect(fs.existsSync(legacyShim)).toBe(false);
+    // Empty dir cleanup is best-effort — verify it was removed too.
+    expect(fs.existsSync(legacyShimsDir)).toBe(false);
+  });
+
+  it('returns false when no legacy shim exists', () => {
+    expect(removeLegacyUserShim('claude', { homeDir: home })).toBe(false);
+  });
+
+  it('does not touch sibling files in ~/.agents/shims/', () => {
+    const legacyShimsDir = path.join(home, '.agents', 'shims');
+    fs.mkdirSync(legacyShimsDir, { recursive: true });
+    fs.writeFileSync(path.join(legacyShimsDir, 'claude'), '#!/bin/sh\n');
+    fs.writeFileSync(path.join(legacyShimsDir, 'something-else'), 'do not touch');
+
+    expect(removeLegacyUserShim('claude', { homeDir: home })).toBe(true);
+    expect(fs.existsSync(path.join(legacyShimsDir, 'something-else'))).toBe(true);
   });
 });
 
