@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getAgentsDir } from '../state.js';
 import { BrowserService } from './service.js';
+import { startDaemon } from '../daemon.js';
 import type { IPCRequest, IPCResponse } from './types.js';
 
 const SOCKET_NAME = 'browser.sock';
@@ -162,9 +163,14 @@ export async function sendIPCRequest(request: IPCRequest): Promise<IPCResponse> 
   const socketPath = getSocketPath();
 
   if (!fs.existsSync(socketPath)) {
-    throw new Error(
-      'Browser daemon not running. Start it with: agents daemon start'
-    );
+    startDaemon();
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 200));
+      if (fs.existsSync(socketPath)) break;
+    }
+    if (!fs.existsSync(socketPath)) {
+      throw new Error('Failed to start browser daemon');
+    }
   }
 
   return new Promise((resolve, reject) => {
