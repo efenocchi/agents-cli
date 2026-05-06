@@ -1058,7 +1058,11 @@ export async function viewAction(
     console.log(chalk.red(formatAgentError(agentName)));
     process.exit(1);
   }
-  const requestedVersion = resolveVersionAlias(agentId, parts[1]) ?? null;
+  // Keep 'default' as-is since showAgentResources handles it; resolveVersionAlias
+  // returns undefined for 'default' which would skip the detailed view.
+  const requestedVersion = parts[1] === 'default'
+    ? 'default'
+    : (resolveVersionAlias(agentId, parts[1]) ?? null);
 
   if (prune) {
     if (requestedVersion) {
