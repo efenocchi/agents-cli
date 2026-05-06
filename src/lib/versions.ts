@@ -28,7 +28,7 @@ import { getVersionsDir, getShimsDir, ensureAgentsDir, readMeta, writeMeta, getC
 import { resolveResource } from './resources.js';
 import { AGENTS, getAccountEmail, MCP_CAPABLE_AGENTS, COMMANDS_CAPABLE_AGENTS, getMcpConfigPathForHome, parseMcpConfig, resolveAgentName, formatAgentError } from './agents.js';
 import { getDefaultPermissionSet, applyPermissionsToVersion as applyPermsToVersion, PERMISSIONS_CAPABLE_AGENTS, discoverPermissionGroups, getTotalPermissionRuleCount, buildPermissionsFromGroups, CODEX_RULES_FILENAME, getActivePermissionSetName, readPermissionSetRecipe, PERMISSION_SET_ENV_VAR } from './permissions.js';
-import { installMcpServers } from './mcp.js';
+import { installMcpServers, parseMcpServerConfig } from './mcp.js';
 import { markdownToToml } from './convert.js';
 import { createVersionedAlias, removeVersionedAlias, switchConfigSymlink, getConfigSymlinkVersion, ensureClaudeInsideSymlink } from './shims.js';
 import { listInstalledSubagents, transformSubagentForClaude, syncSubagentToOpenclaw, SUBAGENT_CAPABLE_AGENTS } from './subagents.js';
@@ -187,16 +187,16 @@ export function getAvailableResources(cwd: string = process.cwd()): AvailableRes
   }
   result.memory = Array.from(presetNames);
 
-  // MCP servers (*.yaml files)
+  // MCP servers (*.yaml files) — use the `name:` field inside, not filename
   const mcpNames = new Set<string>();
   for (const { base } of resourceBases) {
     const mcpDir = path.join(base, 'mcp');
     if (!fs.existsSync(mcpDir)) continue;
-    const names = fs.readdirSync(mcpDir)
-      .filter(f => f.endsWith('.yaml') || f.endsWith('.yml'))
-      .map(f => f.replace(/\.(yaml|yml)$/, ''));
-    for (const name of names) {
-      mcpNames.add(name);
+    const files = fs.readdirSync(mcpDir)
+      .filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
+    for (const file of files) {
+      const config = parseMcpServerConfig(path.join(mcpDir, file));
+      if (config?.name) mcpNames.add(config.name);
     }
   }
   result.mcp = Array.from(mcpNames);
@@ -511,7 +511,11 @@ export function getNewResources(
     commands: available.commands.filter(c => !actuallySynced.commands.includes(c)),
     skills: available.skills.filter(s => !actuallySynced.skills.includes(s)),
     hooks: available.hooks.filter(h => !actuallySynced.hooks.includes(h)),
-    memory: available.memory.filter(m => !actuallySynced.memory.includes(m)),
+    // Memory/rules presets are mutually exclusive — only one can be active.
+    // If any preset is synced, don't report others as "new".
+    memory: actuallySynced.memory.length > 0
+      ? []
+      : available.memory.filter(m => !actuallySynced.memory.includes(m)),
     mcp: available.mcp.filter(m => !actuallySynced.mcp.includes(m)),
     permissions: available.permissions.filter(p => !actuallySynced.permissions.includes(p)),
     subagents: available.subagents.filter(s => !actuallySynced.subagents.includes(s)),
