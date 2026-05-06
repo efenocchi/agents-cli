@@ -2,26 +2,36 @@
 
 CLI for managing AI coding agent versions, config, sessions, and cloud dispatch (Claude, Codex, Gemini, Cursor, OpenCode, OpenClaw).
 
-## Two repos, one layout
+## Three DotAgents repos
 
 | Path | Role | Edited by |
 |---|---|---|
-| `~/.agents/` | **User repo** — your authored commands, skills, hooks, rules, mcp configs, permissions, profiles, secrets, and `agents.yaml`. `agents repo push`/`pull` target. | You |
-| `~/.agents-system/` | **System repo** — npm-shipped defaults + operational state (versions, shims, backups, runs, sessions, cloud, drive, caches, `.repos/`). | Maintainers (resources) / agents-cli (state) |
+| `.agents/` (project root) | **Project repo** — project-specific commands, skills, hooks, rules. Scoped to this repo only. | Project maintainers |
+| `~/.agents/` | **User repo** — your personal commands, skills, hooks, rules, mcp configs, permissions, profiles, browser configs. `agents repo push`/`pull` target. | You |
+| `~/.agents-system/` | **System repo** — npm-shipped defaults (tracked) + all operational state including `agents.yaml`, sessions, runs, browser runtime (gitignored). | Maintainers (resources) / CLI (state) |
 
-Same shape in both. Resources resolve **project > user > system** at sync time. Operational state always lives in the system repo.
+Same shape in all three. Resources AND `agents.yaml` resolve **project > user > system** — project-level pins override user/system.
 
 ### System repo gitignore rules
 
 The system repo (`~/.agents-system/`) ships npm defaults (resources) AND holds runtime state. Only runtime state is gitignored:
 
-| Track (npm-shipped) | Gitignore (runtime) |
-|---------------------|---------------------|
-| `commands/`, `skills/`, `hooks/`, `rules/`, `subagents/`, `mcp/`, `permissions/`, `profiles/` | `browser/` (chrome-data, pids, screenshots), `helpers/` (pty logs, sockets), `sessions/`, `runs/`, `cache/`, `cloud/`, `drive/`, `swarm/`, `teams/`, `.migrated`, `*.log`, `*.pid` |
+**Track (npm-shipped defaults):**
+`commands/`, `skills/`, `hooks/`, `rules/`, `subagents/`, `mcp/`, `permissions/`, `profiles/`, `scripts/`
 
-**No `secrets/` directory anywhere.** Bundle metadata lives in macOS Keychain, not on disk. The `migrateLegacyBundles()` function in `src/lib/secrets/bundles.ts` cleans up any legacy YAML files.
+**Gitignore (runtime/operational state):**
+- **Agent state:** `versions/`, `shims/`, `agents/`, `agents.yaml`
+- **Sessions/runs:** `sessions/`, `runs/`, `routines/`, `backups/`
+- **Browser:** `browser/` (chrome-data, pids, screenshots)
+- **Helpers:** `helpers/` (pty logs, sockets)
+- **Cache/cloud:** `cache/`, `cloud/`, `drive/`, `repos/`, `packages/`
+- **Teams/swarm:** `swarm/`, `swarmify/`, `teams/`
+- **Processes:** `*.log`, `*.pid`, `*.sock`, `bin/`
+- **Local markers:** `.migrated`, `.update-check`, `.environment`
 
-**Browser profiles** (YAML configs) belong in `~/.agents/browser/profiles/` (user repo). Runtime browser data (chrome-data, sessions) lives in `~/.agents-system/browser/` and is gitignored.
+**No `secrets/` directory anywhere.** Bundle metadata lives in macOS Keychain, not on disk.
+
+**Browser profiles** (YAML configs) belong in `~/.agents/browser/profiles/` (user repo). Runtime browser data lives in `~/.agents-system/browser/` and is gitignored.
 
 These `$HOME`-level directories (plus an optional `.agents/` at project root) are called **DotAgents repos** — they live outside this codebase and are managed by the CLI. Each has a canonical layout: `commands/`, `skills/`, `hooks/`, `rules/`, `mcp/`, `permissions/`, `profiles/`, `subagents/`. The typed items inside are called **resources**. Resolution order is project > user > extra repos > system; same-named resource at a higher layer wins, everything else unions in. See `docs/00-concepts.md` for the full model.
 
@@ -97,3 +107,11 @@ See `docs/`:
 - Tests in codebase as `*.test.ts` next to source; integration tests in `tests/`.
 - Don't add fallback logic for the legacy single-root model — the migrator handles it once at install.
 - `agents repo push`/`pull` operates on `~/.agents/` only; system updates ride `npm update -g agents-cli`.
+
+## Security
+
+**No sensitive data in any DotAgents repo.** All three repos (project, user, system) are designed to be safely version-controlled:
+
+- Use `agents secrets` — bundle metadata lives in macOS Keychain, never on disk.
+- Browser profile configs reference secrets bundles by name, not raw credentials.
+- If you accidentally commit a secret, rotate it immediately — git history persists.
