@@ -413,7 +413,7 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
       const synced = getActuallySyncedResources(filterAgentId, defaultVersion);
       const newResources = getNewResources(available, synced);
 
-      if (hasNewResources(newResources, filterAgentId)) {
+      if (hasNewResources(newResources, filterAgentId, defaultVersion)) {
         try {
           const selection = await promptNewResourceSelection(filterAgentId, newResources);
           if (selection && Object.keys(selection).length > 0) {
