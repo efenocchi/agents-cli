@@ -85,7 +85,7 @@ describe('addShimsToPath', () => {
 
 describe('SHIM_SCHEMA_VERSION', () => {
   it('is 7', () => {
-    expect(SHIM_SCHEMA_VERSION).toBe(7);
+    expect(SHIM_SCHEMA_VERSION).toBe(8);
   });
 });
 
@@ -113,9 +113,9 @@ describe('generateShimScript — config-dir env vars', () => {
 describe('generateVersionedAliasScript', () => {
   it('uses ~/.agents-system for direct alias binary and config paths', () => {
     const script = generateVersionedAliasScript('codex', '0.125.0');
-    expect(VERSIONED_ALIAS_SCHEMA_VERSION).toBe(5);
-    expect(script).toContain('$HOME/.agents-system/versions/codex/0.125.0');
-    expect(script).not.toContain('$HOME/.agents/versions/codex/0.125.0');
+    expect(VERSIONED_ALIAS_SCHEMA_VERSION).toBe(6);
+    expect(script).toContain('$HOME/.agents/versions/codex/0.125.0');
+    expect(script).not.toContain('$HOME/.agents-system/versions/codex/0.125.0');
   });
 });
 
