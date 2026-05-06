@@ -35,6 +35,7 @@ import {
 import { readManifest } from '../lib/manifest.js';
 import {
   listInstalledVersions,
+  listInstalledVersionDirs,
   getGlobalDefault,
   getVersionHomePath,
   getVersionDir,
@@ -795,6 +796,12 @@ interface PrunePlanEntry {
   email: string;
   keeper: string;
   isDefault: boolean;
+  /**
+   * 'duplicate'    — older version sharing an email with a newer install.
+   * 'home-leftover' — home-only dir left over after a previous removeVersion;
+   *                   no binary, but transcripts may still live here.
+   */
+  reason: 'duplicate' | 'home-leftover';
 }
 
 interface AgentPrunePlan {
@@ -804,17 +811,25 @@ interface AgentPrunePlan {
 }
 
 async function buildAgentPrunePlan(agentId: AgentId): Promise<AgentPrunePlan> {
+  const dirInfos = listInstalledVersionDirs(agentId);
   const entries = await Promise.all(
-    listInstalledVersions(agentId).map(async (version) => {
+    dirInfos.map(async ({ version, hasBinary }) => {
       const home = getVersionHomePath(agentId, version);
       const info = await getAccountInfo(agentId, home);
-      return { version, info };
+      return { version, info, hasBinary };
     })
   );
 
   const globalDefault = getGlobalDefault(agentId);
-  const byEmail = new Map<string, typeof entries>();
-  for (const e of entries) {
+  const toPrune: PrunePlanEntry[] = [];
+  const skippedDefaults: PrunePlanEntry[] = [];
+
+  // Duplicate-account detection runs only over installs that actually have a
+  // working binary — those are the things that compete for "the live install
+  // for this account."
+  const installed = entries.filter((e) => e.hasBinary);
+  const byEmail = new Map<string, typeof installed>();
+  for (const e of installed) {
     if (!e.info.email) continue;
     const key = e.info.email.toLowerCase();
     const list = byEmail.get(key) ?? [];
@@ -822,8 +837,6 @@ async function buildAgentPrunePlan(agentId: AgentId): Promise<AgentPrunePlan> {
     byEmail.set(key, list);
   }
 
-  const toPrune: PrunePlanEntry[] = [];
-  const skippedDefaults: PrunePlanEntry[] = [];
   for (const [, group] of byEmail) {
     if (group.length < 2) continue;
     const sorted = [...group].sort((a, b) => compareVersions(b.version, a.version));
@@ -835,10 +848,27 @@ async function buildAgentPrunePlan(agentId: AgentId): Promise<AgentPrunePlan> {
         email: older.info.email as string,
         keeper,
         isDefault: older.version === globalDefault,
+        reason: 'duplicate',
       };
       if (plan.isDefault) skippedDefaults.push(plan);
       else toPrune.push(plan);
     }
+  }
+
+  // Home-only leftovers: dirs without a binary. These are residue from a
+  // prior removeVersion before the soft-delete migration, plus any hand-edited
+  // installs. Surface them so the user can move them to trash.
+  for (const e of entries) {
+    if (e.hasBinary) continue;
+    if (e.version === globalDefault) continue; // never auto-suggest the default
+    toPrune.push({
+      agentId,
+      version: e.version,
+      email: e.info.email || '',
+      keeper: '',
+      isDefault: false,
+      reason: 'home-leftover',
+    });
   }
 
   return { agentId, toPrune, skippedDefaults };
@@ -874,13 +904,20 @@ function printPrunePlan(plan: AgentPrunePlan, isFirst: boolean): void {
     console.log();
   }
   if (plan.toPrune.length === 0) return;
-  const heading = isFirst ? `Will prune ${agentLabel(plan.agentId)}:` : `Also found duplicates for ${agentLabel(plan.agentId)}:`;
+  const heading = isFirst ? `Will move to trash for ${agentLabel(plan.agentId)}:` : `Also found candidates for ${agentLabel(plan.agentId)}:`;
   console.log(chalk.bold(heading));
   for (const p of plan.toPrune) {
-    console.log(
-      `  ${agentLabel(p.agentId)}@${p.version}  ${chalk.cyan(p.email)}  ` +
-      chalk.gray(`— keeping ${p.agentId}@${p.keeper}`)
-    );
+    if (p.reason === 'duplicate') {
+      console.log(
+        `  ${agentLabel(p.agentId)}@${p.version}  ${chalk.cyan(p.email)}  ` +
+        chalk.gray(`— duplicate, keeping ${p.agentId}@${p.keeper}`)
+      );
+    } else {
+      console.log(
+        `  ${agentLabel(p.agentId)}@${p.version}  ` +
+        chalk.gray(`— home-only leftover (no binary; transcripts preserved in trash)`)
+      );
+    }
   }
   console.log();
 }
@@ -910,7 +947,7 @@ export async function pruneDuplicates(
   const actionable = plans.filter((p) => p.toPrune.length > 0 || p.skippedDefaults.length > 0);
 
   if (actionable.length === 0) {
-    console.log(chalk.gray('Nothing to prune — no older versions share an account with a newer version.'));
+    console.log(chalk.gray('Nothing to prune — no duplicate-account installs and no home-only leftovers.'));
     return;
   }
 

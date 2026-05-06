@@ -69,4 +69,32 @@ describe('runMigration', () => {
     expect(fs.readFileSync(path.join(systemDir, 'agents.yaml'), 'utf-8')).toBe('system agents');
     expect(fs.readFileSync(path.join(systemDir, 'config.json'), 'utf-8')).toBe('{"new":true}');
   });
+
+  it('moves ~/.agents/versions/<agent>/<ver>/ into ~/.agents-system/versions/', () => {
+    // Pre-split layout: legacy versions live under the user repo.
+    const legacy = path.join(userDir, 'versions', 'claude', '2.0.99', 'home', '.claude');
+    fs.mkdirSync(legacy, { recursive: true });
+    fs.writeFileSync(path.join(legacy, '.credentials.json'), '{"oauth":{"email":"test@example.com"}}');
+
+    // Also a version where the system already has a same-named install — must NOT clobber it.
+    const conflicting = path.join(userDir, 'versions', 'claude', '2.0.50', 'home');
+    fs.mkdirSync(conflicting, { recursive: true });
+    fs.writeFileSync(path.join(conflicting, 'marker-legacy'), '');
+    const sysExisting = path.join(systemDir, 'versions', 'claude', '2.0.50', 'home');
+    fs.mkdirSync(sysExisting, { recursive: true });
+    fs.writeFileSync(path.join(sysExisting, 'marker-system'), '');
+
+    runRealMigration();
+
+    // Migrated.
+    expect(
+      fs.existsSync(path.join(systemDir, 'versions', 'claude', '2.0.99', 'home', '.claude', '.credentials.json'))
+    ).toBe(true);
+    expect(fs.existsSync(path.join(userDir, 'versions', 'claude', '2.0.99'))).toBe(false);
+
+    // Conflict: legacy left in place, system copy untouched.
+    expect(fs.existsSync(path.join(userDir, 'versions', 'claude', '2.0.50', 'home', 'marker-legacy'))).toBe(true);
+    expect(fs.existsSync(path.join(systemDir, 'versions', 'claude', '2.0.50', 'home', 'marker-system'))).toBe(true);
+    expect(fs.existsSync(path.join(systemDir, 'versions', 'claude', '2.0.50', 'home', 'marker-legacy'))).toBe(false);
+  });
 });

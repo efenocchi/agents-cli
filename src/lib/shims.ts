@@ -1112,21 +1112,68 @@ export function getShimPath(agent: AgentId): string {
 /**
  * Return the first executable path that would be launched for this agent when
  * resolving against PATH, excluding the managed shim itself.
+ *
+ * Legacy ~/.agents/shims/<cli> (from the pre-split single-root layout) is NOT
+ * treated as a shadow when a current managed shim exists at getShimPath() —
+ * that file is dead weight from the old layout and the repair flow removes it
+ * separately. Treating it as "shadowing" caused an infinite repair-prompt
+ * loop because addShimsToPath() only edits the rc file, never the legacy
+ * shim file itself.
  */
 export function getPathShadowingExecutable(agent: AgentId): string | null {
   const pathDirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
   const shimPath = path.resolve(getShimPath(agent));
   const cliCommand = AGENTS[agent].cliCommand;
+  const legacyUserShim = path.resolve(path.join(os.homedir(), '.agents', 'shims', cliCommand));
+  const managedShimExists = fs.existsSync(shimPath);
 
   for (const dir of pathDirs) {
     const candidate = path.resolve(dir, cliCommand);
     if (!fs.existsSync(candidate)) {
       continue;
     }
-    return candidate === shimPath ? null : candidate;
+    if (candidate === shimPath) return null;
+    if (candidate === legacyUserShim && managedShimExists) {
+      // Legacy file from the pre-split layout. Don't treat as shadow — the
+      // repair flow deletes it via removeLegacyUserShim instead. Continue
+      // scanning so a real binary later in PATH is still detected.
+      continue;
+    }
+    return candidate;
   }
 
   return null;
+}
+
+/**
+ * Delete the legacy ~/.agents/shims/<cli> file if it exists, returning whether
+ * anything was removed. Pre-split installs put shims under ~/.agents/shims/;
+ * the new layout uses ~/.agents-system/shims/. The leftover file causes the
+ * repair-prompt loop reported in RUSH-664 — `getPathShadowingExecutable` flags
+ * it as a shadow but `addShimsToPath` only edits rc files, never the file
+ * itself. Removing it ends the loop.
+ */
+export function removeLegacyUserShim(agent: AgentId, overrides?: { homeDir?: string }): boolean {
+  const cliCommand = AGENTS[agent].cliCommand;
+  const homeDir = overrides?.homeDir || os.homedir();
+  const legacyPath = path.join(homeDir, '.agents', 'shims', cliCommand);
+  if (!fs.existsSync(legacyPath)) return false;
+  // Belt-and-suspenders: only remove if the current managed shim location is
+  // different (it always should be — getShimsDir() returns the system dir —
+  // but guard against future refactors that might collapse the two).
+  const currentShim = path.resolve(getShimPath(agent));
+  if (path.resolve(legacyPath) === currentShim) return false;
+  try {
+    fs.unlinkSync(legacyPath);
+    // Best-effort: clean up the legacy shims dir if empty.
+    try {
+      const legacyDir = path.dirname(legacyPath);
+      if (fs.readdirSync(legacyDir).length === 0) fs.rmdirSync(legacyDir);
+    } catch { /* best-effort */ }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

@@ -32,6 +32,7 @@ function runAgents(args: string[], home: string) {
     env: {
       ...process.env,
       HOME: home,
+      AGENTS_SKIP_MIGRATION: '1',
     },
     encoding: 'utf-8',
   });

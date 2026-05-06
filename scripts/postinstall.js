@@ -48,6 +48,35 @@ function runMigrations() {
       fs.unlinkSync(configSrc);
     } catch { /* best-effort */ }
   }
+
+  // 4. Move installed agent versions from ~/.agents/versions/ -> ~/.agents-system/versions/
+  // Pre-split layout put binaries under the user repo. Post-split, listInstalledVersions
+  // only scans the system root, so legacy installs become invisible without this move.
+  const userVersions = path.join(USER_DIR, 'versions');
+  const sysVersions = path.join(SYSTEM_DIR, 'versions');
+  if (fs.existsSync(userVersions)) {
+    try {
+      let moved = 0;
+      let skipped = 0;
+      for (const agent of fs.readdirSync(userVersions, { withFileTypes: true })) {
+        if (!agent.isDirectory()) continue;
+        const srcAgentDir = path.join(userVersions, agent.name);
+        const dstAgentDir = path.join(sysVersions, agent.name);
+        try { fs.mkdirSync(dstAgentDir, { recursive: true }); } catch {}
+        for (const ver of fs.readdirSync(srcAgentDir, { withFileTypes: true })) {
+          if (!ver.isDirectory()) continue;
+          const src = path.join(srcAgentDir, ver.name);
+          const dst = path.join(dstAgentDir, ver.name);
+          if (fs.existsSync(dst)) { skipped++; continue; }
+          try { fs.renameSync(src, dst); moved++; } catch {}
+        }
+        try { if (fs.readdirSync(srcAgentDir).length === 0) fs.rmdirSync(srcAgentDir); } catch {}
+      }
+      try { if (fs.readdirSync(userVersions).length === 0) fs.rmdirSync(userVersions); } catch {}
+      if (moved > 0) console.log(`  Migrated ${moved} agent version dir(s) to ~/.agents-system/versions/`);
+      if (skipped > 0) console.log(`  Kept ${skipped} legacy version dir(s) at ~/.agents/versions/ (already present in system root)`);
+    } catch { /* best-effort */ }
+  }
 }
 
 runMigrations();
