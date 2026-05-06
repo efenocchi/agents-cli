@@ -528,14 +528,15 @@ export function getNewResources(
 
 /**
  * Check if there are any new resources to sync.
+ * When version is provided, uses version-specific capability checks.
  */
-export function hasNewResources(diff: AvailableResources, agent?: AgentId): boolean {
-  const commandsApply = agent ? COMMANDS_CAPABLE_AGENTS.includes(agent) : true;
-  const hooksApply = agent ? AGENTS[agent].supportsHooks : true;
-  const mcpApply = agent ? MCP_CAPABLE_AGENTS.includes(agent) : true;
-  const permsApply = agent ? PERMISSIONS_CAPABLE_AGENTS.includes(agent) : true;
+export function hasNewResources(diff: AvailableResources, agent?: AgentId, version?: string): boolean {
+  const commandsApply = agent ? supports(agent, 'commands', version).ok : true;
+  const hooksApply = agent ? supports(agent, 'hooks', version).ok : true;
+  const mcpApply = agent ? supports(agent, 'mcp', version).ok : true;
+  const permsApply = agent ? supports(agent, 'allowlist', version).ok : true;
   const subagentsApply = agent ? SUBAGENT_CAPABLE_AGENTS.includes(agent) : true;
-  const pluginsApply = agent ? PLUGINS_CAPABLE_AGENTS.includes(agent) : true;
+  const pluginsApply = agent ? supports(agent, 'plugins', version).ok : true;
   return (
     (diff.commands.length > 0 && commandsApply) ||
     diff.skills.length > 0 ||
