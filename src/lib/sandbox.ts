@@ -11,6 +11,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import type { JobConfig } from './routines.js';
+import { setGeminiAutoUpdateDisabled, updateGeminiSettings } from './gemini-settings.js';
 import { getRoutinesDir } from './state.js';
 
 const REAL_HOME = os.homedir();
@@ -257,24 +258,18 @@ export function generateCodexConfig(overlayHome: string, config: JobConfig): voi
 
 /** Generate a Gemini settings.json in the overlay from the job's config block. */
 export function generateGeminiConfig(overlayHome: string, config: JobConfig): void {
-  const geminiDir = path.join(overlayHome, '.gemini');
-  fs.mkdirSync(geminiDir, { recursive: true });
-
-  const settings: Record<string, unknown> = {};
-
-  if (config.config?.model) {
-    settings.model = config.config.model;
-  }
-
-  if (config.config) {
-    for (const [key, value] of Object.entries(config.config)) {
-      settings[key] = value;
+  const settingsPath = path.join(overlayHome, '.gemini', 'settings.json');
+  updateGeminiSettings(settingsPath, (settings) => {
+    if (config.config?.model) {
+      settings.model = config.config.model;
     }
-  }
 
-  fs.writeFileSync(
-    path.join(geminiDir, 'settings.json'),
-    JSON.stringify(settings, null, 2),
-    'utf-8'
-  );
+    if (config.config) {
+      for (const [key, value] of Object.entries(config.config)) {
+        settings[key] = value;
+      }
+    }
+
+    setGeminiAutoUpdateDisabled(settings);
+  });
 }

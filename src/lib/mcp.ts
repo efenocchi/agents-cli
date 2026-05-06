@@ -17,6 +17,7 @@ import * as os from 'os';
 import type { AgentId } from './types.js';
 import { getMcpDir, getUserMcpDir, getProjectAgentsDir, getVersionsDir } from './state.js';
 import { MCP_CAPABLE_AGENTS, AGENTS } from './agents.js';
+import { setGeminiAutoUpdateDisabled, updateGeminiSettings } from './gemini-settings.js';
 
 /**
  * MCP server config as stored in ~/.agents/mcp/*.yaml
@@ -195,32 +196,27 @@ function installMcpViaCodex(binaryPath: string, server: InstalledMcpServer, vers
  */
 function installMcpToGeminiConfig(server: InstalledMcpServer, versionHome: string): void {
   const configPath = path.join(versionHome, '.gemini', 'settings.json');
+  updateGeminiSettings(configPath, (config) => {
+    setGeminiAutoUpdateDisabled(config);
 
-  let config: Record<string, unknown> = {};
-  if (fs.existsSync(configPath)) {
-    config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-  }
+    if (!config.mcpServers || typeof config.mcpServers !== 'object') {
+      config.mcpServers = {};
+    }
 
-  if (!config.mcpServers || typeof config.mcpServers !== 'object') {
-    config.mcpServers = {};
-  }
+    const mcpServers = config.mcpServers as Record<string, unknown>;
 
-  const mcpServers = config.mcpServers as Record<string, unknown>;
-
-  if (server.config.transport === 'stdio') {
-    mcpServers[server.name] = {
-      command: server.config.command,
-      args: server.config.args || [],
-      env: server.config.env || {},
-    };
-  } else {
-    mcpServers[server.name] = {
-      url: server.config.url,
-    };
-  }
-
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+    if (server.config.transport === 'stdio') {
+      mcpServers[server.name] = {
+        command: server.config.command,
+        args: server.config.args || [],
+        env: server.config.env || {},
+      };
+    } else {
+      mcpServers[server.name] = {
+        url: server.config.url,
+      };
+    }
+  });
 }
 
 /**
