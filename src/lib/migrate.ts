@@ -148,6 +148,46 @@ function migrateUserVersionsToSystem(): void {
   }
 }
 
+/**
+ * Move ~/. agents/runs/ -> ~/.agents/routines/runs/.
+ * Runs now live inside routines directory for cleaner organization.
+ */
+function migrateRunsIntoRoutines(): void {
+  const src = path.join(USER_DIR, 'runs');
+  const dest = path.join(USER_DIR, 'routines', 'runs');
+  if (!fs.existsSync(src) || fs.existsSync(dest)) return;
+  try {
+    fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
+    fs.renameSync(src, dest);
+  } catch { /* best-effort */ }
+}
+
+/**
+ * Move ~/.agents/trash/ -> ~/.agents/.trash/.
+ * Hide the trash directory.
+ */
+function migrateTrashToHidden(): void {
+  const src = path.join(USER_DIR, 'trash');
+  const dest = path.join(USER_DIR, '.trash');
+  if (!fs.existsSync(src) || fs.existsSync(dest)) return;
+  try {
+    fs.renameSync(src, dest);
+  } catch { /* best-effort */ }
+}
+
+/**
+ * Move ~/.agents/backups/ -> ~/.agents/.backups/.
+ * Hide the backups directory.
+ */
+function migrateBackupsToHidden(): void {
+  const src = path.join(USER_DIR, 'backups');
+  const dest = path.join(USER_DIR, '.backups');
+  if (!fs.existsSync(src) || fs.existsSync(dest)) return;
+  try {
+    fs.renameSync(src, dest);
+  } catch { /* best-effort */ }
+}
+
 /** Run all idempotent migrations. Safe to call multiple times. */
 export function runMigration(): void {
   migrateAgentsYaml();
@@ -155,4 +195,7 @@ export function runMigration(): void {
   migrateSystemConfigJson();
   migratePromptcutsIntoHooks();
   migrateUserVersionsToSystem();
+  migrateRunsIntoRoutines();
+  migrateTrashToHidden();
+  migrateBackupsToHidden();
 }
