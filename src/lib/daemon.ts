@@ -15,6 +15,8 @@ import { getAgentsDir } from './state.js';
 import { listJobs as listAllJobs } from './routines.js';
 import { JobScheduler } from './scheduler.js';
 import { executeJobDetached, monitorRunningJobs } from './runner.js';
+import { BrowserService } from './browser/service.js';
+import { BrowserIPCServer } from './browser/ipc.js';
 
 const PID_FILE = 'daemon.pid';
 const LOCK_FILE = 'daemon.lock';
@@ -157,6 +159,15 @@ export async function runDaemon(): Promise<void> {
     log('INFO', `  ${job.name} -> next: ${job.nextRun?.toISOString() || 'unknown'}`);
   }
 
+  const browserService = new BrowserService();
+  const browserIPC = new BrowserIPCServer(browserService);
+  try {
+    await browserIPC.start();
+    log('INFO', 'Browser IPC server started');
+  } catch (err) {
+    log('ERROR', `Browser IPC failed to start: ${(err as Error).message}`);
+  }
+
   const monitorInterval = setInterval(() => {
     monitorRunningJobs();
   }, 60_000);
@@ -168,17 +179,18 @@ export async function runDaemon(): Promise<void> {
     log('INFO', `Reloaded ${reloaded.length} jobs`);
   };
 
-  const handleShutdown = () => {
+  const handleShutdown = async () => {
     log('INFO', 'Daemon shutting down');
     scheduler.stopAll();
+    await browserIPC.stop();
     clearInterval(monitorInterval);
     removeDaemonPid();
     process.exit(0);
   };
 
   process.on('SIGHUP', handleReload);
-  process.on('SIGTERM', handleShutdown);
-  process.on('SIGINT', handleShutdown);
+  process.on('SIGTERM', () => handleShutdown());
+  process.on('SIGINT', () => handleShutdown());
 
   await new Promise(() => {});
 }
