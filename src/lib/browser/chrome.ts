@@ -4,36 +4,61 @@ import * as path from 'path';
 import * as os from 'os';
 import { getProfileRuntimeDir } from './profiles.js';
 import { discoverBrowserWsUrl } from './cdp.js';
+import { readBundle, resolveBundleEnv, bundleExists } from '../secrets/bundles.js';
 import type { ChromeOptions } from './types.js';
 
-const CHROME_PATHS: Record<string, string[]> = {
-  darwin: [
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    '/Applications/Chromium.app/Contents/MacOS/Chromium',
-    '/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary',
-  ],
-  linux: [
-    '/usr/bin/google-chrome',
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-    '/snap/bin/chromium',
-  ],
-  win32: [
-    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-  ],
+import type { BrowserType } from './types.js';
+
+const BROWSER_PATHS: Record<string, Record<BrowserType, string[]>> = {
+  darwin: {
+    chrome: [
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      '/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary',
+    ],
+    comet: ['/Applications/Comet.app/Contents/MacOS/Comet'],
+    chromium: ['/Applications/Chromium.app/Contents/MacOS/Chromium'],
+    brave: ['/Applications/Brave Browser.app/Contents/MacOS/Brave Browser'],
+    edge: ['/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'],
+  },
+  linux: {
+    chrome: ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable'],
+    comet: [],
+    chromium: ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/snap/bin/chromium'],
+    brave: ['/usr/bin/brave-browser', '/usr/bin/brave'],
+    edge: ['/usr/bin/microsoft-edge'],
+  },
+  win32: {
+    chrome: [
+      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    ],
+    comet: [],
+    chromium: [],
+    brave: [
+      'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
+    ],
+    edge: [
+      'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+    ],
+  },
 };
 
-export function findChromePath(): string | null {
-  const platform = os.platform();
-  const candidates = CHROME_PATHS[platform] || [];
 
+export function findBrowserPath(browserType: BrowserType): string {
+  const platform = os.platform();
+  const platformPaths = BROWSER_PATHS[platform];
+  if (!platformPaths) {
+    throw new Error(`Unsupported platform: ${platform}`);
+  }
+
+  const candidates = platformPaths[browserType] || [];
   for (const p of candidates) {
     if (fs.existsSync(p)) {
       return p;
     }
   }
-  return null;
+
+  throw new Error(`Browser "${browserType}" not found. Install it first.`);
 }
 
 export interface LaunchResult {
@@ -42,15 +67,14 @@ export interface LaunchResult {
   wsUrl: string;
 }
 
-export async function launchChrome(
+export async function launchBrowser(
   profileName: string,
+  browserType: BrowserType,
   port: number,
-  options: ChromeOptions = {}
+  options: ChromeOptions = {},
+  secrets?: string
 ): Promise<LaunchResult> {
-  const chromePath = findChromePath();
-  if (!chromePath) {
-    throw new Error('Chrome not found. Install Google Chrome or Chromium.');
-  }
+  const browserPath = findBrowserPath(browserType);
 
   const runtimeDir = getProfileRuntimeDir(profileName);
   const userDataDir = path.join(runtimeDir, 'chrome-data');
@@ -67,9 +91,21 @@ export async function launchChrome(
     ...(options.args || []),
   ];
 
-  const child = spawn(chromePath, args, {
+  let env: NodeJS.ProcessEnv = { ...process.env };
+  if (secrets && bundleExists(secrets)) {
+    try {
+      const bundle = readBundle(secrets);
+      const bundleEnv = resolveBundleEnv(bundle);
+      env = { ...env, ...bundleEnv };
+    } catch {
+      // Bundle failed to resolve, continue without secrets
+    }
+  }
+
+  const child = spawn(browserPath, args, {
     detached: true,
     stdio: 'ignore',
+    env,
   });
   child.unref();
 

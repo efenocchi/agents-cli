@@ -1,6 +1,9 @@
+export type BrowserType = 'chrome' | 'comet' | 'chromium' | 'brave' | 'edge';
+
 export interface BrowserProfile {
   name: string;
   description?: string;
+  browser: BrowserType;
   endpoints: string[];
   chrome?: ChromeOptions;
   secrets?: string;

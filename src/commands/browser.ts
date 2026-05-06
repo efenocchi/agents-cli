@@ -35,17 +35,20 @@ function registerProfilesCommands(browser: Command): void {
         return;
       }
 
-      console.log('NAME'.padEnd(20) + 'ENDPOINTS');
-      console.log('-'.repeat(60));
+      console.log('NAME'.padEnd(20) + 'BROWSER'.padEnd(12) + 'ENDPOINTS');
+      console.log('-'.repeat(72));
       for (const p of allProfiles) {
         const endpoints = p.endpoints.join(', ');
-        console.log(p.name.padEnd(20) + endpoints);
+        console.log(p.name.padEnd(20) + (p.browser || '-').padEnd(12) + endpoints);
       }
     });
+
+  const VALID_BROWSERS = ['chrome', 'comet', 'chromium', 'brave', 'edge'];
 
   profiles
     .command('create <name>')
     .description('Create a new browser profile')
+    .requiredOption('-b, --browser <type>', `Browser type: ${VALID_BROWSERS.join(', ')}`)
     .requiredOption('-e, --endpoint <url>', 'CDP endpoint URL (repeatable)', collect, [])
     .option('-s, --secrets <bundle>', 'Secrets bundle to inject')
     .option('-d, --description <text>', 'Profile description')
@@ -56,9 +59,15 @@ function registerProfilesCommands(browser: Command): void {
         process.exit(1);
       }
 
+      if (!VALID_BROWSERS.includes(opts.browser)) {
+        console.error(`Invalid browser type. Must be one of: ${VALID_BROWSERS.join(', ')}`);
+        process.exit(1);
+      }
+
       const profile: BrowserProfile = {
         name,
         description: opts.description,
+        browser: opts.browser,
         endpoints: opts.endpoint,
         secrets: opts.secrets,
         chrome: opts.headless ? { headless: true } : undefined,
@@ -79,6 +88,7 @@ function registerProfilesCommands(browser: Command): void {
       }
 
       console.log(`Name: ${profile.name}`);
+      console.log(`Browser: ${profile.browser}`);
       if (profile.description) console.log(`Description: ${profile.description}`);
       console.log(`Endpoints:`);
       for (const e of profile.endpoints) {
