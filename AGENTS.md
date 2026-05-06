@@ -16,7 +16,7 @@ Resources AND `agents.yaml` resolve **project > user > system** — project-leve
 
 **System repo (`~/.agents-system/`)** — npm-shipped defaults, fully tracked:
 ```
-commands/  hooks/  hooks.yaml  mcp/  permissions/  profiles/  rules/  scripts/  skills/
+commands/  hooks/  hooks.yaml  mcp/  permissions/  profiles/  rules/  skills/
 ```
 Clone from `phnx-labs/.agents-system` to see exactly what ships. Nothing else belongs here.
 
@@ -53,7 +53,7 @@ src/
 
 ## Key concepts
 
-- **Version management** — install/switch agent CLI versions (binaries live under `~/.agents-system/versions/`).
+- **Version management** — install/switch agent CLI versions (binaries live under `~/.agents/versions/`).
 - **Resource sync** — symlink resolved resources into each version's home dir.
 - **Layered config** — system repo ships defaults, user repo overrides by name. Hooks and promptcuts both layer this way.
 - **Capability gating** — `supports(agent, cap, version?)` decides whether a write is safe; out-of-range versions are skipped silently.
