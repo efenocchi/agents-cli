@@ -103,10 +103,14 @@ vi.mock('../src/lib/permissions.js', () => ({
   PERMISSION_SET_ENV_VAR: 'AGENTS_PERMISSION_SET',
 }));
 
-vi.mock('../src/lib/mcp.js', () => ({
-  installMcpServers: () => ({ applied: [] }),
-  listMcpServerConfigs: () => [],
-}));
+vi.mock('../src/lib/mcp.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/lib/mcp.js')>();
+  return {
+    ...actual,
+    installMcpServers: () => ({ applied: [] }),
+    listMcpServerConfigs: () => [],
+  };
+});
 
 vi.mock('../src/lib/shims.js', () => ({
   createVersionedAlias: () => {},
@@ -565,8 +569,9 @@ describe('getAvailableResources', () => {
   it('finds MCP configs from *.yaml and *.yml', () => {
     const mcpDir = path.join(AGENTS_DIR, 'mcp');
     fs.mkdirSync(mcpDir, { recursive: true });
-    fs.writeFileSync(path.join(mcpDir, 'Swarm.yaml'), 'name: Swarm');
-    fs.writeFileSync(path.join(mcpDir, 'Other.yml'), 'name: Other');
+    // Valid MCP configs require name, transport, and transport-specific fields
+    fs.writeFileSync(path.join(mcpDir, 'Swarm.yaml'), 'name: Swarm\ntransport: stdio\ncommand: swarm');
+    fs.writeFileSync(path.join(mcpDir, 'Other.yml'), 'name: Other\ntransport: http\nurl: http://example.com');
     fs.writeFileSync(path.join(mcpDir, 'readme.txt'), 'not mcp');
 
     const resources = getAvailableResources();
