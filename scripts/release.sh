@@ -77,9 +77,34 @@ LOCAL="$(git rev-parse HEAD)"
 REMOTE="$(git rev-parse origin/main)"
 [[ "$LOCAL" == "$REMOTE" ]] || die "main is not in sync with origin/main (run 'git push' first)"
 
-# Must be logged into npm
+# ----- npm auth via token (skips 2FA OTP prompts) -----
+# Resolve NPM_TOKEN from the keychain-backed secrets bundle and write a temp
+# .npmrc that the rest of the script will use via NPM_CONFIG_USERCONFIG. The
+# token must have publish access to both @phnx-labs and @swarmify; create
+# automation tokens at https://www.npmjs.com/settings/<user>/tokens with the
+# "Automation" type so 2FA is bypassed for publishes.
+command -v agents >/dev/null || die "'agents' CLI not on PATH (needed to read npm-tokens secrets bundle)"
+NPM_BUNDLE_OUT="$(agents secrets export npm-tokens --plaintext 2>/dev/null || true)"
+[[ -n "$NPM_BUNDLE_OUT" ]] || die "could not read 'npm-tokens' secrets bundle -- create it with: agents secrets create npm-tokens && agents secrets add npm-tokens NPM_TOKEN"
+NPM_TOKEN_LINE="$(printf '%s\n' "$NPM_BUNDLE_OUT" | grep -E '^export NPM_TOKEN=' | head -1)"
+[[ -n "$NPM_TOKEN_LINE" ]] || die "secrets bundle 'npm-tokens' is missing key NPM_TOKEN"
+# Strip 'export NPM_TOKEN=' prefix and surrounding quotes if any.
+NPM_TOKEN="${NPM_TOKEN_LINE#export NPM_TOKEN=}"
+NPM_TOKEN="${NPM_TOKEN%\"}"
+NPM_TOKEN="${NPM_TOKEN#\"}"
+NPM_TOKEN="${NPM_TOKEN%\'}"
+NPM_TOKEN="${NPM_TOKEN#\'}"
+[[ -n "$NPM_TOKEN" ]] || die "NPM_TOKEN resolved to empty string"
+
+NPMRC_TMP="$(mktemp -t agents-cli-npmrc)"
+chmod 600 "$NPMRC_TMP"
+printf '//registry.npmjs.org/:_authToken=%s\nalways-auth=true\n' "$NPM_TOKEN" > "$NPMRC_TMP"
+export NPM_CONFIG_USERCONFIG="$NPMRC_TMP"
+
+# Verify the token works.
 NPM_USER="$(npm whoami 2>/dev/null || true)"
-[[ -n "$NPM_USER" ]] || die "not logged into npm -- run 'npm login'"
+[[ -n "$NPM_USER" ]] || die "npm whoami failed with the resolved NPM_TOKEN -- token may be expired or lack publish scope"
+green "npm authenticated as $NPM_USER (via npm-tokens bundle)"
 
 # ----- Validate version bump -----
 # Compare against current published latest of the canonical package.
@@ -144,6 +169,7 @@ restore_package_json() {
     yellow "Reverted package.json to $ORIGINAL_PKG_VERSION"
   fi
 }
+# Initial trap; replaced later by cleanup_all once SHIM_TMP and NPMRC_TMP exist.
 trap restore_package_json EXIT
 
 if [[ "$ORIGINAL_PKG_VERSION" != "$TARGET" ]]; then
@@ -237,6 +263,7 @@ SHIM_TMP="$(mktemp -d -t agents-cli-shim)"
 cleanup_all() {
   restore_package_json
   rm -rf "${SHIM_TMP:-}"
+  rm -f "${NPMRC_TMP:-}"
 }
 trap cleanup_all EXIT
 
@@ -279,11 +306,11 @@ echo
 if ! $APPLY; then
   green "Dry run looks good. Re-run with --apply to publish $TARGET to both packages."
   echo
-  yellow "Will run on --apply:"
-  yellow "  1. git commit -m 'chore(release): $TARGET'"
-  yellow "  2. git tag v$TARGET"
-  yellow "  3. npm publish $PHNX_PKG@$TARGET   (will prompt for OTP)"
-  yellow "  4. npm publish $SWARMIFY_PKG@$TARGET   (will prompt for second OTP)"
+  yellow "Will run on --apply (using NPM_TOKEN from npm-tokens bundle, no 2FA prompts):"
+  yellow "  1. git commit -m 'chore(release): $TARGET'  (skipped if HEAD already is)"
+  yellow "  2. git tag v$TARGET                          (skipped if tag exists)"
+  yellow "  3. npm publish $PHNX_PKG@$TARGET             (skipped if already on registry)"
+  yellow "  4. npm publish $SWARMIFY_PKG@$TARGET shim    (skipped if already on registry)"
   yellow "  5. git push origin main + tag"
   exit 0
 fi
@@ -296,41 +323,67 @@ read -r -p "Publish $TARGET to BOTH $PHNX_PKG and $SWARMIFY_PKG? [y/N] " yn
 # committing it. Disable the auto-revert.
 PKG_BUMPED=false
 
-# ----- Commit + tag -----
+# ----- Commit (idempotent) -----
 git add package.json
 if ! git diff --cached --quiet; then
   git commit -m "chore(release): $TARGET"
+  green "Created release commit"
+else
+  # No staged change. We need a "chore(release): $TARGET" commit to exist
+  # somewhere in recent history so the tag we set anchors a real release.
+  # Allow non-shipping commits (e.g. tooling fixes) to ride on top.
+  if git log -20 --pretty=%s | grep -Fxq "chore(release): $TARGET"; then
+    gray "Release commit chore(release): $TARGET already exists in recent history, skipping"
+  else
+    die "package.json is at $TARGET but no 'chore(release): $TARGET' commit found in last 20 -- bump first"
+  fi
 fi
-git tag "v$TARGET"
 
-# ----- Publish @phnx-labs -----
+# ----- Tag (idempotent) -----
+# The tag should point at the release commit, not necessarily HEAD.
+RELEASE_COMMIT="$(git log -20 --pretty='%H %s' | awk -v s="chore(release): $TARGET" '$0 ~ s {print $1; exit}')"
+[[ -n "$RELEASE_COMMIT" ]] || die "could not locate release commit for $TARGET"
+if git rev-parse --verify --quiet "refs/tags/v$TARGET" >/dev/null; then
+  EXISTING_TAG_COMMIT="$(git rev-parse "v$TARGET^{commit}")"
+  if [[ "$EXISTING_TAG_COMMIT" == "$RELEASE_COMMIT" ]]; then
+    gray "Tag v$TARGET already on the release commit, skipping"
+  else
+    die "tag v$TARGET points to $EXISTING_TAG_COMMIT, not the release commit $RELEASE_COMMIT -- delete it manually if you mean to re-tag"
+  fi
+else
+  git tag "v$TARGET" "$RELEASE_COMMIT"
+  green "Created tag v$TARGET at $RELEASE_COMMIT"
+fi
+
+# ----- Publish @phnx-labs (idempotent) -----
 bold "Publishing $PHNX_PKG@$TARGET..."
-read -r -p "npm OTP: " OTP_PHNX
-echo
-if ! npm publish --access=public --otp="$OTP_PHNX"; then
+if npm view "$PHNX_PKG@$TARGET" version >/dev/null 2>&1; then
+  yellow "$PHNX_PKG@$TARGET is already on the registry, skipping publish"
+elif ! npm publish --access=public; then
   red "publish failed for $PHNX_PKG"
-  red "the version commit and tag remain locally; rerun 'npm publish --access=public --otp=...' from $ROOT to retry"
+  red "the version commit and tag remain locally; rerun: $0 $TARGET --apply"
   exit 1
+else
+  green "Published $PHNX_PKG@$TARGET"
 fi
-green "Published $PHNX_PKG@$TARGET"
 echo
 
-# ----- Publish @swarmify shim -----
-bold "Publishing $SWARMIFY_PKG@$TARGET..."
-read -r -p "npm OTP (new code, OTPs are single-use): " OTP_SWARMIFY
-echo
-pushd "$SHIM_TMP" >/dev/null
-if ! npm publish --access=public --otp="$OTP_SWARMIFY"; then
-  red "publish failed for $SWARMIFY_PKG"
-  red "$PHNX_PKG@$TARGET was published successfully."
-  red "to retry the shim manually:"
-  red "  cd $SHIM_TMP && npm publish --access=public --otp=<code>"
+# ----- Publish @swarmify shim (idempotent) -----
+bold "Publishing $SWARMIFY_PKG@$TARGET shim..."
+if npm view "$SWARMIFY_PKG@$TARGET" version >/dev/null 2>&1; then
+  yellow "$SWARMIFY_PKG@$TARGET is already on the registry, skipping publish"
+else
+  pushd "$SHIM_TMP" >/dev/null
+  if ! npm publish --access=public; then
+    red "publish failed for $SWARMIFY_PKG"
+    red "$PHNX_PKG@$TARGET is published successfully."
+    red "to retry the shim manually: rerun: $0 $TARGET --apply"
+    popd >/dev/null
+    exit 1
+  fi
   popd >/dev/null
-  trap - EXIT
-  exit 1
+  green "Published $SWARMIFY_PKG@$TARGET"
 fi
-popd >/dev/null
-green "Published $SWARMIFY_PKG@$TARGET"
 echo
 
 # ----- Push commit + tag -----
