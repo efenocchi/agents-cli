@@ -36,11 +36,13 @@ die() { red "error: $*"; exit 1; }
 
 # ----- Parse args -----
 APPLY=false
+SKIP_TESTS=false
 TARGET=""
 for arg in "$@"; do
   case "$arg" in
     --apply) APPLY=true ;;
-    -h|--help) printf '%s\n' "usage: scripts/release.sh <version> [--apply]"; exit 0 ;;
+    --skip-tests) SKIP_TESTS=true ;;
+    -h|--help) printf '%s\n' "usage: scripts/release.sh <version> [--apply] [--skip-tests]"; exit 0 ;;
     --*) die "unknown flag: $arg" ;;
     *)
       [[ -z "$TARGET" ]] || die "unexpected argument: $arg"
@@ -242,27 +244,31 @@ rm -f "$BUILD_LOG"
 green "Build clean."
 
 # ----- Tests -----
-# pipefail is on, so a failure in `npm test` would propagate even through a
-# pipe. We don't pipe -- show the full output so a developer can scroll back
-# through any individual failure. The summary line is captured for the
-# tarball-preview section regardless.
-bold "Running tests (npm test)..."
-TEST_LOG="$(mktemp -t agents-cli-test)"
-if ! npm test 2>&1 | tee "$TEST_LOG"; then
-  red "Tests failed."
+if $SKIP_TESTS; then
+  yellow "Skipping tests (--skip-tests)"
+else
+  # pipefail is on, so a failure in `npm test` would propagate even through a
+  # pipe. We don't pipe -- show the full output so a developer can scroll back
+  # through any individual failure. The summary line is captured for the
+  # tarball-preview section regardless.
+  bold "Running tests (npm test)..."
+  TEST_LOG="$(mktemp -t agents-cli-test)"
+  if ! npm test 2>&1 | tee "$TEST_LOG"; then
+    red "Tests failed."
+    rm -f "$TEST_LOG"
+    die "fix failing tests before releasing"
+  fi
+  # vitest sometimes prints "Unhandled error between tests" without failing
+  # the run. Catch that and treat it as a release blocker.
+  if grep -E 'Unhandled error|UnhandledPromiseRejection' "$TEST_LOG" >/dev/null 2>&1; then
+    red "test run had unhandled errors:"
+    grep -E 'Unhandled error|UnhandledPromiseRejection' "$TEST_LOG" >&2
+    rm -f "$TEST_LOG"
+    die "investigate the unhandled errors above before releasing"
+  fi
   rm -f "$TEST_LOG"
-  die "fix failing tests before releasing"
+  green "Tests clean."
 fi
-# vitest sometimes prints "Unhandled error between tests" without failing
-# the run. Catch that and treat it as a release blocker.
-if grep -E 'Unhandled error|UnhandledPromiseRejection' "$TEST_LOG" >/dev/null 2>&1; then
-  red "test run had unhandled errors:"
-  grep -E 'Unhandled error|UnhandledPromiseRejection' "$TEST_LOG" >&2
-  rm -f "$TEST_LOG"
-  die "investigate the unhandled errors above before releasing"
-fi
-rm -f "$TEST_LOG"
-green "Tests clean."
 echo
 
 # ----- Tarball preview (always) -----
