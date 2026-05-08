@@ -85,8 +85,14 @@ REMOTE="$(git rev-parse origin/main)"
 # token must have publish access to both @phnx-labs and @companion; create
 # automation tokens at https://www.npmjs.com/settings/<user>/tokens with the
 # "Automation" type so 2FA is bypassed for publishes.
-command -v agents >/dev/null || die "'agents' CLI not on PATH (needed to read npmjs.com secrets bundle)"
-NPM_BUNDLE_OUT="$(agents secrets export npmjs.com --plaintext 2>/dev/null || true)"
+# Use local build if available (has latest keychain fixes), fallback to global
+if [[ -f "$ROOT/dist/index.js" ]]; then
+  AGENTS_CMD="node $ROOT/dist/index.js"
+else
+  command -v agents >/dev/null || die "'agents' CLI not on PATH (needed to read npmjs.com secrets bundle)"
+  AGENTS_CMD="agents"
+fi
+NPM_BUNDLE_OUT="$($AGENTS_CMD secrets export npmjs.com --plaintext 2>/dev/null || true)"
 [[ -n "$NPM_BUNDLE_OUT" ]] || die "could not read 'npmjs.com' secrets bundle -- create it with: agents secrets create npmjs.com && agents secrets add npmjs.com NPM_TOKEN"
 NPM_TOKEN_LINE="$(printf '%s\n' "$NPM_BUNDLE_OUT" | grep -E '^export NPM_TOKEN=' | head -1)"
 [[ -n "$NPM_TOKEN_LINE" ]] || die "secrets bundle 'npmjs.com' is missing key NPM_TOKEN"
