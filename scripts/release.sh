@@ -37,12 +37,14 @@ die() { red "error: $*"; exit 1; }
 # ----- Parse args -----
 APPLY=false
 SKIP_TESTS=false
+YES=false
 TARGET=""
 for arg in "$@"; do
   case "$arg" in
     --apply) APPLY=true ;;
     --skip-tests) SKIP_TESTS=true ;;
-    -h|--help) printf '%s\n' "usage: scripts/release.sh <version> [--apply] [--skip-tests]"; exit 0 ;;
+    --yes|-y) YES=true ;;
+    -h|--help) printf '%s\n' "usage: scripts/release.sh <version> [--apply] [--skip-tests] [--yes]"; exit 0 ;;
     --*) die "unknown flag: $arg" ;;
     *)
       [[ -z "$TARGET" ]] || die "unexpected argument: $arg"
@@ -345,8 +347,10 @@ if ! $APPLY; then
 fi
 
 # ----- Confirmation (--apply only) -----
-read -r -p "Publish $TARGET to BOTH $PHNX_PKG and $SWARMIFY_PKG? [y/N] " yn
-[[ "$yn" =~ ^[Yy]$ ]] || die "aborted"
+if ! $YES; then
+  read -r -p "Publish $TARGET to BOTH $PHNX_PKG and $SWARMIFY_PKG? [y/N] " yn
+  [[ "$yn" =~ ^[Yy]$ ]] || die "aborted"
+fi
 
 # Past this point we want to keep the bumped package.json, since we're
 # committing it. Disable the auto-revert.
