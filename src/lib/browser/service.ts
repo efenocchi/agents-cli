@@ -21,6 +21,7 @@ interface ProfileConnection {
   cdp: CDPClient;
   port: number;
   pid: number;
+  electron?: boolean;
   tasks: Map<string, Task>;
   targetCache?: { targets: TargetInfo[]; ts: number };
   sessionCache: Map<string, string>;
@@ -62,7 +63,7 @@ export class BrowserService {
       return { task: finalTaskId, windowTargetId: task.windowTargetId };
     }
 
-    const { windowTargetId } = await this.createTaskWindow(conn.cdp, finalTaskId);
+    const { windowTargetId } = await this.createTaskWindow(conn, finalTaskId);
 
     const task: Task = {
       id: finalTaskId,
@@ -141,6 +142,20 @@ export class BrowserService {
     profileName?: string
   ): Promise<{ tabId: string; url: string }> {
     const { conn, task } = await this.findTask(taskId, profileName);
+
+    if (conn.electron) {
+      const tabId = task.windowTargetId || task.tabIds[0];
+      if (!tabId) {
+        throw new Error('No existing tab to navigate in Electron app');
+      }
+      const sessionId = await this.getSessionId(conn, tabId);
+      await conn.cdp.send('Page.navigate', { url }, sessionId);
+      if (!task.tabIds.includes(tabId)) {
+        task.tabIds.push(tabId);
+      }
+      await this.saveTaskState(task.profile, conn.tasks);
+      return { tabId, url };
+    }
 
     const result = (await conn.cdp.send('Target.createTarget', {
       url,
@@ -368,6 +383,7 @@ export class BrowserService {
         cdp,
         port: existingInfo.port,
         pid: existingInfo.pid,
+        electron: profile.electron,
         tasks,
         sessionCache: new Map(),
       };
@@ -398,6 +414,7 @@ export class BrowserService {
         cdp: conn.cdp,
         port: conn.port,
         pid: conn.pid,
+        electron: profile.electron,
         tasks: conn.pid === 0 ? this.loadTaskState(profile.name) : new Map(),
         sessionCache: new Map(),
       };
@@ -410,6 +427,7 @@ export class BrowserService {
         cdp: conn.cdp,
         port: conn.port,
         pid: conn.pid,
+        electron: profile.electron,
         tasks: new Map(),
         sessionCache: new Map(),
       };
@@ -423,10 +441,18 @@ export class BrowserService {
   }
 
   private async createTaskWindow(
-    cdp: CDPClient,
+    conn: ProfileConnection,
     _taskId: string
-  ): Promise<{ windowTargetId: string }> {
-    const result = (await cdp.send('Target.createTarget', {
+  ): Promise<{ windowTargetId?: string }> {
+    if (conn.electron) {
+      const { targetInfos } = (await conn.cdp.send('Target.getTargets')) as {
+        targetInfos: Array<{ targetId: string; type: string; url: string }>;
+      };
+      const pageTarget = targetInfos.find((t) => t.type === 'page');
+      return { windowTargetId: pageTarget?.targetId };
+    }
+
+    const result = (await conn.cdp.send('Target.createTarget', {
       url: 'about:blank',
       newWindow: true,
     })) as { targetId: string };

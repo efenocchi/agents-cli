@@ -5,6 +5,7 @@ export interface BrowserProfile {
   description?: string;
   browser: BrowserType;
   binary?: string;
+  electron?: boolean;
   endpoints: string[];
   chrome?: ChromeOptions;
   secrets?: string;
