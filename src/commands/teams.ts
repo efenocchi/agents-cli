@@ -1066,15 +1066,14 @@ Name teammates with --name alice to refer to them as 'alice' instead of a UUID.
     .command('status [team]')
     .aliases(['s', 'st', 'check'])
     .description("Check in on a team: who's working, what files they touched, recent commands, last output. Pass --since for efficient delta polling.")
-    .option('-f, --filter <state>', 'Show only teammates in this state: working, completed, failed, stopped, or all (default: all)', 'all')
+    .option('-f, --filter <state>', 'Show only teammates in this state: running, completed, failed, stopped, or all (default: all)', 'all')
     .option('-s, --since <iso>', 'Cursor from a previous status call; only show updates after this timestamp (enables efficient polling)')
     .option('--agent-id <id>', 'Show only this one teammate (by UUID or UUID prefix)')
     .option('--json', 'Output machine-readable JSON')
     .action(async (team: string | undefined, opts: {
       filter: string; since?: string; agentId?: string; json?: boolean;
     }) => {
-      // Map friendly 'working' → internal 'running' for filter.
-      const filter = opts.filter === 'working' ? 'running' : opts.filter;
+      const filter = opts.filter;
       const mgr = mkManager();
 
       // No team given → drop into the picker (TTY) or fail clearly (script).
