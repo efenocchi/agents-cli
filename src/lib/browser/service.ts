@@ -563,7 +563,19 @@ export class BrowserService {
         targetInfos: Array<{ targetId: string; type: string; url: string }>;
       };
       const pageTarget = targetInfos.find((t) => t.type === 'page');
-      return { windowTargetId: pageTarget?.targetId };
+      if (pageTarget) {
+        return { windowTargetId: pageTarget.targetId };
+      }
+      // No existing page - try to create one (works on some Electron apps)
+      try {
+        const result = (await conn.cdp.send('Target.createTarget', {
+          url: 'about:blank',
+          newWindow: true,
+        })) as { targetId: string };
+        return { windowTargetId: result.targetId };
+      } catch {
+        throw new Error('No page targets found and unable to create new window');
+      }
     }
 
     const result = (await conn.cdp.send('Target.createTarget', {
