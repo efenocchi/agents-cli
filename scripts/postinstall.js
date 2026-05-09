@@ -13,8 +13,15 @@ const SHIMS_DIR = path.join(HOME, '.agents-system', 'shims');
 const SYSTEM_DIR = path.join(HOME, '.agents-system');
 const USER_DIR = path.join(HOME, '.agents');
 
-// Only run for global installs
-if (!process.env.npm_config_global && !process.argv.includes('-g')) {
+// For local installs, create directories and show a message
+const isGlobalInstall = process.env.npm_config_global || process.argv.includes('-g');
+if (!isGlobalInstall) {
+  // Still create user directories for local installs
+  fs.mkdirSync(USER_DIR, { recursive: true, mode: 0o700 });
+  console.log(`
+agents-cli installed locally.
+To complete setup, run: npx agents init
+`);
   process.exit(0);
 }
 
@@ -165,17 +172,38 @@ async function main() {
     return;
   }
 
-  // Default: print PATH instructions, then offer aliases interactively.
-  console.log(`
-agents-cli installed.
-To enable version-aware shims, add the following line to your shell config:
+  // Default: offer to auto-add shims to PATH (like homebrew does)
+  const rcFile = getShellRc();
+  let alreadyConfigured = false;
+  if (fs.existsSync(rcFile)) {
+    const content = fs.readFileSync(rcFile, 'utf-8');
+    alreadyConfigured = content.includes('.agents-system/shims');
+  }
+
+  console.log(`\nagents-cli installed.`);
+
+  if (!alreadyConfigured && process.stdin.isTTY && process.stdout.isTTY) {
+    const answer = await ask(`\nAdd shims to PATH in ~/${path.basename(rcFile)}? [Y/n] `);
+    if (answer === '' || answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes') {
+      const addition = `\n# agents-cli: version switching for AI coding agents\n${exportLine}\n`;
+      fs.mkdirSync(path.dirname(rcFile), { recursive: true });
+      fs.appendFileSync(rcFile, addition);
+      console.log(`\n  Added ${SHIMS_DIR} to PATH in ${path.basename(rcFile)}`);
+      console.log(`  Restart your shell or run: source ~/${path.basename(rcFile)}\n`);
+    } else {
+      console.log(`
+To enable version-aware shims, add this to your shell config:
 
   ${exportLine}
-
-(zsh: ~/.zshrc, bash: ~/.bashrc, fish: ~/.config/fish/config.fish)
-
-Or re-run with AGENTS_INIT_SHELL=1 to have the installer add it for you.
 `);
+    }
+  } else if (!alreadyConfigured) {
+    console.log(`
+To enable version-aware shims, add this to your shell config:
+
+  ${exportLine}
+`);
+  }
 
   const choice = await promptForAliases();
   if (choice === 'install') {

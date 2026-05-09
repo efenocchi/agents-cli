@@ -159,7 +159,7 @@ When to use:
   - Multi-account: install different versions for different accounts (each version has its own auth)
   - Project-specific: lock a version for a repo with --project
 
-Note: The first version you install is NOT set as default automatically. Run 'agents use' to set it.
+Note: The first version you install becomes the default automatically.
 `)
     .action(async (specs: string[], options) => {
       const isProject = options.project;
@@ -278,10 +278,13 @@ Note: The first version you install is NOT set as default automatically. Run 'ag
               }
             }
 
-            // Prompt to set as default
+            // Set as default: auto-set if no default exists, otherwise prompt
             const currentDefault = getGlobalDefault(agent);
             if (currentDefault !== installedVersion) {
-              if (skipPrompts) {
+              if (!currentDefault) {
+                // First install for this agent - auto-set without prompting
+                await setDefaultVersion(agent, installedVersion);
+              } else if (skipPrompts) {
                 await setDefaultVersion(agent, installedVersion);
               } else {
                 try {
@@ -296,9 +299,7 @@ Note: The first version you install is NOT set as default automatically. Run 'ag
                   });
                   const accountHint = formatAccountHint(info, usage.snapshot);
 
-                  const message = currentDefault
-                    ? `Switch default from ${agentLabel(agentConfig.id)}@${currentDefault} to ${agentLabel(agentConfig.id)}@${installedVersion}${accountHint}?`
-                    : `Set ${agentLabel(agentConfig.id)}@${installedVersion}${accountHint} as default?`;
+                  const message = `Switch default from ${agentLabel(agentConfig.id)}@${currentDefault} to ${agentLabel(agentConfig.id)}@${installedVersion}${accountHint}?`;
 
                   const setAsDefault = await confirm({
                     message,
