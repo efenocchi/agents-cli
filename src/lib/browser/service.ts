@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { CDPClient, discoverBrowserWsUrl } from './cdp.js';
 import { getProfile, getProfileRuntimeDir, getBrowserRuntimeDir } from './profiles.js';
-import { killChrome, getRunningChromeInfo } from './chrome.js';
+import { killChrome, getRunningChromeInfo, launchBrowser, allocatePort } from './chrome.js';
 import { connectLocal } from './drivers/local.js';
 import { connectSSH } from './drivers/ssh.js';
 import {
@@ -23,6 +23,7 @@ interface ProfileConnection {
   port: number;
   pid: number;
   electron?: boolean;
+  forkedFrom?: string;
   tasks: Map<string, Task>;
   targetCache?: { targets: TargetInfo[]; ts: number };
   sessionCache: Map<string, string>;
@@ -54,7 +55,13 @@ export class BrowserService {
     }
 
     let conn = this.connections.get(profileName);
-    if (!conn) {
+    let effectiveProfileName = profileName;
+
+    if (conn && conn.electron && conn.tasks.size > 0) {
+      const { forkName, connection } = await this.forkElectronProfile(profile);
+      conn = connection;
+      effectiveProfileName = forkName;
+    } else if (!conn) {
       conn = await this.connectProfile(profile);
       this.connections.set(profileName, conn);
     }
@@ -68,7 +75,7 @@ export class BrowserService {
 
     const task: Task = {
       id: finalTaskId,
-      profile: profileName,
+      profile: effectiveProfileName,
       windowTargetId,
       tabIds: [],
       createdAt: Date.now(),
@@ -76,9 +83,9 @@ export class BrowserService {
     };
     conn.tasks.set(finalTaskId, task);
 
-    await this.saveTaskState(profileName, conn.tasks);
+    await this.saveTaskState(effectiveProfileName, conn.tasks);
 
-    emit('browser.launch', { profile: profileName, task: finalTaskId, pid: conn.pid });
+    emit('browser.launch', { profile: effectiveProfileName, task: finalTaskId, pid: conn.pid });
     return { task: finalTaskId, windowTargetId };
   }
 
@@ -110,6 +117,15 @@ export class BrowserService {
         await this.saveTaskState(profileName, conn.tasks);
 
         emit('browser.close', { profile: profileName, task: taskId });
+
+        if (conn.forkedFrom && conn.tasks.size === 0) {
+          conn.cdp.close();
+          if (!conn.electron) {
+            killChrome(conn.pid);
+          }
+          this.connections.delete(profileName);
+        }
+
         return { ok: true, profile: profileName };
       }
     }
@@ -369,6 +385,43 @@ export class BrowserService {
       conn.cdp.close();
     }
     this.connections.clear();
+  }
+
+  private async forkElectronProfile(
+    profile: BrowserProfile
+  ): Promise<{ forkName: string; connection: ProfileConnection }> {
+    let forkNum = 2;
+    while (this.connections.has(`${profile.name}.${forkNum}`)) {
+      forkNum++;
+    }
+    const forkName = `${profile.name}.${forkNum}`;
+
+    const port = allocatePort();
+    const { pid, wsUrl } = await launchBrowser(
+      forkName,
+      profile.browser,
+      port,
+      profile.chrome,
+      profile.secrets,
+      profile.binary
+    );
+
+    const cdp = new CDPClient();
+    await cdp.connect(wsUrl);
+    await this.enableDomains(cdp);
+
+    const connection: ProfileConnection = {
+      cdp,
+      port,
+      pid,
+      electron: true,
+      forkedFrom: profile.name,
+      tasks: new Map(),
+      sessionCache: new Map(),
+    };
+    this.connections.set(forkName, connection);
+
+    return { forkName, connection };
   }
 
   private async connectProfile(profile: BrowserProfile): Promise<ProfileConnection> {
