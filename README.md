@@ -47,6 +47,7 @@ Also available as `ag` -- all commands work with both `agents` and `ag`.
 - [Sessions across agents](#sessions-across-agents)
 - [Run open models through Claude Code](#run-open-models-through-claude-code)
 - [Teams](#teams)
+- [Browser](#browser)
 - [Secrets](#secrets)
 - [Routines](#routines)
 - [PTY](#pty)
@@ -239,6 +240,85 @@ agents teams status auth-feature    # Who's working, what they changed, what the
 Teammates run detached -- close your terminal, they keep working. Check in with `teams status`, read full output with `teams logs <name>`, clean up with `teams disband`.
 
 Team state is observable via `agents teams list --json` / `agents teams status --json`. External tools join it with `sessions --json` (teammates get `isTeamOrigin: true`) and `cloud list --json` (for `--cloud` teammates) to build a unified fleet view. See [docs/06-observability.md](docs/06-observability.md).
+
+---
+
+## Browser
+
+Give agents access to a real browser — no relay extension, no cloud service, no Playwright getting blocked.
+
+```bash
+# Create an isolated profile for automation
+agents browser profiles create work --browser chrome
+
+# Start a task, navigate, interact
+agents browser start login-flow --profile work
+agents browser navigate login-flow https://app.example.com
+agents browser refs login-flow              # Get interactive element refs
+agents browser click login-flow <tab> 42    # Click element ref 42
+agents browser type login-flow <tab> 15 "hello"
+agents browser screenshot login-flow        # Smart resizing, token-efficient
+```
+
+### Why this works where Playwright fails
+
+Playwright and Puppeteer spin up fresh browser instances with automation flags. Sites like LinkedIn, Google, and most finance apps detect and block them immediately.
+
+`agents browser` launches your existing residential Chrome (or Brave, Edge, Chromium) on your machine via CDP. Same browser fingerprint, same IP, same everything. Sites can't detect automation because you're using the same browser you'd use manually.
+
+### Token-efficient automation
+
+The CLI handles the mechanical work so agents don't burn tokens on low-level browser commands. Screenshots are automatically resized without excessive compression — agents process smaller images while keeping the detail they need to make decisions.
+
+### Profile isolation
+
+Multiple agents can run browser tasks simultaneously without stepping on each other. Each profile gets its own user data directory, cookies, and state. One agent logs into your work Slack, another into your personal email — no conflicts, no shared state.
+
+```bash
+agents browser profiles create work-slack --browser chrome
+agents browser profiles create personal-gmail --browser chrome
+# Two agents, two profiles, no interference
+```
+
+### Safe credential access
+
+Attach a [secrets bundle](#secrets) to a profile. The agent can log in without credentials in plaintext, and every secret access is recorded in the session log.
+
+```bash
+agents browser profiles create bank --browser chrome --secrets bank-creds
+```
+
+### Electron apps
+
+Control Electron apps (Slack, Discord, VS Code, your own app) with custom binaries:
+
+```bash
+agents browser profiles create rush \
+  --browser custom \
+  --binary "/Applications/Rush.app/Contents/MacOS/Rush" \
+  --electron
+```
+
+### Remote browsers
+
+Connect to browsers running anywhere — SSH tunnels, direct CDP, or cloud browser services:
+
+```bash
+# SSH tunnel to a remote machine
+agents browser profiles create staging \
+  --browser chrome \
+  --endpoint "ssh://deploy@staging.example.com?port=9222"
+
+# Direct CDP connection (local or remote)
+agents browser profiles create local-debug \
+  --browser chrome \
+  --endpoint "cdp://localhost:9222"
+
+# Cloud browser services (BrowserBase, etc.) — coming soon
+# agents browser profiles create cloud \
+#   --browser chrome \
+#   --endpoint "wss://connect.browserbase.com?apiKey=..."
+```
 
 ---
 
