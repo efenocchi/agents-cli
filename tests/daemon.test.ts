@@ -1,6 +1,13 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, writeFileSync, unlinkSync } from 'fs';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { existsSync, writeFileSync, unlinkSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
+import { tmpdir } from 'os';
+import * as state from '../src/lib/state.js';
+
+const TEST_AGENTS_DIR = join(tmpdir(), 'agents-cli-daemon-test');
+
+vi.spyOn(state, 'getAgentsDir').mockReturnValue(TEST_AGENTS_DIR);
+
 import {
   readDaemonPid,
   writeDaemonPid,
@@ -11,16 +18,12 @@ import {
   generateLaunchdPlist,
   generateSystemdUnit,
 } from '../src/lib/daemon.js';
-import { getAgentsDir } from '../src/lib/state.js';
 
 function cleanupDaemonFiles() {
-  const agentsDir = getAgentsDir();
-  for (const file of ['daemon.pid', 'daemon.log']) {
-    const p = join(agentsDir, file);
-    try {
-      if (existsSync(p)) unlinkSync(p);
-    } catch {}
-  }
+  try {
+    rmSync(TEST_AGENTS_DIR, { recursive: true, force: true });
+  } catch {}
+  mkdirSync(TEST_AGENTS_DIR, { recursive: true });
 }
 
 beforeEach(() => {
@@ -28,7 +31,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  cleanupDaemonFiles();
+  try {
+    rmSync(TEST_AGENTS_DIR, { recursive: true, force: true });
+  } catch {}
 });
 
 describe('PID management', () => {
@@ -52,20 +57,23 @@ describe('PID management', () => {
   });
 
   it('returns null for invalid PID content', () => {
-    const pidPath = join(getAgentsDir(), 'daemon.pid');
-    writeFileSync(pidPath, 'not-a-number', 'utf-8');
+    const daemonDir = join(TEST_AGENTS_DIR, 'helpers', 'daemon');
+    mkdirSync(daemonDir, { recursive: true });
+    writeFileSync(join(daemonDir, 'daemon.pid'), 'not-a-number', 'utf-8');
     expect(readDaemonPid()).toBeNull();
   });
 });
 
 describe('logging', () => {
-  it('appends log lines to daemon.log', () => {
+  it('appends JSONL log entries to daemon.log', () => {
     log('INFO', 'test message one');
     log('ERROR', 'test message two');
 
     const content = readDaemonLog();
-    expect(content).toContain('[INFO] test message one');
-    expect(content).toContain('[ERROR] test message two');
+    expect(content).toContain('"level":"INFO"');
+    expect(content).toContain('"message":"test message one"');
+    expect(content).toContain('"level":"ERROR"');
+    expect(content).toContain('"message":"test message two"');
   });
 
   it('readDaemonLog with line limit returns last N lines', () => {
