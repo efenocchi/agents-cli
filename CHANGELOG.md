@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.14.6
+
+**Fix: OAuth token refresh now persists to Keychain**
+
+- Fixed bug where refreshed Claude OAuth tokens were used but never saved back to macOS Keychain
+- Previously, agents-cli would refresh expired tokens on each run but discard them, eventually exhausting the refresh token
+- Now refreshed `accessToken`, `refreshToken`, and `expiresAt` are written back to Keychain after successful refresh
+- Accounts will stay healthy across runs without requiring re-login
+
 ## 1.14.5
 
 **Browser: custom binary and Electron app support**

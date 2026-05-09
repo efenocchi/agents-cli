@@ -383,7 +383,7 @@ async function getClaudeUsageInfo(options?: UsageOptions): Promise<UsageInfo> {
       return { snapshot: null, error: null };
     }
 
-    const accessToken = await getClaudeAccessToken(oauth);
+    const accessToken = await getClaudeAccessToken(oauth, options?.home);
     if (!accessToken) {
       return { snapshot: null, error: null };
     }
@@ -537,9 +537,15 @@ function normalizeClaudeWindow(
   };
 }
 
+let warnedNonDarwin = false;
+
 /** Load Claude OAuth credentials from the macOS Keychain. */
 export async function loadClaudeOauth(home?: string): Promise<ClaudeOauthCredentials | null> {
   if (process.platform !== 'darwin') {
+    if (!warnedNonDarwin && process.stderr.isTTY) {
+      process.stderr.write('[agents] Usage tracking requires macOS Keychain. Skipped on this platform.\n');
+      warnedNonDarwin = true;
+    }
     return null;
   }
 
@@ -566,6 +572,82 @@ export async function loadClaudeOauth(home?: string): Promise<ClaudeOauthCredent
     };
   } catch {
     return null;
+  }
+}
+
+/**
+ * Save Claude OAuth credentials to the macOS Keychain.
+ * Reads the existing payload, merges the new OAuth fields, and writes back.
+ */
+async function saveClaudeOauth(
+  home: string | undefined,
+  credentials: ClaudeOauthCredentials
+): Promise<boolean> {
+  if (process.platform !== 'darwin') {
+    return false;
+  }
+
+  try {
+    const account = os.userInfo().username;
+    const service = getClaudeKeychainService(home);
+
+    // Read existing payload to preserve other fields
+    let existingPayload: ClaudeKeychainPayload = {};
+    try {
+      const { stdout } = await execFileAsync('security', [
+        'find-generic-password',
+        '-a',
+        account,
+        '-s',
+        service,
+        '-w',
+      ]);
+      existingPayload = JSON.parse(stdout.trim()) as ClaudeKeychainPayload;
+    } catch {
+      // No existing entry, start fresh
+    }
+
+    // Merge new credentials into existing payload
+    const newPayload: ClaudeKeychainPayload = {
+      ...existingPayload,
+      claudeAiOauth: {
+        ...existingPayload.claudeAiOauth,
+        accessToken: credentials.accessToken,
+        refreshToken: credentials.refreshToken,
+        expiresAt: credentials.expiresAt,
+        scopes: credentials.scopes ?? existingPayload.claudeAiOauth?.scopes,
+      },
+    };
+
+    const payloadJson = JSON.stringify(newPayload);
+
+    // Delete existing entry first (security add-generic-password -U can fail)
+    try {
+      await execFileAsync('security', [
+        'delete-generic-password',
+        '-a',
+        account,
+        '-s',
+        service,
+      ]);
+    } catch {
+      // Entry might not exist, ignore
+    }
+
+    // Add updated entry
+    await execFileAsync('security', [
+      'add-generic-password',
+      '-a',
+      account,
+      '-s',
+      service,
+      '-w',
+      payloadJson,
+    ]);
+
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -721,8 +803,8 @@ function isCachedUsageWindowFresh(
   return true;
 }
 
-/** Obtain a valid access token, refreshing if expired. */
-async function getClaudeAccessToken(oauth: ClaudeOauthCredentials): Promise<string | null> {
+/** Obtain a valid access token, refreshing if expired. Saves refreshed tokens to Keychain. */
+async function getClaudeAccessToken(oauth: ClaudeOauthCredentials, home?: string): Promise<string | null> {
   const accessToken = oauth.accessToken?.trim();
   if (!accessToken) {
     return null;
@@ -738,7 +820,14 @@ async function getClaudeAccessToken(oauth: ClaudeOauthCredentials): Promise<stri
   }
 
   const refreshed = await refreshClaudeToken(oauth);
-  return refreshed?.accessToken?.trim() || null;
+  if (!refreshed?.accessToken) {
+    return null;
+  }
+
+  // Persist refreshed credentials to Keychain so they survive across runs
+  await saveClaudeOauth(home, refreshed);
+
+  return refreshed.accessToken.trim();
 }
 
 /** Refresh an expired Claude OAuth access token using the refresh token. */
@@ -782,7 +871,7 @@ async function refreshClaudeToken(oauth: ClaudeOauthCredentials): Promise<Claude
 export async function isClaudeAuthValid(home?: string): Promise<boolean> {
   const oauth = await loadClaudeOauth(home);
   if (!oauth) return false;
-  const token = await getClaudeAccessToken(oauth);
+  const token = await getClaudeAccessToken(oauth, home);
   return token !== null;
 }
 
