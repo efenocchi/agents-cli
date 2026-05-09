@@ -94,7 +94,7 @@ export function registerRunCommand(program: Command): void {
       []
     )
     .option('--json', 'Stream events as JSON lines (for parsing by other tools)')
-    .option('--headless', 'Non-interactive mode (default for run)', true)
+    .option('--headless', 'Non-interactive mode (auto-enabled when prompt provided)', false)
     .option('-i, --interactive', 'Force interactive mode even when a prompt is provided')
     .option('--session-id <id>', 'Resume a previous conversation (Claude only)')
     .option('--verbose', 'Show detailed execution logs')

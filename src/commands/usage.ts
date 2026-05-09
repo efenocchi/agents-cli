@@ -27,6 +27,12 @@ export function registerUsageCommand(program: Command): void {
   program
     .command('usage [agent]')
     .description('Show rate-limit / quota usage per agent')
+    .addHelpText('after', `
+Examples:
+  agents usage              Show usage for all installed agents
+  agents usage claude       Show usage for Claude only
+  agents usage codex        Show usage for Codex only
+`)
     .action(async (agentFilter?: string) => {
       const filter = agentFilter as AgentId | undefined;
       const targets = filter
