@@ -1051,6 +1051,17 @@ export async function installVersion(
   }
 
   try {
+    // Check npm is available
+    try {
+      await execFileAsync('which', ['npm']);
+    } catch {
+      return {
+        success: false,
+        installedVersion: version,
+        error: 'npm is not installed. Install Node.js and npm first: https://nodejs.org/',
+      };
+    }
+
     onProgress?.(`Installing ${packageSpec}...`);
     const { stdout } = await execFileAsync('npm', ['install', packageSpec], { cwd: versionDir });
 
