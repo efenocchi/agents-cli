@@ -239,6 +239,7 @@ export async function sendIPCRequest(request: IPCRequest): Promise<IPCResponse> 
     if (!fs.existsSync(socketPath)) {
       throw new Error('Failed to start browser daemon');
     }
+    await new Promise((r) => setTimeout(r, 300));
   }
 
   return new Promise((resolve, reject) => {
