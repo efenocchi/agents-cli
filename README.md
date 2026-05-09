@@ -458,9 +458,9 @@ Extras clone into `~/.agents-system/.repos/<alias>/` and ship the same layout as
 
 **Everything stays on your machine.** No telemetry, no cloud sync (unless you opt into iCloud Keychain for secrets), no phone-home. Here's exactly what `agents-cli` stores locally and why.
 
-### Audit logs
+### Event log
 
-Every agent run, version install, browser launch, and secrets access is logged to `~/.agents/logs/events-YYYY-MM-DD.jsonl`. This gives you a complete audit trail of what agents did on your machine.
+Every agent run, version install, browser launch, and secrets access is logged to `~/.agents/logs/events-YYYY-MM-DD.jsonl`. This gives you a complete record of what agents did on your machine.
 
 ```bash
 # What gets logged (example event):
@@ -483,7 +483,7 @@ Every agent run, version install, browser launch, and secrets access is logged t
 
 **Retention:** 30 days by default, then auto-pruned.
 
-**Opt out:** Set `AGENTS_DISABLE_AUDIT_LOG=1` in your shell to disable completely.
+**Opt out:** Set `AGENTS_DISABLE_EVENT_LOG=1` in your shell to disable completely.
 
 ### Session search
 
@@ -511,7 +511,7 @@ With `--icloud-sync`, secrets sync via iCloud Keychain to your other Macs. Witho
 
 | Data | Location | Who can read | Opt out |
 |------|----------|--------------|---------|
-| Audit logs | `~/.agents/logs/` | You only (0600) | `AGENTS_DISABLE_AUDIT_LOG=1` |
+| Event log | `~/.agents/logs/` | You only (0600) | `AGENTS_DISABLE_EVENT_LOG=1` |
 | Session index | `~/.agents/sessions/` | You only | Delete the directory |
 | Secrets | macOS Keychain | You + apps you authorize | Don't use `agents secrets` |
 | Config | `~/.agents/` | You only | N/A |
@@ -572,7 +572,7 @@ Your choice. We hand off to the original CLI process — use your existing subsc
 
 **No telemetry, no phone-home.** Everything stays local. API keys come from your shell environment or each agent CLI's existing auth.
 
-For full transparency: `agents-cli` keeps local audit logs at `~/.agents/logs/` so you can see exactly what agents did on your machine. Logs are owner-readable only (0600) and auto-prune after 30 days. Set `AGENTS_DISABLE_AUDIT_LOG=1` to disable. See [Security & Privacy](#security--privacy) for details.
+For full transparency: `agents-cli` keeps a local event log at `~/.agents/logs/` so you can see exactly what agents did on your machine. Logs are owner-readable only (0600) and auto-prune after 30 days. Set `AGENTS_DISABLE_EVENT_LOG=1` to disable. See [Security & Privacy](#security--privacy) for details.
 
 ### Which platforms?
 
