@@ -21,7 +21,7 @@ import {
 } from '../lib/exec.js';
 import type { AgentId } from '../lib/types.js';
 import { profileExists, resolveProfileForRun } from '../lib/profiles.js';
-import { readBundle, resolveBundleEnv } from '../lib/secrets/bundles.js';
+import { readBundle, resolveBundleEnv, describeBundle } from '../lib/secrets/bundles.js';
 import {
   getConfiguredRunStrategy,
   normalizeRunStrategy,
@@ -265,6 +265,13 @@ Examples:
       for (const bundleName of options.secrets) {
         try {
           const bundle = readBundle(bundleName);
+          const entries = describeBundle(bundle);
+          const counts: Record<string, number> = {};
+          for (const e of entries) {
+            counts[e.kind] = (counts[e.kind] || 0) + 1;
+          }
+          const breakdown = Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ');
+          console.log(chalk.gray(`[secrets] ${bundleName}: ${entries.length} keys (${breakdown})`));
           secretsEnv = { ...secretsEnv, ...resolveBundleEnv(bundle) };
         } catch (err) {
           console.error(chalk.red((err as Error).message));
