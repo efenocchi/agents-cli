@@ -27,6 +27,15 @@ const DEFAULT_RETENTION_DAYS = 30;
 /** Default max length for truncated strings. */
 const DEFAULT_TRUNCATE_LENGTH = 500;
 
+/** Environment variable to disable audit logging. */
+const DISABLE_ENV_VAR = 'AGENTS_DISABLE_AUDIT_LOG';
+
+/** Check if audit logging is disabled via environment variable. */
+function isDisabled(): boolean {
+  const val = process.env[DISABLE_ENV_VAR];
+  return val === '1' || val === 'true';
+}
+
 /** Directory permissions (owner read/write/execute only). */
 const DIR_MODE = 0o700;
 
@@ -211,6 +220,8 @@ function truncatePayload(payload: EventPayload, maxLength: number = DEFAULT_TRUN
  * @param payload - Event-specific data (agent, version, cwd, etc.)
  */
 export function emit(event: EventType, payload: EventPayload = {}): void {
+  if (isDisabled()) return;
+
   try {
     ensureLogsDir();
 
