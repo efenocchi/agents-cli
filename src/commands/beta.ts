@@ -8,6 +8,11 @@ import {
 } from '../lib/beta.js';
 import type { BetaFeatureName } from '../lib/types.js';
 
+const BETA_DESCRIPTIONS: Record<BetaFeatureName, string> = {
+  drive: 'Google Drive integration for reading and writing files',
+  factory: 'Cloud-based agent dispatch via Rush Factory',
+};
+
 function parseFeatures(values: string[]): BetaFeatureName[] {
   const valid = new Set<BetaFeatureName>(ALL_BETA_FEATURES);
   const invalid = values.filter((value) => !valid.has(value as BetaFeatureName));
@@ -39,7 +44,8 @@ Examples:
       console.log(chalk.bold('Beta Features'));
       for (const feature of ALL_BETA_FEATURES) {
         const state = enabled.has(feature) ? chalk.green('enabled') : chalk.gray('disabled');
-        console.log(`  ${feature.padEnd(8)} ${state}`);
+        const desc = BETA_DESCRIPTIONS[feature] || '';
+        console.log(`  ${feature.padEnd(10)} ${state.padEnd(18)} ${chalk.dim(desc)}`);
       }
       console.log('');
       console.log(chalk.gray(`Config: ${location.path}`));
