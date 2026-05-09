@@ -38,6 +38,7 @@ import { discoverPlugins, syncPluginToVersion, isPluginSynced, pluginSupportsAge
 import { composeRulesFromState } from './rules/compose.js';
 import { loadSyncManifest, saveSyncManifest, buildManifest, isSyncStale } from './sync-manifest.js';
 import { PLUGINS_CAPABLE_AGENTS } from './agents.js';
+import { emit } from './events.js';
 import { safeJoin } from './paths.js';
 import { installCommandSkillToVersion, listCommandSkillsInVersion, shouldInstallCommandAsSkill } from './command-skills.js';
 
@@ -1003,6 +1004,7 @@ export function setGlobalDefault(agent: AgentId, version: string | undefined): v
     delete meta.agents[agent];
   } else {
     meta.agents[agent] = version;
+    emit('version.switch', { agent, version });
   }
   writeMeta(meta);
 }
@@ -1097,6 +1099,7 @@ export async function installVersion(
       }
     }
 
+    emit('version.install', { agent, version: installedVersion });
     return { success: true, installedVersion };
   } catch (err) {
     // Clean up on failure — preserve `home/` in case a prior install left
@@ -1104,6 +1107,7 @@ export async function installVersion(
     if (fs.existsSync(versionDir)) {
       removeInstallArtifacts(versionDir);
     }
+    emit('version.install', { agent, version, error: (err as Error).message });
     return { success: false, installedVersion: version, error: (err as Error).message };
   }
 }
@@ -1201,6 +1205,7 @@ export function removeVersion(agent: AgentId, version: string): boolean {
     }
   }
 
+  emit('version.remove', { agent, version });
   return true;
 }
 

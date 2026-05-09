@@ -22,6 +22,7 @@ import { getRunsDir } from './state.js';
 import type { AgentId } from './types.js';
 import { prepareJobHome, buildSpawnEnv } from './sandbox.js';
 import { resolveModel, buildReasoningFlags } from './models.js';
+import { emitStart, maybeRotate } from './events.js';
 
 /** Result of a completed job execution, including metadata and optional report. */
 export interface RunResult {
@@ -129,6 +130,14 @@ function generateRunId(): string {
 
 /** Execute a job synchronously (waits for completion or timeout before resolving). */
 export async function executeJob(config: JobConfig): Promise<RunResult> {
+  maybeRotate();
+  const done = emitStart('agent.run.start', {
+    agent: config.agent,
+    version: config.version,
+    jobName: config.name,
+    mode: config.mode,
+  });
+
   const resolvedPrompt = resolveJobPrompt(config);
   const cmd = buildJobCommand(config, resolvedPrompt);
 
@@ -190,6 +199,7 @@ export async function executeJob(config: JobConfig): Promise<RunResult> {
       meta.status = 'timeout';
       meta.completedAt = new Date().toISOString();
       writeRunMeta(meta);
+      done({ status: 'timeout', runId });
 
       const reportPath = extractAndSaveReport(stdoutPath, config.agent, runDir);
       resolve({ meta, reportPath });
@@ -206,6 +216,7 @@ export async function executeJob(config: JobConfig): Promise<RunResult> {
       meta.status = code === 0 ? 'completed' : 'failed';
       meta.completedAt = new Date().toISOString();
       writeRunMeta(meta);
+      done({ status: meta.status, exitCode: code, runId });
 
       const reportPath = extractAndSaveReport(stdoutPath, config.agent, runDir);
       resolve({ meta, reportPath });
@@ -221,6 +232,7 @@ export async function executeJob(config: JobConfig): Promise<RunResult> {
       meta.status = 'failed';
       meta.completedAt = new Date().toISOString();
       writeRunMeta(meta);
+      done({ status: 'failed', error: err.message, runId });
       resolve({ meta, reportPath: null });
     });
 

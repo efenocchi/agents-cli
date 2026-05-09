@@ -28,6 +28,7 @@ import {
   type BundleValue,
   type SecretRef,
 } from './index.js';
+import { emit } from '../events.js';
 
 /** Allowed values for a secret's `type` metadata field. */
 export const SECRET_TYPES = [
@@ -188,11 +189,16 @@ export function writeBundle(bundle: SecretsBundle): void {
   };
   const json = JSON.stringify(payload);
   setKeychainToken(bundleMetaItem(bundle.name), json, Boolean(bundle.icloud_sync));
+  emit('secrets.set', { bundle: bundle.name });
 }
 
 export function deleteBundle(name: string): boolean {
   validateBundleName(name);
-  return deleteKeychainToken(bundleMetaItem(name));
+  const deleted = deleteKeychainToken(bundleMetaItem(name));
+  if (deleted) {
+    emit('secrets.delete', { bundle: name });
+  }
+  return deleted;
 }
 
 export function listBundles(): SecretsBundle[] {

@@ -15,6 +15,7 @@ import type { AgentId, SkillMetadata, InstalledSkill } from './types.js';
 import { AGENTS, SKILLS_CAPABLE_AGENTS, ensureSkillsDir } from './agents.js';
 import { getAgentsDir, getUserSkillsDir, getSkillsDir as getSystemSkillsDir, getProjectAgentsDir, getEnabledExtraRepos } from './state.js';
 import { getEffectiveHome, getVersionHomePath, listInstalledVersions } from './versions.js';
+import { emit } from './events.js';
 
 const HOME = os.homedir();
 
@@ -312,6 +313,7 @@ export function installSkill(
     }
   }
 
+  emit('skill.install', { skill: skillName, agents });
   return { success: true };
 }
 
@@ -640,6 +642,7 @@ export function installSkillToVersion(
     }
   }
 
+  emit('skill.install', { skill: skillName, agent, version });
   return { success: true };
 }
 
@@ -706,6 +709,7 @@ export function uninstallSkill(skillName: string): { success: boolean; error?: s
     // Ignore removal errors
   }
 
+  emit('skill.remove', { skill: skillName });
   return { success: true };
 }
 
