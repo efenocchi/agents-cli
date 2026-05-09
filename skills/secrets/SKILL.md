@@ -1,0 +1,89 @@
+---
+name: secrets
+description: "Manage secrets bundles backed by macOS Keychain. Store, retrieve, generate, and inject credentials into agent runs without touching disk."
+author: phnx-labs
+version: 1.0.0
+license: MIT
+---
+
+# Secrets
+
+Store credentials in macOS Keychain and inject them into agent runs. Nothing touches disk in plaintext — not even the bundle metadata.
+
+## Why not just use .zshrc or 1Password?
+
+**Environment variables in .zshrc**: The agent inherits your *entire* environment. You can't scope what it sees — it gets everything, including keys for services it doesn't need. And they're plaintext on disk.
+
+**1Password / iCloud Passwords**: Designed for humans, not agents. They require interactive authentication (biometrics, master password). An agent can't programmatically fetch or store credentials without you approving each access. And they can't *write* — if an agent generates a new API key, it can't save it back.
+
+**agents secrets**: Scoped bundles (agent only sees what you pass), Keychain-backed (encrypted at rest), and agent-friendly (agents can read *and* write programmatically).
+
+## "I need to give an agent access to my API keys"
+
+Create a bundle, add your keys, then pass the bundle when running agents:
+
+```bash
+agents secrets create prod
+agents secrets add prod STRIPE_API_KEY      # prompts for value
+agents secrets add prod DATABASE_URL
+
+agents run claude "deploy the api" --secrets prod
+```
+
+The secrets inject as environment variables at runtime.
+
+## "I just generated a new API key in the browser — how do I save it?"
+
+Pipe it via stdin so it never appears in shell history:
+
+```bash
+echo "$NEW_API_KEY" | agents secrets add prod STRIPE_KEY --value-stdin
+```
+
+## "I need a secure password"
+
+```bash
+agents secrets generate --copy    # copies to clipboard, prints nothing
+```
+
+## "I have multiple Macs and want secrets to sync"
+
+Create the bundle with `--icloud-sync` and it automatically appears on all your Macs (same iCloud account):
+
+```bash
+agents secrets create work --icloud-sync
+```
+
+## "I want to track when API keys expire"
+
+Add metadata when storing secrets:
+
+```bash
+agents secrets add prod STRIPE_KEY --type api-key --expires 2025-12-31 --note "Live key, rotate annually"
+```
+
+The `list` command shows secrets expiring in the next 30 days. Expired secrets show in red.
+
+## "I have a .env file I want to import"
+
+```bash
+agents secrets import prod --from .env.prod
+```
+
+Every key goes into Keychain.
+
+## "I need a secret that reads from a file or command at runtime"
+
+Secrets can be dynamic references, not just static values:
+
+```bash
+agents secrets add prod AWS_TOKEN --exec "aws sts get-session-token --query Credentials.SessionToken"
+agents secrets add prod CERT --file /path/to/cert.pem
+agents secrets add prod LOG_LEVEL --env LOG_LEVEL
+```
+
+(Exec refs require creating the bundle with `--allow-exec`.)
+
+## "What else can I do?"
+
+Run `agents secrets --help` — there's more: viewing/revealing values, rotating secrets with preserved metadata, exporting to shell, organizing by environment or service.
