@@ -436,6 +436,36 @@ export class BrowserService {
       };
     }
 
+    if (url.protocol === 'wss:' || url.protocol === 'ws:') {
+      const cdp = new CDPClient();
+      await cdp.connect(endpoint);
+      await this.enableDomains(cdp);
+      return {
+        cdp,
+        port: 0,
+        pid: 0,
+        electron: profile.electron,
+        tasks: this.loadTaskState(profile.name),
+        sessionCache: new Map(),
+      };
+    }
+
+    if (url.protocol === 'http:' || url.protocol === 'https:') {
+      const port = parseInt(url.port || (url.protocol === 'https:' ? '443' : '80'), 10);
+      const wsUrl = await discoverBrowserWsUrl(port, url.hostname);
+      const cdp = new CDPClient();
+      await cdp.connect(wsUrl);
+      await this.enableDomains(cdp);
+      return {
+        cdp,
+        port,
+        pid: 0,
+        electron: profile.electron,
+        tasks: this.loadTaskState(profile.name),
+        sessionCache: new Map(),
+      };
+    }
+
     return null;
   }
 
