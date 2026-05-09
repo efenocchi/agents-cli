@@ -748,3 +748,33 @@ export function getRowCount(): { sessions: number; textRows: number } {
   const textRows = (db.prepare(`SELECT COUNT(*) AS c FROM session_text`).get() as { c: number }).c;
   return { sessions, textRows };
 }
+
+/** Count sessions older than the given timestamp (for dry-run previews). */
+export function countSessionsOlderThan(cutoffMs: number): number {
+  const db = getDB();
+  const cutoffIso = new Date(cutoffMs).toISOString();
+  const row = db.prepare(`SELECT COUNT(*) AS n FROM sessions WHERE timestamp < ?`).get(cutoffIso) as { n: number };
+  return row.n;
+}
+
+/** Delete sessions older than the given timestamp. Returns the number of rows deleted. */
+export function deleteSessionsOlderThan(cutoffMs: number): number {
+  const db = getDB();
+  const cutoffIso = new Date(cutoffMs).toISOString();
+
+  const rows = db.prepare(`SELECT id, file_path FROM sessions WHERE timestamp < ?`).all(cutoffIso) as { id: string; file_path: string }[];
+  if (rows.length === 0) return 0;
+
+  const txn = db.transaction(() => {
+    for (const { id, file_path } of rows) {
+      db.prepare(`DELETE FROM session_text WHERE session_id = ?`).run(id);
+      db.prepare(`DELETE FROM sessions WHERE id = ?`).run(id);
+      if (file_path) {
+        db.prepare(`DELETE FROM scan_ledger WHERE file_path = ?`).run(canonicalLedgerKey(file_path));
+      }
+    }
+  });
+  txn();
+
+  return rows.length;
+}
