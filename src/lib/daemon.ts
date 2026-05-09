@@ -7,7 +7,7 @@
  * log output, reload (SIGHUP), and graceful shutdown are handled here.
  */
 
-import { spawn, execSync } from 'child_process';
+import { spawn, execSync, execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -312,9 +312,9 @@ function startDaemonLocked(): { pid: number | null; method: string } {
       fs.writeFileSync(plistPath, generateLaunchdPlist(), 'utf-8');
 
       try {
-        execSync(`launchctl unload "${plistPath}" 2>/dev/null`, { encoding: 'utf-8' });
+        execFileSync('launchctl', ['unload', plistPath], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] });
       } catch { /* not loaded, expected */ }
-      execSync(`launchctl load "${plistPath}"`, { encoding: 'utf-8' });
+      execFileSync('launchctl', ['load', plistPath], { encoding: 'utf-8' });
 
       const pid = waitForPid(3000);
       return { pid, method: 'launchd' };
@@ -381,7 +381,7 @@ export function stopDaemon(): boolean {
     const plistPath = getLaunchdPlistPath();
     if (fs.existsSync(plistPath)) {
       try {
-        execSync(`launchctl unload "${plistPath}"`, { encoding: 'utf-8' });
+        execFileSync('launchctl', ['unload', plistPath], { encoding: 'utf-8' });
         fs.unlinkSync(plistPath);
       } catch (err: any) {
         if (process.env.AGENTS_DEBUG) {
