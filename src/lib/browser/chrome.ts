@@ -152,7 +152,7 @@ export async function attachToChrome(port: number): Promise<string> {
 
 export function killChrome(pid: number): void {
   try {
-    process.kill(pid, 'SIGTERM');
+    process.kill(pid, 'SIGINT');
   } catch {
     // Process already dead
   }
