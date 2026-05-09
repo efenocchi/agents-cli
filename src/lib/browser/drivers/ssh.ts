@@ -23,7 +23,7 @@ export async function connectSSH(
 
   const user = url.username || process.env.USER || 'root';
   const host = url.hostname;
-  const remotePort = parseInt(url.searchParams.get('port') || '9222', 10);
+  const remotePort = url.port ? parseInt(url.port, 10) : 9222;
   const localPort = allocatePort();
 
   try {
@@ -32,7 +32,7 @@ export async function connectSSH(
     // Browser may already be running, continue
   }
 
-  const tunnel = await startSSHTunnel(user, host, localPort, remotePort);
+  let tunnel = await startSSHTunnel(user, host, localPort, remotePort);
 
   try {
     await waitForPort(localPort, 8000);
@@ -174,6 +174,35 @@ async function ensureRemoteBrowser(
       child.kill();
       resolve();
     }, 2000);
+  });
+}
+
+export async function restartRemoteBrowser(
+  user: string,
+  host: string,
+  browserType: string,
+  port: number,
+  customBinary?: string
+): Promise<void> {
+  // Kill any process using the remote debugging port
+  const killCmd = `lsof -ti :${port} | xargs kill -9 2>/dev/null || true`;
+  await runSSHCommand(user, host, killCmd);
+  await sleep(500);
+  await ensureRemoteBrowser(user, host, browserType, port, customBinary);
+  await sleep(1500);
+}
+
+function runSSHCommand(user: string, host: string, cmd: string): Promise<void> {
+  return new Promise((resolve) => {
+    const child = spawn('ssh', [`${user}@${host}`, '-o', 'BatchMode=yes', cmd], {
+      stdio: 'ignore',
+    });
+    child.on('close', () => resolve());
+    child.on('error', () => resolve());
+    setTimeout(() => {
+      child.kill();
+      resolve();
+    }, 3000);
   });
 }
 
