@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.14.5
+
+**Browser: custom binary and Electron app support**
+
+- Added `binary` field to browser profiles for specifying custom executable paths (e.g., Electron apps like Rush)
+- Added `electron` field to browser profiles — when true, uses existing windows instead of creating new ones (Electron doesn't support `Target.createTarget`)
+- New `custom` browser type that requires a binary path
+- Works with both local and SSH-based browser connections
+- Example profile for Rush: `agents browser profiles edit rush --browser custom --binary "/Applications/Rush.app/Contents/MacOS/Rush" --electron`
+
 ## Unreleased
 
 **System repo moved to `~/.agents-system`; `~/.agents` is now free for user-owned repos**
