@@ -11,6 +11,7 @@ import type { AgentId } from './types.js';
 import { parseTimeout } from './routines.js';
 import { getVersionHomePath, isVersionInstalled, resolveVersion } from './versions.js';
 import { resolveModel, buildReasoningFlags } from './models.js';
+import { emitStart, maybeRotate } from './events.js';
 
 /** Agent execution modes controlling tool access and autonomy level. */
 export type ExecMode = 'plan' | 'edit' | 'full';
@@ -256,6 +257,12 @@ export function buildExecCommand(options: ExecOptions): string[] {
   const cmd: string[] = [...template.base];
   const interactive = options.interactive === true || options.prompt === undefined;
 
+  // For Codex, 'exec' is the headless subcommand -- drop it for interactive mode
+  // so we run 'codex' (TUI) instead of 'codex exec' (one-shot)
+  if (options.agent === 'codex' && interactive && cmd[1] === 'exec') {
+    cmd.splice(1, 1);
+  }
+
   // Use versioned alias if a specific version was requested (e.g., claude@2.1.98)
   if (options.version && cmd.length > 0) {
     cmd[0] = `${cmd[0]}@${options.version}`;
@@ -370,6 +377,16 @@ async function spawnAgent(options: ExecOptions): Promise<SpawnResult> {
   const piped = !process.stdout.isTTY;
   const interactive = options.interactive === true || options.prompt === undefined;
 
+  maybeRotate();
+  const done = emitStart('agent.run.start', {
+    agent: options.agent,
+    version: options.version,
+    cwd: options.cwd || process.cwd(),
+    mode: options.mode,
+    model: options.model,
+    interactive,
+  });
+
   return new Promise((resolve, reject) => {
     // Interactive mode inherits all stdio so the CLI owns the TTY (TUI
     // rendering, raw-mode keystrokes, colored output). Headless mode pipes
@@ -414,10 +431,12 @@ async function spawnAgent(options: ExecOptions): Promise<SpawnResult> {
 
     child.on('error', (err) => {
       if (timer) clearTimeout(timer);
+      done({ error: err.message, exitCode: -1 });
       reject(err);
     });
     child.on('close', (code) => {
       if (timer) clearTimeout(timer);
+      done({ exitCode: code ?? 0 });
       resolve({ exitCode: code ?? 0, stderr: stderrBuffer });
     });
   });
