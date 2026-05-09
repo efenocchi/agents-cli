@@ -47,4 +47,4 @@ scripts/scrub-history.sh
 **/.codex
 **/.gemini
 **/.tmp
-**/.tmp-bun
+**/.tmp-bunskills/
