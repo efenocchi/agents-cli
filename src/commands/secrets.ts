@@ -311,11 +311,20 @@ Examples:
 
   # Delete the whole bundle and purge every keychain item it owned
   agents secrets delete prod
+
+  # Generate a random password (32 chars, all character classes)
+  agents secrets generate
+
+  # Generate a 16-char password, or a PIN, or hex
+  agents secrets generate 16
+  agents secrets generate 8 --pin
+  agents secrets generate 32 --hex
 `);
 
   registerCommandGroups(cmd, [
     { title: 'Bundle commands', names: ['list', 'view', 'create', 'delete'] },
     { title: 'Secret commands', names: ['add', 'rotate', 'remove', 'import', 'export'] },
+    { title: 'Utilities', names: ['generate'] },
   ]);
 
   cmd
@@ -722,6 +731,90 @@ Examples:
         if (isPromptCancelled(err)) return;
         console.error(chalk.red((err as Error).message));
         process.exit(1);
+      }
+    });
+
+  cmd
+    .command('generate [length]')
+    .description('Generate a random password')
+    .option('-U, --uppercase', 'Include A-Z (default: on)')
+    .option('-l, --lowercase', 'Include a-z (default: on)')
+    .option('-d, --digits', 'Include 0-9 (default: on)')
+    .option('-s, --symbols', 'Include symbols (default: on)')
+    .option('--no-uppercase', 'Exclude A-Z')
+    .option('--no-lowercase', 'Exclude a-z')
+    .option('--no-digits', 'Exclude 0-9')
+    .option('--no-symbols', 'Exclude symbols')
+    .option('--strong', 'Include all character classes')
+    .option('--pin', 'Digits only (shortcut for -d --no-uppercase --no-lowercase --no-symbols)')
+    .option('--hex', 'Hex characters only (0-9, a-f)')
+    .option('-c, --copy', 'Copy to clipboard (does not print)')
+    .action(async (lengthArg: string | undefined, opts: {
+      uppercase?: boolean;
+      lowercase?: boolean;
+      digits?: boolean;
+      symbols?: boolean;
+      strong?: boolean;
+      pin?: boolean;
+      hex?: boolean;
+      copy?: boolean;
+    }) => {
+      const length = lengthArg ? parseInt(lengthArg, 10) : 32;
+      if (isNaN(length) || length < 1 || length > 1024) {
+        console.error(chalk.red('Length must be a number between 1 and 1024.'));
+        process.exit(1);
+      }
+
+      const UPPER = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+      const LOWER = 'abcdefghijklmnopqrstuvwxyz';
+      const DIGITS = '0123456789';
+      const SYMBOLS = '!@#$%^&*()-_=+[]{}|;:,.<>?';
+      const HEX_LOWER = '0123456789abcdef';
+
+      let charClasses: string[] = [];
+
+      if (opts.hex) {
+        charClasses = [HEX_LOWER];
+      } else if (opts.pin) {
+        charClasses = [DIGITS];
+      } else {
+        const useUpper = opts.strong || opts.uppercase !== false;
+        const useLower = opts.strong || opts.lowercase !== false;
+        const useDigits = opts.strong || opts.digits !== false;
+        const useSymbols = opts.strong || opts.symbols !== false;
+
+        if (useUpper) charClasses.push(UPPER);
+        if (useLower) charClasses.push(LOWER);
+        if (useDigits) charClasses.push(DIGITS);
+        if (useSymbols) charClasses.push(SYMBOLS);
+      }
+
+      if (charClasses.length === 0) {
+        console.error(chalk.red('At least one character class must be enabled.'));
+        process.exit(1);
+      }
+
+      const randomBytes = crypto.getRandomValues(new Uint32Array(length * 2));
+      let password = '';
+      for (let i = 0; i < length; i++) {
+        const classIndex = randomBytes[i * 2] % charClasses.length;
+        const charClass = charClasses[classIndex];
+        const charIndex = randomBytes[i * 2 + 1] % charClass.length;
+        password += charClass[charIndex];
+      }
+
+      if (opts.copy) {
+        const { spawn } = await import('child_process');
+        const proc = spawn('pbcopy', [], { stdio: ['pipe', 'inherit', 'inherit'] });
+        proc.stdin.write(password);
+        proc.stdin.end();
+        await new Promise<void>((resolve, reject) => {
+          proc.on('close', (code) => code === 0 ? resolve() : reject(new Error('pbcopy failed')));
+          proc.on('error', reject);
+        });
+        console.log(chalk.green(`Password copied to clipboard (${length} chars)`));
+      } else {
+        console.log(password);
       }
     });
 }
