@@ -301,23 +301,23 @@ agents browser profiles create rush \
 
 ### Remote browsers
 
-Connect to browsers running anywhere — SSH tunnels, direct CDP, or cloud browser services:
+Connect to browsers running anywhere — local, SSH tunnels, or cloud services:
 
 ```bash
+# Local CDP (discovers WebSocket URL automatically)
+agents browser profiles create local-debug \
+  --browser chrome \
+  --endpoint "http://localhost:9222"
+
 # SSH tunnel to a remote machine
 agents browser profiles create staging \
   --browser chrome \
   --endpoint "ssh://deploy@staging.example.com?port=9222"
 
-# Direct CDP connection (local or remote)
-agents browser profiles create local-debug \
+# Cloud browser services (BrowserBase, Steel, etc.)
+agents browser profiles create cloud \
   --browser chrome \
-  --endpoint "cdp://localhost:9222"
-
-# Cloud browser services (BrowserBase, etc.) — coming soon
-# agents browser profiles create cloud \
-#   --browser chrome \
-#   --endpoint "wss://connect.browserbase.com?apiKey=..."
+  --endpoint "wss://connect.browserbase.com?apiKey=..."
 ```
 
 ---
