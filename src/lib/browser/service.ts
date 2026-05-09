@@ -37,6 +37,7 @@ type TargetInfo = {
 
 export class BrowserService {
   private connections = new Map<string, ProfileConnection>();
+  private forkingProfiles = new Set<string>();
 
   async start(
     profileName: string,
@@ -58,9 +59,27 @@ export class BrowserService {
     let effectiveProfileName = profileName;
 
     if (conn && conn.electron && conn.tasks.size > 0) {
-      const { forkName, connection } = await this.forkElectronProfile(profile);
-      conn = connection;
-      effectiveProfileName = forkName;
+      if (this.forkingProfiles.has(profileName)) {
+        while (this.forkingProfiles.has(profileName)) {
+          await new Promise((r) => setTimeout(r, 50));
+        }
+        const existingFork = this.findAvailableFork(profileName);
+        if (existingFork) {
+          conn = existingFork.conn;
+          effectiveProfileName = existingFork.name;
+        } else {
+          throw new Error(`Fork in progress but no available fork found for "${profileName}"`);
+        }
+      } else {
+        this.forkingProfiles.add(profileName);
+        try {
+          const { forkName, connection } = await this.forkElectronProfile(profile);
+          conn = connection;
+          effectiveProfileName = forkName;
+        } finally {
+          this.forkingProfiles.delete(profileName);
+        }
+      }
     } else if (!conn) {
       conn = await this.connectProfile(profile);
       this.connections.set(profileName, conn);
@@ -120,9 +139,7 @@ export class BrowserService {
 
         if (conn.forkedFrom && conn.tasks.size === 0) {
           conn.cdp.close();
-          if (!conn.electron) {
-            killChrome(conn.pid);
-          }
+          killChrome(conn.pid);
           this.connections.delete(profileName);
         }
 
@@ -385,6 +402,17 @@ export class BrowserService {
       conn.cdp.close();
     }
     this.connections.clear();
+  }
+
+  private findAvailableFork(
+    profileName: string
+  ): { name: string; conn: ProfileConnection } | null {
+    for (const [name, conn] of this.connections) {
+      if (conn.forkedFrom === profileName && conn.tasks.size === 0) {
+        return { name, conn };
+      }
+    }
+    return null;
   }
 
   private async forkElectronProfile(
