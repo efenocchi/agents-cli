@@ -570,7 +570,9 @@ Your choice. We hand off to the original CLI process — use your existing subsc
 
 ### Does it store my API keys or send telemetry?
 
-No. API keys come from your shell environment or each agent CLI's existing auth. No telemetry, no phone-home. User content lives in `~/.agents/`; operational state (versions, shims, sessions, caches) lives in `~/.agents-system/`.
+**No telemetry, no phone-home.** Everything stays local. API keys come from your shell environment or each agent CLI's existing auth.
+
+For full transparency: `agents-cli` keeps local audit logs at `~/.agents/logs/` so you can see exactly what agents did on your machine. Logs are owner-readable only (0600) and auto-prune after 30 days. Set `AGENTS_DISABLE_AUDIT_LOG=1` to disable. See [Security & Privacy](#security--privacy) for details.
 
 ### Which platforms?
 
