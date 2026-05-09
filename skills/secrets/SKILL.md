@@ -1,14 +1,38 @@
 ---
 name: secrets
-description: "Manage secrets bundles backed by macOS Keychain. Store, retrieve, generate, and inject credentials into agent runs without touching disk."
+description: "Manage secrets bundles backed by your OS keychain. Store, retrieve, generate, and inject credentials into agent runs without touching disk."
 author: phnx-labs
-version: 1.0.0
+version: 1.1.0
 license: MIT
 ---
 
 # Secrets
 
-Store credentials in macOS Keychain and inject them into agent runs. Nothing touches disk in plaintext — not even the bundle metadata.
+Store credentials in your OS keychain and inject them into agent runs. Nothing touches disk in plaintext — not even the bundle metadata.
+
+## Platform support
+
+| Platform | Backend | Install |
+|----------|---------|---------|
+| macOS | Keychain | Built-in |
+| Linux (desktop) | GNOME Keyring (libsecret) | `sudo apt install libsecret-tools` |
+| Linux (headless/server) | Use `env:` refs | See below |
+| Windows | Not yet supported | — |
+
+**Desktop Linux:** GNOME Keyring (or another Secret Service provider) must be running. Most desktop environments start it automatically.
+
+**Headless Linux (SSH, CI, containers):** No keyring daemon available. Use `env:` refs to pass secrets via environment:
+
+```bash
+# Create bundle with env refs
+agents secrets create prod
+agents secrets add prod DB_PASSWORD --env DB_PASSWORD
+
+# Pass at runtime
+DB_PASSWORD=xxx agents run claude "..." --secrets prod
+```
+
+Vault providers (1Password, AWS Secrets Manager, HashiCorp Vault) are planned for headless environments.
 
 ## Why not just use .zshrc or 1Password?
 
@@ -16,7 +40,7 @@ Store credentials in macOS Keychain and inject them into agent runs. Nothing tou
 
 **1Password / iCloud Passwords**: Designed for humans, not agents. They require interactive authentication (biometrics, master password). An agent can't programmatically fetch or store credentials without you approving each access. And they can't *write* — if an agent generates a new API key, it can't save it back.
 
-**agents secrets**: Scoped bundles (agent only sees what you pass), Keychain-backed (encrypted at rest), and agent-friendly (agents can read *and* write programmatically).
+**agents secrets**: Scoped bundles (agent only sees what you pass), OS keychain-backed (encrypted at rest), and agent-friendly (agents can read *and* write programmatically).
 
 ## "I need to give an agent access to my API keys"
 
