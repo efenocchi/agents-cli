@@ -16,6 +16,7 @@ import {
 } from './types.js';
 import { getRefs, resolveRefToCoords, type RefOpts, type RefNode } from './refs.js';
 import { clickAtCoords, hoverAtCoords, typeText, pressKey, focusNode } from './input.js';
+import { emit } from '../events.js';
 
 interface ProfileConnection {
   cdp: CDPClient;
@@ -77,6 +78,7 @@ export class BrowserService {
 
     await this.saveTaskState(profileName, conn.tasks);
 
+    emit('browser.launch', { profile: profileName, task: finalTaskId, pid: conn.pid });
     return { task: finalTaskId, windowTargetId };
   }
 
@@ -107,6 +109,7 @@ export class BrowserService {
         conn.tasks.delete(taskId);
         await this.saveTaskState(profileName, conn.tasks);
 
+        emit('browser.close', { profile: profileName, task: taskId });
         return { ok: true, profile: profileName };
       }
     }
