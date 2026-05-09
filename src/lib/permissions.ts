@@ -299,52 +299,49 @@ export function buildPermissionsFromGroups(groupNames: string[]): PermissionSet 
 
 /**
  * List installed permission sets from central storage.
+ * User dir takes precedence; system entries are surfaced when user has no
+ * same-named override.
  */
 export function listInstalledPermissions(): InstalledPermission[] {
   ensureAgentsDir();
-  const dir = getPermissionsDir();
-
-  if (!fs.existsSync(dir)) {
-    return [];
-  }
-
+  const seen = new Set<string>();
   const results: InstalledPermission[] = [];
 
-  try {
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isFile()) continue;
-      if (!entry.name.endsWith('.yml') && !entry.name.endsWith('.yaml')) continue;
+  for (const dir of [getUserPermissionsDir(), getPermissionsDir()]) {
+    if (!fs.existsSync(dir)) continue;
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        if (!entry.name.endsWith('.yml') && !entry.name.endsWith('.yaml')) continue;
 
-      const filePath = path.join(dir, entry.name);
-      const set = parsePermissionSet(filePath);
-      if (set) {
-        results.push({
-          name: set.name,
-          path: filePath,
-          set,
-        });
+        const filePath = path.join(dir, entry.name);
+        const set = parsePermissionSet(filePath);
+        if (!set) continue;
+        if (seen.has(set.name)) continue;
+        seen.add(set.name);
+        results.push({ name: set.name, path: filePath, set });
       }
+    } catch {
+      // Skip inaccessible directory
     }
-  } catch {
-    // Ignore errors
   }
 
   return results;
 }
 
 /**
- * Get a specific permission set by name.
+ * Get a specific permission set by name. Searches user dir first, then system.
  */
 export function getPermissionSet(name: string): InstalledPermission | null {
-  const dir = getPermissionsDir();
-
-  for (const ext of ['.yml', '.yaml']) {
-    const filePath = safeJoin(dir, name + ext);
-    if (fs.existsSync(filePath)) {
-      const set = parsePermissionSet(filePath);
-      if (set) {
-        return { name: set.name, path: filePath, set };
+  for (const dir of [getUserPermissionsDir(), getPermissionsDir()]) {
+    for (const ext of ['.yml', '.yaml']) {
+      const filePath = safeJoin(dir, name + ext);
+      if (fs.existsSync(filePath)) {
+        const set = parsePermissionSet(filePath);
+        if (set) {
+          return { name: set.name, path: filePath, set };
+        }
       }
     }
   }
@@ -353,7 +350,7 @@ export function getPermissionSet(name: string): InstalledPermission | null {
 }
 
 /**
- * Install a permission set to central storage.
+ * Install a permission set to user-level central storage.
  */
 export function installPermissionSet(
   sourcePath: string,
@@ -366,7 +363,7 @@ export function installPermissionSet(
     return { success: false, error: 'Invalid permission file' };
   }
 
-  const targetPath = safeJoin(getPermissionsDir(), name + '.yml');
+  const targetPath = safeJoin(getUserPermissionsDir(), name + '.yml');
 
   try {
     fs.copyFileSync(sourcePath, targetPath);
@@ -377,10 +374,11 @@ export function installPermissionSet(
 }
 
 /**
- * Remove a permission set from central storage.
+ * Remove a permission set from user-level central storage. System-shipped
+ * sets are intentionally not deletable from user commands.
  */
 export function removePermissionSet(name: string): { success: boolean; error?: string } {
-  const dir = getPermissionsDir();
+  const dir = getUserPermissionsDir();
 
   for (const ext of ['.yml', '.yaml']) {
     const filePath = safeJoin(dir, name + ext);

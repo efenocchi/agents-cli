@@ -27,8 +27,8 @@ const DEFAULT_RETENTION_DAYS = 30;
 /** Default max length for truncated strings. */
 const DEFAULT_TRUNCATE_LENGTH = 500;
 
-/** Environment variable to disable audit logging. */
-const DISABLE_ENV_VAR = 'AGENTS_DISABLE_AUDIT_LOG';
+/** Environment variable to disable event logging. */
+const DISABLE_ENV_VAR = 'AGENTS_DISABLE_EVENT_LOG';
 
 /** Check if audit logging is disabled via environment variable. */
 function isDisabled(): boolean {
