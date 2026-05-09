@@ -100,6 +100,16 @@ export async function runInit(program: Command, options: { force?: boolean } = {
     }
     spinner.succeed(`Updated to ${result.commit}`);
   } else {
+    // Check git is available
+    try {
+      const { execSync } = await import('child_process');
+      execSync('which git', { stdio: 'ignore' });
+    } catch {
+      spinner.fail('git is not installed');
+      console.log(chalk.gray('Install git first: https://git-scm.com/downloads'));
+      process.exit(1);
+    }
+
     const result = await cloneIntoExisting(DEFAULT_SYSTEM_REPO, agentsDir);
     if (!result.success) {
       spinner.fail(`Clone failed: ${result.error}`);
