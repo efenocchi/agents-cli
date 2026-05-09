@@ -407,6 +407,9 @@ async function spawnAgent(options: ExecOptions): Promise<SpawnResult> {
       shell: false,
     });
 
+    // Mark startup time (time from function call to process spawn)
+    timer.mark('startup');
+
     if (!interactive && piped && child.stdout) {
       child.stdout.pipe(process.stdout);
     }
@@ -425,22 +428,22 @@ async function spawnAgent(options: ExecOptions): Promise<SpawnResult> {
       });
     }
 
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
     if (timeoutMs) {
-      timer = setTimeout(() => {
+      timeoutTimer = setTimeout(() => {
         child.kill('SIGTERM');
         setTimeout(() => child.kill('SIGKILL'), 5000);
       }, timeoutMs);
     }
 
     child.on('error', (err) => {
-      if (timer) clearTimeout(timer);
-      done({ error: err.message, exitCode: -1 });
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      timer.end({ error: err.message, exitCode: -1, status: 'error' });
       reject(err);
     });
     child.on('close', (code) => {
-      if (timer) clearTimeout(timer);
-      done({ exitCode: code ?? 0 });
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      timer.end({ exitCode: code ?? 0, status: code === 0 ? 'success' : 'failed' });
       resolve({ exitCode: code ?? 0, stderr: stderrBuffer });
     });
   });
