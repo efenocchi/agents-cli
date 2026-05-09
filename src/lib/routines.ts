@@ -411,3 +411,74 @@ export function installJobFromSource(sourcePath: string, name: string): { succes
     return { success: false, error: (err as Error).message };
   }
 }
+
+/** List all job names that have run directories. */
+export function listJobsWithRuns(): string[] {
+  const runsDir = getRunsDir();
+  if (!fs.existsSync(runsDir)) return [];
+  return fs.readdirSync(runsDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name);
+}
+
+/** Count total runs across all jobs. */
+export function countAllRuns(): number {
+  let total = 0;
+  for (const jobName of listJobsWithRuns()) {
+    total += listRuns(jobName).length;
+  }
+  return total;
+}
+
+/** Preview runs that would be pruned (keeping only the most recent `keep` per job). */
+export function previewRunsPrune(keep: number): Array<{ jobName: string; runId: string; startedAt: string }> {
+  const toPrune: Array<{ jobName: string; runId: string; startedAt: string }> = [];
+  for (const jobName of listJobsWithRuns()) {
+    const runs = listRuns(jobName);
+    if (runs.length > keep) {
+      const toRemove = runs.slice(0, runs.length - keep);
+      for (const run of toRemove) {
+        toPrune.push({ jobName, runId: run.runId, startedAt: run.startedAt });
+      }
+    }
+  }
+  return toPrune;
+}
+
+/** Delete old runs, keeping only the most recent `keep` per job. Returns bytes freed and run count. */
+export function pruneRuns(keep: number): { deleted: number; bytesFreed: number } {
+  let deleted = 0;
+  let bytesFreed = 0;
+
+  for (const jobName of listJobsWithRuns()) {
+    const runs = listRuns(jobName);
+    if (runs.length <= keep) continue;
+
+    const toRemove = runs.slice(0, runs.length - keep);
+    for (const run of toRemove) {
+      const runDir = getRunDir(jobName, run.runId);
+      bytesFreed += getDirSize(runDir);
+      fs.rmSync(runDir, { recursive: true, force: true });
+      deleted++;
+    }
+  }
+
+  return { deleted, bytesFreed };
+}
+
+function getDirSize(dirPath: string): number {
+  if (!fs.existsSync(dirPath)) return 0;
+  let size = 0;
+  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      size += getDirSize(fullPath);
+    } else {
+      try {
+        size += fs.statSync(fullPath).size;
+      } catch { /* ignore */ }
+    }
+  }
+  return size;
+}
