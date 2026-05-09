@@ -38,7 +38,7 @@ import {
   resolveConfiguredAgentTargets,
   resolveVersionAlias,
 } from '../lib/versions.js';
-import { getAgentsDir } from '../lib/state.js';
+import { getUserAgentsDir } from '../lib/state.js';
 import { isPromptCancelled, isInteractiveTerminal, requireInteractiveSelection } from './utils.js';
 import {
   showResourceList,
@@ -228,7 +228,7 @@ Examples:
         process.exit(1);
       }
 
-      const localPath = getAgentsDir();
+      const localPath = getUserAgentsDir();
       const manifest = readManifest(localPath) || createDefaultManifest();
 
       manifest.mcp = manifest.mcp || {};
@@ -485,7 +485,7 @@ Examples:
   agents mcp register --agents codex@0.116.0
 `)
     .action(async (name: string | undefined, options) => {
-      const localPath = getAgentsDir();
+      const localPath = getUserAgentsDir();
       const manifest = readManifest(localPath);
 
       if (!manifest?.mcp) {
@@ -574,7 +574,7 @@ function buildMcpRows(opts: {
   const centralServers = new Map<string, InstalledMcpServer>();
   for (const s of listMcpServerConfigs()) centralServers.set(s.name, s);
 
-  const manifest = readManifest(getAgentsDir());
+  const manifest = readManifest(getUserAgentsDir());
   const manifestEntries = manifest?.mcp || {};
 
   const targetPairs = iterMcpCapableVersions({

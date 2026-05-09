@@ -96,7 +96,7 @@ export class BrowserService {
       id: finalTaskId,
       profile: effectiveProfileName,
       windowTargetId,
-      tabIds: [],
+      tabIds: conn.electron && windowTargetId ? [windowTargetId] : [],
       createdAt: Date.now(),
       pid: conn.pid,
     };
