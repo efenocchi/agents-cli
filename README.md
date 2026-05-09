@@ -53,6 +53,7 @@ Also available as `ag` -- all commands work with both `agents` and `ag`.
 - [PTY](#pty)
 - [Portable setup](#portable-setup)
 - [Private skills](#private-skills)
+- [Security & Privacy](#security--privacy)
 - [Compatibility](#compatibility)
 - [FAQ](#faq)
 
@@ -450,6 +451,70 @@ agents repo remove acme   # Unregister and delete the clone
 ```
 
 Extras clone into `~/.agents-system/.repos/<alias>/` and ship the same layout as the primary (`skills/`, `commands/`, `hooks/`, `rules/`). Their contents merge into agent version homes after the primary's — so `~/.agents/` always wins on name collisions. `agents skills list` shows which repo each skill came from.
+
+---
+
+## Security & Privacy
+
+**Everything stays on your machine.** No telemetry, no cloud sync (unless you opt into iCloud Keychain for secrets), no phone-home. Here's exactly what `agents-cli` stores locally and why.
+
+### Audit logs
+
+Every agent run, version install, browser launch, and secrets access is logged to `~/.agents/logs/events-YYYY-MM-DD.jsonl`. This gives you a complete audit trail of what agents did on your machine.
+
+```bash
+# What gets logged (example event):
+{
+  "ts": "2026-05-09T10:23:45Z",
+  "event": "agent.run.end",
+  "agent": "claude",
+  "version": "2.1.121",
+  "prompt": "Fix the auth bug in...",  # truncated to 200 chars
+  "durationMs": 45230,
+  "exitCode": 0,
+  "hostname": "your-mac",
+  "platform": "darwin"
+}
+```
+
+**What's logged:** Operation type, agent, version, timing, truncated prompts (first 200 chars), exit codes, errors. **What's NOT logged:** Full prompts, outputs, file contents, secret values (only bundle names).
+
+**Permissions:** Logs directory is `0700` (owner-only), files are `0600`. Only you can read them.
+
+**Retention:** 30 days by default, then auto-pruned.
+
+**Opt out:** Set `AGENTS_DISABLE_AUDIT_LOG=1` in your shell to disable completely.
+
+### Session search
+
+Conversations with Claude, Codex, Gemini, and other agents scatter across their native storage. Session search indexes them locally so you can find any conversation:
+
+```bash
+agents sessions "auth middleware"     # Full-text search across all agents
+agents sessions --agent claude --since 7d
+```
+
+The index lives at `~/.agents/sessions/sessions.db` (SQLite + FTS5). Nothing leaves your machine. See [Sessions](#sessions-across-agents) for full usage.
+
+### Secrets
+
+API keys and credentials are stored in macOS Keychain, never in plaintext files. Bundle definitions also live in Keychain.
+
+```bash
+agents secrets create my-keys
+agents secrets add my-keys API_KEY    # Prompts for value, stores in Keychain
+```
+
+With `--icloud-sync`, secrets sync via iCloud Keychain to your other Macs. Without it, they stay device-local. See [Secrets](#secrets) for full usage.
+
+### Summary
+
+| Data | Location | Who can read | Opt out |
+|------|----------|--------------|---------|
+| Audit logs | `~/.agents/logs/` | You only (0600) | `AGENTS_DISABLE_AUDIT_LOG=1` |
+| Session index | `~/.agents/sessions/` | You only | Delete the directory |
+| Secrets | macOS Keychain | You + apps you authorize | Don't use `agents secrets` |
+| Config | `~/.agents/` | You only | N/A |
 
 ---
 
