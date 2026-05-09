@@ -271,7 +271,7 @@ Examples:
             counts[e.kind] = (counts[e.kind] || 0) + 1;
           }
           const breakdown = Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ');
-          console.log(chalk.gray(`[secrets] ${bundleName}: ${entries.length} keys (${breakdown})`));
+          console.log(chalk.gray(`[secrets] Resolved ${bundleName}: ${entries.length} keys (${breakdown})`));
           secretsEnv = { ...secretsEnv, ...resolveBundleEnv(bundle) };
         } catch (err) {
           console.error(chalk.red((err as Error).message));
