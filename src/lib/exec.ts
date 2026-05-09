@@ -11,7 +11,7 @@ import type { AgentId } from './types.js';
 import { parseTimeout } from './routines.js';
 import { getVersionHomePath, isVersionInstalled, resolveVersion } from './versions.js';
 import { resolveModel, buildReasoningFlags } from './models.js';
-import { emitStart, maybeRotate } from './events.js';
+import { emitStart, maybeRotate, createTimer, truncate } from './events.js';
 
 /** Agent execution modes controlling tool access and autonomy level. */
 export type ExecMode = 'plan' | 'edit' | 'full';
@@ -378,13 +378,17 @@ async function spawnAgent(options: ExecOptions): Promise<SpawnResult> {
   const interactive = options.interactive === true || options.prompt === undefined;
 
   maybeRotate();
-  const done = emitStart('agent.run.start', {
+  const timer = createTimer('agent.run', {
     agent: options.agent,
     version: options.version,
     cwd: options.cwd || process.cwd(),
     mode: options.mode,
     model: options.model,
     interactive,
+    sessionId: options.sessionId,
+    prompt: truncate(options.prompt, 200),
+    command: executable,
+    args: args.slice(0, 10),
   });
 
   return new Promise((resolve, reject) => {
