@@ -10,7 +10,7 @@ import * as fsSync from 'fs';
 import * as path from 'path';
 import { randomBytes } from 'crypto';
 import lockfile from 'proper-lockfile';
-import { getUserAgentsDir } from '../state.js';
+import { getTeamsDir } from '../state.js';
 
 /** Metadata for a registered team. */
 export interface TeamMeta {
@@ -25,7 +25,7 @@ export interface TeamMeta {
 export type TeamRegistry = Record<string, TeamMeta>;
 
 async function registryPath(): Promise<string> {
-  return path.join(getUserAgentsDir(), 'teams', 'registry.json');
+  return path.join(getTeamsDir(), 'registry.json');
 }
 
 /**

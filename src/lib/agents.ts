@@ -17,7 +17,7 @@ import * as TOML from 'smol-toml';
 import chalk from 'chalk';
 import type { AgentConfig, AgentId } from './types.js';
 import { walkForFiles } from './fs-walk.js';
-import { getVersionsDir, getShimsDir, getAgentsDir } from './state.js';
+import { getVersionsDir, getShimsDir, getCliVersionCachePath } from './state.js';
 import { resolveVersion, getVersionHomePath, getBinaryPath } from './versions.js';
 import { loadClaudeOauth } from './usage.js';
 
@@ -42,7 +42,7 @@ export const CODEX_HOOKS_MIN_VERSION = '0.116.0';
 /** Minimum Gemini CLI version that supports the hooks system (v0.26.0, Jan 2026). */
 export const GEMINI_HOOKS_MIN_VERSION = '0.26.0';
 
-const CLI_VERSION_CACHE_PATH = path.join(getAgentsDir(), '.cli-version-cache.json');
+const CLI_VERSION_CACHE_PATH = getCliVersionCachePath();
 
 interface CliVersionCacheEntry {
   binaryPath: string;

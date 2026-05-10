@@ -16,9 +16,9 @@ function writeUpdateCache(tempHome: string): void {
     fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf-8')
   ) as { version: string };
 
-  fs.mkdirSync(path.join(tempHome, '.agents'), { recursive: true });
+  fs.mkdirSync(path.join(tempHome, '.agents', '.cache'), { recursive: true });
   fs.writeFileSync(
-    path.join(tempHome, '.agents', '.update-check'),
+    path.join(tempHome, '.agents', '.cache', '.update-check'),
     JSON.stringify({ lastCheck: Date.now(), latestVersion: packageJson.version }),
     'utf-8'
   );
@@ -146,7 +146,7 @@ function writeGeminiSession(
   timestamp: string,
   version = '0.29.5',
 ): void {
-  const versionHome = path.join(tempHome, '.agents', 'versions', 'gemini', version, 'home');
+  const versionHome = path.join(tempHome, '.agents', '.history', 'versions', 'gemini', version, 'home');
   const geminiHome = path.join(versionHome, '.gemini');
   const projectHash = crypto.createHash('sha256').update(cwd).digest('hex');
   const chatsDir = path.join(geminiHome, 'tmp', projectHash, 'chats');
@@ -195,7 +195,7 @@ function writeGeminiSession(
 }
 
 function writeOpenClawSetup(tempHome: string, version = '2026.3.8'): string {
-  const managedHome = path.join(tempHome, '.agents', 'versions', 'openclaw', version, 'home', '.openclaw');
+  const managedHome = path.join(tempHome, '.agents', '.history', 'versions', 'openclaw', version, 'home', '.openclaw');
   fs.mkdirSync(managedHome, { recursive: true });
 
   const activeHome = path.join(tempHome, '.openclaw');

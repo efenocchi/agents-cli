@@ -13,6 +13,8 @@ import * as yaml from 'yaml';
 const HOME = os.homedir();
 const SYSTEM_DIR = path.join(HOME, '.agents-system');
 const USER_DIR = path.join(HOME, '.agents');
+const HISTORY_DIR = path.join(USER_DIR, '.history');
+const CACHE_DIR = path.join(USER_DIR, '.cache');
 
 /**
  * Move ~/.agents-system/agents.yaml -> ~/.agents/agents.yaml.
@@ -463,7 +465,9 @@ function repairAgentConfigSymlinks(): void {
 
   let repaired = 0;
   for (const { agent, version } of defaults) {
-    const userTarget = path.join(USER_DIR, 'versions', agent, version, 'home', `.${agent}`);
+    const userTarget = fs.existsSync(path.join(HISTORY_DIR, 'versions', agent, version, 'home', `.${agent}`))
+      ? path.join(HISTORY_DIR, 'versions', agent, version, 'home', `.${agent}`)
+      : path.join(USER_DIR, 'versions', agent, version, 'home', `.${agent}`);
     if (!fs.existsSync(userTarget)) continue;
 
     const symlinkPath = path.join(HOME, `.${agent}`);
@@ -492,6 +496,206 @@ function repairAgentConfigSymlinks(): void {
   }
 }
 
+/**
+ * Move a directory from `src` to `dest`. No-op when src is absent. When dest
+ * already exists, merge by copying everything that isn't already there, then
+ * remove the source. Idempotent: re-running converges without duplicating.
+ *
+ * The merge-on-collision behavior matters because `ensureAgentsDir()` may have
+ * pre-created an empty `dest` during startup before the migrator gets to run.
+ */
+function moveDirOnce(src: string, dest: string): void {
+  if (!fs.existsSync(src)) return;
+
+  if (!fs.existsSync(dest)) {
+    try {
+      fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
+      fs.renameSync(src, dest);
+      return;
+    } catch {
+      /* fall through to copy + remove */
+    }
+  }
+
+  try {
+    copyDirSkipExisting(src, dest);
+    fs.rmSync(src, { recursive: true, force: true });
+  } catch { /* best-effort */ }
+}
+
+/**
+ * Move a single file from `src` to `dest`. No-op when src is absent. When
+ * dest exists, the source is simply deleted (the in-place version is treated
+ * as the canonical state). Idempotent.
+ */
+function moveFileOnce(src: string, dest: string): void {
+  if (!fs.existsSync(src)) return;
+  if (fs.existsSync(dest)) {
+    try { fs.unlinkSync(src); } catch { /* best-effort */ }
+    return;
+  }
+  try {
+    fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
+    fs.renameSync(src, dest);
+  } catch {
+    try {
+      fs.copyFileSync(src, dest);
+      fs.unlinkSync(src);
+    } catch { /* best-effort */ }
+  }
+}
+
+/** Remove a directory tree if it exists and contains no files (best-effort). */
+function rmEmptyDirTree(dir: string): void {
+  if (!fs.existsSync(dir)) return;
+  try {
+    const entries = fs.readdirSync(dir);
+    for (const entry of entries) {
+      const child = path.join(dir, entry);
+      try {
+        const stat = fs.statSync(child);
+        if (stat.isDirectory()) rmEmptyDirTree(child);
+      } catch { /* skip */ }
+    }
+    if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir);
+  } catch { /* best-effort */ }
+}
+
+/**
+ * Move durable runtime data into ~/.agents/.history/.
+ *
+ * Sources cleared:
+ *   ~/.agents/sessions/   -> ~/.agents/.history/sessions/
+ *   ~/.agents/versions/   -> ~/.agents/.history/versions/
+ *   ~/.agents/.trash/     -> ~/.agents/.history/trash/
+ *   ~/.agents/.backups/   -> ~/.agents/.history/backups/
+ *   ~/.agents/routines/runs/ -> ~/.agents/.history/runs/
+ *   ~/.agents/teams/agents/  -> ~/.agents/.history/teams/agents/
+ *
+ * Idempotent — skips entries whose destination already exists.
+ */
+function migrateRuntimeToHistory(): void {
+  moveDirOnce(path.join(USER_DIR, 'sessions'), path.join(HISTORY_DIR, 'sessions'));
+  moveDirOnce(path.join(USER_DIR, 'versions'), path.join(HISTORY_DIR, 'versions'));
+  // Some installs left both `.trash/` (current) and `trash/` (legacy lowercase).
+  // Move whichever exist into the history bucket.
+  moveDirOnce(path.join(USER_DIR, '.trash'), path.join(HISTORY_DIR, 'trash'));
+  moveDirOnce(path.join(USER_DIR, 'trash'), path.join(HISTORY_DIR, 'trash'));
+  moveDirOnce(path.join(USER_DIR, '.backups'), path.join(HISTORY_DIR, 'backups'));
+  moveDirOnce(path.join(USER_DIR, 'routines', 'runs'), path.join(HISTORY_DIR, 'runs'));
+  moveDirOnce(path.join(USER_DIR, 'teams', 'agents'), path.join(HISTORY_DIR, 'teams', 'agents'));
+
+  // Drop any empty leftover skeletons created mid-rename (e.g. `versions/<agent>/<v>/home/`
+  // recreated by a concurrent process). The real data is already under .history/.
+  rmEmptyDirTree(path.join(USER_DIR, 'versions'));
+  rmEmptyDirTree(path.join(USER_DIR, 'sessions'));
+  // Old empty zero-byte sessions.db at user root is obsolete once the new db lives at
+  // .history/sessions/sessions.db.
+  const oldSessionsDb = path.join(USER_DIR, 'sessions.db');
+  if (fs.existsSync(oldSessionsDb)) {
+    try {
+      if (fs.statSync(oldSessionsDb).size === 0) fs.unlinkSync(oldSessionsDb);
+    } catch { /* best-effort */ }
+  }
+}
+
+/**
+ * Move regenerable runtime data into ~/.agents/.cache/.
+ *
+ * Sources cleared:
+ *   ~/.agents/shims/         -> ~/.agents/.cache/shims/
+ *   ~/.agents/bin/           -> ~/.agents/.cache/bin/
+ *   ~/.agents/packages/      -> ~/.agents/.cache/packages/
+ *   ~/.agents/plugins/       -> ~/.agents/.cache/plugins/
+ *   ~/.agents/cloud/         -> ~/.agents/.cache/cloud/
+ *   ~/.agents/drive/         -> ~/.agents/.cache/drive/
+ *   ~/.agents/terminals/     -> ~/.agents/.cache/terminals/
+ *   ~/.agents/logs/          -> ~/.agents/.cache/logs/
+ *   ~/.agents/companion/      -> ~/.agents/.cache/companion/
+ *   ~/.agents/runtime/       -> ~/.agents/.cache/state/
+ *   ~/.agents/cache/         -> ~/.agents/.cache/   (flatten — already a cache subdir)
+ *   ~/.agents/helpers/{daemon,pty,...} -> ~/.agents/.cache/helpers/...
+ *   ~/.agents-system/helpers/{daemon,pty,...} -> ~/.agents/.cache/helpers/...
+ *   ~/.agents/browser/<profile>/  -> ~/.agents/.cache/browser/<profile>/  (profiles/ dir stays)
+ *   ~/.agents-system/.fetch/ -> ~/.agents/.cache/.fetch/
+ *
+ * Loose dot-files at user root that are runtime caches:
+ *   ~/.agents/.cli-version-cache.json -> ~/.agents/.cache/.cli-version-cache.json
+ *   ~/.agents/.update-check           -> ~/.agents/.cache/.update-check
+ *   ~/.agents/.migrated               -> ~/.agents/.cache/.migrated
+ *   ~/.agents/watchdog.log            -> ~/.agents/.cache/logs/watchdog.log
+ *
+ * Idempotent.
+ */
+function migrateRuntimeToCache(): void {
+  moveDirOnce(path.join(USER_DIR, 'shims'), path.join(CACHE_DIR, 'shims'));
+  moveDirOnce(path.join(USER_DIR, 'bin'), path.join(CACHE_DIR, 'bin'));
+  moveDirOnce(path.join(USER_DIR, 'packages'), path.join(CACHE_DIR, 'packages'));
+  moveDirOnce(path.join(USER_DIR, 'plugins'), path.join(CACHE_DIR, 'plugins'));
+  moveDirOnce(path.join(USER_DIR, 'cloud'), path.join(CACHE_DIR, 'cloud'));
+  moveDirOnce(path.join(USER_DIR, 'drive'), path.join(CACHE_DIR, 'drive'));
+  // terminals/ stays at the top level: the agents-cli IDE extension publishes
+  // ~/.agents/terminals/live-terminals.json and would race with the move on
+  // VS Code restart. Leave the path where the extension expects it.
+  moveDirOnce(path.join(USER_DIR, 'logs'), path.join(CACHE_DIR, 'logs'));
+  moveDirOnce(path.join(USER_DIR, 'companion'), path.join(CACHE_DIR, 'companion'));
+  moveDirOnce(path.join(USER_DIR, 'runtime'), path.join(CACHE_DIR, 'state'));
+
+  // Pre-existing user `cache/` dir (claude usage cache, cloud-runs, etc.) — flatten
+  // so it's not confused with the new bucket. Its contents merge into .cache/.
+  const oldCache = path.join(USER_DIR, 'cache');
+  if (fs.existsSync(oldCache) && fs.statSync(oldCache).isDirectory()) {
+    try {
+      fs.mkdirSync(CACHE_DIR, { recursive: true, mode: 0o700 });
+      copyDirSkipExisting(oldCache, CACHE_DIR);
+      fs.rmSync(oldCache, { recursive: true, force: true });
+    } catch { /* best-effort */ }
+  }
+
+  // helpers/ at user-root and system-root → .cache/helpers/
+  for (const root of [USER_DIR, SYSTEM_DIR]) {
+    const src = path.join(root, 'helpers');
+    if (!fs.existsSync(src)) continue;
+    const destBase = path.join(CACHE_DIR, 'helpers');
+    try {
+      fs.mkdirSync(destBase, { recursive: true, mode: 0o700 });
+      copyDirSkipExisting(src, destBase);
+      fs.rmSync(src, { recursive: true, force: true });
+    } catch { /* best-effort */ }
+  }
+
+  // browser runtime — keep browser/profiles/ in place, move everything else under
+  // browser/ into .cache/browser/.
+  const browserSrc = path.join(USER_DIR, 'browser');
+  if (fs.existsSync(browserSrc) && fs.statSync(browserSrc).isDirectory()) {
+    let entries: string[] = [];
+    try { entries = fs.readdirSync(browserSrc); } catch { /* skip */ }
+    for (const entry of entries) {
+      if (entry === 'profiles') continue;
+      const src = path.join(browserSrc, entry);
+      const dest = path.join(CACHE_DIR, 'browser', entry);
+      moveDirOnce(src, dest);
+    }
+  }
+
+  // System-root operational state that should not live in the npm-shipped repo.
+  moveDirOnce(path.join(SYSTEM_DIR, '.fetch'), path.join(CACHE_DIR, '.fetch'));
+  moveDirOnce(path.join(SYSTEM_DIR, 'browser'), path.join(CACHE_DIR, 'browser'));
+  moveDirOnce(path.join(SYSTEM_DIR, 'state'), path.join(CACHE_DIR, 'state'));
+  moveDirOnce(path.join(SYSTEM_DIR, 'companion'), path.join(CACHE_DIR, 'companion'));
+  moveFileOnce(path.join(SYSTEM_DIR, '.cli-version-cache.json'), path.join(CACHE_DIR, '.cli-version-cache.json'));
+  moveFileOnce(path.join(SYSTEM_DIR, '.update-check'), path.join(CACHE_DIR, '.update-check'));
+  moveFileOnce(path.join(SYSTEM_DIR, '.migrated'), path.join(CACHE_DIR, '.migrated'));
+  moveFileOnce(path.join(SYSTEM_DIR, '.models-cache.json'), path.join(CACHE_DIR, '.models-cache.json'));
+
+  // Loose dot-files at user root that belong in the cache bucket.
+  moveFileOnce(path.join(USER_DIR, '.cli-version-cache.json'), path.join(CACHE_DIR, '.cli-version-cache.json'));
+  moveFileOnce(path.join(USER_DIR, '.update-check'), path.join(CACHE_DIR, '.update-check'));
+  moveFileOnce(path.join(USER_DIR, '.migrated'), path.join(CACHE_DIR, '.migrated'));
+  moveFileOnce(path.join(USER_DIR, '.models-cache.json'), path.join(CACHE_DIR, '.models-cache.json'));
+  moveFileOnce(path.join(USER_DIR, 'watchdog.log'), path.join(CACHE_DIR, 'logs', 'watchdog.log'));
+}
+
 /** Run all idempotent migrations. Safe to call multiple times. */
 export function runMigration(): void {
   migrateAgentsYaml();
@@ -500,7 +704,6 @@ export function runMigration(): void {
   migratePromptcutsIntoHooks();
   migrateSystemVersionsToUser();
   mergeOverlappingVersionHomes();
-  repairAgentConfigSymlinks();
   migrateRunsIntoRoutines();
   migrateTrashToHidden();
   migrateBackupsToHidden();
@@ -511,4 +714,9 @@ export function runMigration(): void {
   cleanupUserConfigJson();
   cleanupEmptyTopLevelRuns();
   foldUserHooksYamlIntoAgentsYaml();
+  // Bucket moves: collapse runtime state into ~/.agents/.history and ~/.agents/.cache.
+  // Symlink repair runs LAST so it can find the post-move version homes.
+  migrateRuntimeToHistory();
+  migrateRuntimeToCache();
+  repairAgentConfigSymlinks();
 }

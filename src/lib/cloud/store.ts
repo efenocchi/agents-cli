@@ -11,9 +11,9 @@ import * as path from 'path';
 import * as os from 'os';
 import Database from '../sqlite.js';
 import type { CloudTask, CloudProviderId, CloudTaskStatus } from './types.js';
-import { getUserAgentsDir } from '../state.js';
+import { getCloudDir } from '../state.js';
 
-const CLOUD_DIR = path.join(getUserAgentsDir(), 'cloud');
+const CLOUD_DIR = getCloudDir();
 const DB_PATH = path.join(CLOUD_DIR, 'tasks.db');
 
 const SCHEMA = `

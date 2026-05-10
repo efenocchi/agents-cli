@@ -15,11 +15,11 @@ import * as path from 'path';
 import * as os from 'os';
 import * as yaml from 'yaml';
 import type { SessionAgentId, SessionMeta } from './types.js';
-import { getAgentsDir } from '../state.js';
+import { getCacheDir } from '../state.js';
 
 const PROXY_BASE = process.env.RUSH_PROXY_BASE ?? 'https://api.prix.dev';
 const USER_YAML = path.join(os.homedir(), '.rush', 'user.yaml');
-const CLOUD_CACHE_DIR = path.join(getAgentsDir(), 'cache', 'cloud-runs');
+const CLOUD_CACHE_DIR = path.join(getCacheDir(), 'cloud-runs');
 
 interface UserYaml {
   session?: {

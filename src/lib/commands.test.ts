@@ -56,7 +56,7 @@ function runCommandsExpression(home: string, expression: string): unknown {
  */
 function scaffoldInstalledVersion(home: string, agent: string, version: string): void {
   const cliCommand = agent; // claude -> 'claude', gemini -> 'gemini', codex -> 'codex'
-  const binaryDir = path.join(home, '.agents', 'versions', agent, version, 'node_modules', '.bin');
+  const binaryDir = path.join(home, '.agents', '.history', 'versions', agent, version, 'node_modules', '.bin');
   fs.mkdirSync(binaryDir, { recursive: true });
   fs.writeFileSync(path.join(binaryDir, cliCommand), '#!/bin/sh\necho fake', 'utf-8');
   fs.chmodSync(path.join(binaryDir, cliCommand), 0o755);
@@ -71,12 +71,12 @@ function writeSystemCommand(home: string, name: string, content: string): void {
 
 /** Path to the trash commands dir for a given HOME: home/.agents/.trash/commands */
 function trashCommandsDir(home: string): string {
-  return path.join(home, '.agents', '.trash', 'commands');
+  return path.join(home, '.agents', '.history', 'trash', 'commands');
 }
 
 /** Path to the version home for an agent: home/.agents/versions/<agent>/<ver>/home */
 function versionHomePath(home: string, agent: string, version: string): string {
-  return path.join(home, '.agents', 'versions', agent, version, 'home');
+  return path.join(home, '.agents', '.history', 'versions', agent, version, 'home');
 }
 
 describe('version command management', () => {

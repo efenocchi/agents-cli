@@ -2,7 +2,7 @@
  * Active-session detection across every context an agent can run in:
  *
  *   - `terminal` — agents launched from VS Code / Cursor / Codium via the
- *     agents-cli extension. Published to `~/.agents/runtime/live-terminals.json`
+ *     agents-cli extension. Published to `~/.agents/.cache/terminals/live-terminals.json`
  *     with PID + session UUID per entry.
  *   - `teams`    — agents spawned by `agents teams add`, tracked in
  *     `~/.agents/teams/agents/<id>/meta.json` with a PID the manager polls.
@@ -23,7 +23,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { listActiveTasks } from '../cloud/store.js';
 import { AgentManager } from '../teams/agents.js';
-import { getUserAgentsDir } from '../state.js';
+import { getTerminalsDir } from '../state.js';
 import { buildClaudeLabelMap } from './discover.js';
 import { extractSessionTopic } from './prompt.js';
 
@@ -61,7 +61,7 @@ export interface ActiveQueryOptions {
 }
 
 const HOME = os.homedir();
-const LIVE_TERMINALS_FILE = path.join(getUserAgentsDir(), 'runtime', 'live-terminals.json');
+const LIVE_TERMINALS_FILE = path.join(getTerminalsDir(), 'live-terminals.json');
 
 /**
  * A process is classified `running` if its session file was touched in the

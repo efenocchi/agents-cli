@@ -17,6 +17,7 @@ import {
   getSystemAgentsDir,
   getUserAgentsDir,
   getEnabledExtraRepos,
+  getFetchCacheDir,
 } from './state.js';
 import { lockFilePath, statusFilePath, type FetchStatusMarker } from './auto-pull.js';
 
@@ -30,7 +31,7 @@ interface RepoTarget {
 }
 
 function ensureFetchDir(): string {
-  const dir = path.join(getSystemAgentsDir(), '.fetch');
+  const dir = getFetchCacheDir();
   if (!fs.existsSync(dir)) {
     try { fs.mkdirSync(dir, { recursive: true }); } catch { /* ignore */ }
   }

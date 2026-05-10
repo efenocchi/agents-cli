@@ -29,19 +29,30 @@ describe('state paths', () => {
     expect(getSkillsDir()).toBe(path.join(systemRoot, 'skills'));
   });
 
-  it('stores operational state under ~/.agents', () => {
+  it('stores durable runtime state under ~/.agents/.history', () => {
     const userRoot = path.join(os.homedir(), '.agents');
+    const history = path.join(userRoot, '.history');
 
-    expect(getPackagesDir()).toBe(path.join(userRoot, 'packages'));
+    expect(getVersionsDir()).toBe(path.join(history, 'versions'));
+    expect(getRunsDir()).toBe(path.join(history, 'runs'));
+    expect(getBackupsDir()).toBe(path.join(history, 'backups'));
+    expect(getTrashDir()).toBe(path.join(history, 'trash'));
+    expect(getTrashVersionsDir()).toBe(path.join(history, 'trash', 'versions'));
+  });
+
+  it('stores regenerable runtime state under ~/.agents/.cache', () => {
+    const userRoot = path.join(os.homedir(), '.agents');
+    const cache = path.join(userRoot, '.cache');
+
+    expect(getPackagesDir()).toBe(path.join(cache, 'packages'));
+    expect(getShimsDir()).toBe(path.join(cache, 'shims'));
+    expect(getPluginsDir()).toBe(path.join(cache, 'plugins'));
+    expect(getDriveDir()).toBe(path.join(cache, 'drive'));
+  });
+
+  it('keeps definitions/configs at the top of ~/.agents', () => {
+    const userRoot = path.join(os.homedir(), '.agents');
     expect(getRoutinesDir()).toBe(path.join(userRoot, 'routines'));
-    expect(getRunsDir()).toBe(path.join(userRoot, 'routines', 'runs'));
-    expect(getVersionsDir()).toBe(path.join(userRoot, 'versions'));
-    expect(getShimsDir()).toBe(path.join(userRoot, 'shims'));
-    expect(getBackupsDir()).toBe(path.join(userRoot, '.backups'));
-    expect(getPluginsDir()).toBe(path.join(userRoot, 'plugins'));
-    expect(getDriveDir()).toBe(path.join(userRoot, 'drive'));
-    expect(getTrashDir()).toBe(path.join(userRoot, '.trash'));
-    expect(getTrashVersionsDir()).toBe(path.join(userRoot, '.trash', 'versions'));
   });
 });
 

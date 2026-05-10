@@ -14,11 +14,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
-import { getSystemAgentsDir } from './state.js';
+import { getFetchCacheDir } from './state.js';
 
 /** Where lock files and per-repo status markers live. */
 function fetchStateDir(): string {
-  return path.join(getSystemAgentsDir(), '.fetch');
+  return getFetchCacheDir();
 }
 
 /** Per-repo lock file path. mtime acts as a recency check. */
