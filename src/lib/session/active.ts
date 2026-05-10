@@ -24,6 +24,8 @@ import { promisify } from 'util';
 import { listActiveTasks } from '../cloud/store.js';
 import { AgentManager } from '../teams/agents.js';
 import { getUserAgentsDir } from '../state.js';
+import { buildClaudeLabelMap } from './discover.js';
+import { extractSessionTopic } from './prompt.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -39,7 +41,10 @@ export interface ActiveSession {
   pid?: number;
   sessionId?: string;
   cwd?: string;
+  /** User-given name from /rename command. */
   label?: string;
+  /** First meaningful line of the initial prompt (extracted topic). */
+  topic?: string;
   sessionFile?: string;
   startedAtMs?: number;
   status: ActiveStatus;
@@ -119,9 +124,9 @@ function readLiveTerminals(): LiveTerminalEntry[] {
   return Array.from(merged.values());
 }
 
-/** Convert an absolute cwd to the Claude-project folder name (slashes → dashes). */
+/** Convert an absolute cwd to the Claude-project folder name (slashes and dots → dashes). */
 function claudeProjectDirName(cwd: string): string {
-  return cwd.replace(/\//g, '-');
+  return cwd.replace(/[/.]/g, '-');
 }
 
 /**
@@ -165,6 +170,79 @@ function classifyActivity(sessionFile: string | undefined): 'running' | 'idle' {
   }
 }
 
+/**
+ * Extract the first user message's content from a Claude JSONL file.
+ * Reads only the first ~50 lines for speed, since the user message is
+ * typically near the top (after system/queue events).
+ */
+function extractClaudeUserText(parsed: any): string | undefined {
+  const msg = parsed.message;
+  if (!msg?.content) return undefined;
+  const content = Array.isArray(msg.content) ? msg.content : [msg.content];
+  const texts: string[] = [];
+  for (const block of content) {
+    if (typeof block === 'string') texts.push(block);
+    else if (block?.type === 'text' && typeof block.text === 'string') texts.push(block.text);
+  }
+  return texts.join('\n').trim() || undefined;
+}
+
+function quickExtractTopic(sessionFile: string): string | undefined {
+  let fd: number;
+  try {
+    fd = fs.openSync(sessionFile, 'r');
+  } catch {
+    return undefined;
+  }
+
+  try {
+    const chunkSize = 256 * 1024;
+    const maxBytes = 2 * 1024 * 1024;
+    let buffer = '';
+    let totalRead = 0;
+    let linesChecked = 0;
+    const maxLines = 30;
+
+    while (totalRead < maxBytes && linesChecked < maxLines) {
+      const chunk = Buffer.alloc(chunkSize);
+      const bytesRead = fs.readSync(fd, chunk, 0, chunkSize, totalRead);
+      if (bytesRead === 0) break;
+      totalRead += bytesRead;
+      buffer += chunk.toString('utf8', 0, bytesRead);
+
+      let lineStart = 0;
+      let lineEnd: number;
+      while ((lineEnd = buffer.indexOf('\n', lineStart)) !== -1 && linesChecked < maxLines) {
+        const line = buffer.slice(lineStart, lineEnd);
+        lineStart = lineEnd + 1;
+        linesChecked++;
+
+        if (!line.trim()) continue;
+
+        let parsed: any;
+        try {
+          parsed = JSON.parse(line);
+        } catch {
+          continue;
+        }
+
+        if (parsed.type === 'user') {
+          const text = extractClaudeUserText(parsed);
+          if (text) {
+            const topic = extractSessionTopic(text);
+            if (topic) return topic;
+          }
+        }
+      }
+      buffer = buffer.slice(lineStart);
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+
+  return undefined;
+}
+
 /** Live teams teammates. Reuses AgentManager which already polls PIDs via `kill -0`. */
 export async function listTeamsActive(): Promise<ActiveSession[]> {
   const mgr = new AgentManager();
@@ -175,6 +253,7 @@ export async function listTeamsActive(): Promise<ActiveSession[]> {
       a.agentType === 'claude' && a.cwd
         ? findClaudeSessionFile(a.cwd, sessionId ?? undefined)
         : undefined;
+    const topic = sessionFile ? quickExtractTopic(sessionFile) : undefined;
     return {
       context: 'teams',
       kind: a.agentType,
@@ -182,6 +261,7 @@ export async function listTeamsActive(): Promise<ActiveSession[]> {
       sessionId,
       cwd: a.cwd ?? undefined,
       label: a.name ?? undefined,
+      topic,
       sessionFile,
       startedAtMs: a.startedAt.getTime(),
       status: classifyActivity(sessionFile),
@@ -201,11 +281,18 @@ export async function listTerminalsActive(): Promise<ActiveSession[]> {
   const procByPid = new Map<number, ProcRow>();
   for (const r of await readProcessTable()) procByPid.set(r.pid, r);
 
+  // Build label map from Claude's sessions/*.json for /rename support
+  const labelMap = buildClaudeLabelMap();
+
   return entries.map((t): ActiveSession => {
     const sessionFile =
       t.kind === 'claude' && t.cwd
         ? findClaudeSessionFile(t.cwd, t.sessionId)
         : undefined;
+    // Prefer label from live terminal, fall back to Claude's session label
+    const label = t.label ?? (t.sessionId ? labelMap.get(t.sessionId) : undefined) ?? undefined;
+    // Extract topic from session file (first meaningful user message)
+    const topic = sessionFile ? quickExtractTopic(sessionFile) : undefined;
     return {
       context: 'terminal',
       kind: t.kind,
@@ -213,7 +300,8 @@ export async function listTerminalsActive(): Promise<ActiveSession[]> {
       pid: t.pid,
       sessionId: t.sessionId,
       cwd: t.cwd ?? undefined,
-      label: t.label ?? undefined,
+      label,
+      topic,
       sessionFile,
       startedAtMs: t.startedAtMs,
       status: classifyActivity(sessionFile),
@@ -399,6 +487,7 @@ export async function listUnattributedActive(attributed: Set<number>): Promise<A
     const { pid, kind } = candidates[i];
     const cwd = cwds[i];
     const sessionFile = kind === 'claude' && cwd ? findClaudeSessionFile(cwd) : undefined;
+    const topic = sessionFile ? quickExtractTopic(sessionFile) : undefined;
     const host = detectHost(pid, procByPid);
     const context: ActiveContext = host && UI_HOSTS.has(host) ? 'terminal' : 'headless';
     out.push({
@@ -407,6 +496,7 @@ export async function listUnattributedActive(attributed: Set<number>): Promise<A
       host,
       pid,
       cwd,
+      topic,
       sessionFile,
       status: classifyActivity(sessionFile),
     });
