@@ -2,11 +2,18 @@
  * Filesystem layout and persistent state for agents-cli.
  *
  * Two roots:
- *  - ~/.agents-system/ — system repo (npm-shipped resources and canonical read-side defaults)
- *  - ~/.agents/        — user repo  (user-authored commands, skills, hooks, rules, mcp,
- *                                    permissions, subagents, profiles, secrets, agents.yaml,
- *                                    packages, routines, runs, versions, shims, backups, plugins,
- *                                    drive, trash)
+ *  - ~/.agents-system/ — system repo (npm-shipped resources, read-only defaults)
+ *  - ~/.agents/        — user repo (resources + agents.yaml + operational state)
+ *
+ * Inside ~/.agents/, top-level paths hold ONLY resources + agents.yaml.
+ * Operational state lives in two sibling buckets:
+ *
+ *  - ~/.agents/.history/ — durable runtime data (sessions, versions, runs,
+ *                          teams/agents, trash, backups). Backed up by
+ *                          `agents repo push`.
+ *  - ~/.agents/.cache/   — regenerable runtime data (shims, packages, helpers
+ *                          for daemon/pty, terminals, cloud, drive, browser
+ *                          chrome-data, logs, swarmify). Gitignored.
  *
  * Resolution precedence for resources: project > user > system.
  * Every module that needs a path or reads/writes agents.yaml goes through here.
@@ -48,16 +55,48 @@ const SYSTEM_PROMPTCUTS_FILE = path.join(SYSTEM_AGENTS_DIR, 'hooks', 'promptcuts
 const SYSTEM_MCP_CONFIG_FILE = path.join(SYSTEM_AGENTS_DIR, 'mcp.json');
 const SYSTEM_INSTRUCTIONS_FILE = path.join(SYSTEM_AGENTS_DIR, 'instructions.md');
 
-// User-level operational state
-const PACKAGES_DIR = path.join(USER_AGENTS_DIR, 'packages');
+// ─── User repo operational buckets ────────────────────────────────────────────
+
+/** Durable runtime data (sessions, versions, runs, teams history, trash, backups). */
+const HISTORY_DIR = path.join(USER_AGENTS_DIR, '.history');
+
+/** Regenerable runtime data (shims, packages, helpers, terminals, cloud, drive, logs, browser). */
+const CACHE_DIR = path.join(USER_AGENTS_DIR, '.cache');
+
+// Top-level user dirs (config/definitions only — runtime moves into .history/.cache).
 const ROUTINES_DIR = path.join(USER_AGENTS_DIR, 'routines');
-const RUNS_DIR = path.join(ROUTINES_DIR, 'runs');
-const VERSIONS_DIR = path.join(USER_AGENTS_DIR, 'versions');
-const SHIMS_DIR = path.join(USER_AGENTS_DIR, 'shims');
-const BACKUPS_DIR = path.join(USER_AGENTS_DIR, '.backups');
-const PLUGINS_DIR = path.join(USER_AGENTS_DIR, 'plugins');
-const DRIVE_DIR = path.join(USER_AGENTS_DIR, 'drive');
-const TRASH_DIR = path.join(USER_AGENTS_DIR, '.trash');
+const TEAMS_DIR = path.join(USER_AGENTS_DIR, 'teams');
+const BROWSER_PROFILES_DIR = path.join(USER_AGENTS_DIR, 'browser', 'profiles');
+
+// History bucket (durable).
+const SESSIONS_DIR = path.join(HISTORY_DIR, 'sessions');
+const SESSIONS_DB_PATH = path.join(SESSIONS_DIR, 'sessions.db');
+const VERSIONS_DIR = path.join(HISTORY_DIR, 'versions');
+const RUNS_DIR = path.join(HISTORY_DIR, 'runs');
+const TEAMS_AGENTS_DIR = path.join(HISTORY_DIR, 'teams', 'agents');
+const BACKUPS_DIR = path.join(HISTORY_DIR, 'backups');
+const TRASH_DIR = path.join(HISTORY_DIR, 'trash');
+
+// Cache bucket (regenerable).
+const SHIMS_DIR = path.join(CACHE_DIR, 'shims');
+const BIN_DIR = path.join(CACHE_DIR, 'bin');
+const PACKAGES_DIR = path.join(CACHE_DIR, 'packages');
+const PLUGINS_DIR = path.join(CACHE_DIR, 'plugins');
+const CLOUD_DIR = path.join(CACHE_DIR, 'cloud');
+const DRIVE_DIR = path.join(CACHE_DIR, 'drive');
+const TERMINALS_DIR = path.join(CACHE_DIR, 'terminals');
+const LOGS_DIR = path.join(CACHE_DIR, 'logs');
+const RUNTIME_STATE_DIR = path.join(CACHE_DIR, 'state');
+const SWARMIFY_DIR = path.join(CACHE_DIR, 'swarmify');
+const BROWSER_RUNTIME_DIR = path.join(CACHE_DIR, 'browser');
+const HELPERS_DIR = path.join(CACHE_DIR, 'helpers');
+const DAEMON_DIR = path.join(HELPERS_DIR, 'daemon');
+const PTY_DIR = path.join(HELPERS_DIR, 'pty');
+const FETCH_CACHE_DIR = path.join(CACHE_DIR, '.fetch');
+const CLI_VERSION_CACHE_FILE = path.join(CACHE_DIR, '.cli-version-cache.json');
+const MODELS_CACHE_FILE = path.join(CACHE_DIR, '.models-cache.json');
+const UPDATE_CHECK_FILE = path.join(CACHE_DIR, '.update-check');
+const MIGRATED_SENTINEL_FILE = path.join(CACHE_DIR, '.migrated');
 
 // ─── User resource dirs ───────────────────────────────────────────────────────
 
@@ -242,33 +281,102 @@ export function getUserSecretsDir(): string { return USER_SECRETS_DIR; }
 export function getUserPromptcutsPath(): string { return USER_PROMPTCUTS_FILE; }
 
 // ─── User operational path getters ────────────────────────────────────────────
+//
+// Top-level dirs hold definitions/configs only; runtime data lives under
+// .history/ (durable) or .cache/ (regenerable). See file header.
 
-/** Path to cloned packages (~/.agents/packages/). */
+/** Bucket root for durable runtime data (~/.agents/.history/). */
+export function getHistoryDir(): string { return HISTORY_DIR; }
+
+/** Bucket root for regenerable runtime data (~/.agents/.cache/). */
+export function getCacheDir(): string { return CACHE_DIR; }
+
+/** Path to cloned packages (~/.agents/.cache/packages/). */
 export function getPackagesDir(): string { return PACKAGES_DIR; }
 
 /** Path to routine YAML definitions (~/.agents/routines/). */
 export function getRoutinesDir(): string { return ROUTINES_DIR; }
 
-/** Path to routine execution logs (~/.agents/runs/). */
+/** Path to routine execution logs (~/.agents/.history/runs/). */
 export function getRunsDir(): string { return RUNS_DIR; }
 
-/** Path to installed agent CLI binaries (~/.agents/versions/). */
+/** Path to installed agent CLI binaries (~/.agents/.history/versions/). */
 export function getVersionsDir(): string { return VERSIONS_DIR; }
 
-/** Path to version-switching shim scripts (~/.agents/shims/). */
+/** Path to version-switching shim scripts (~/.agents/.cache/shims/). */
 export function getShimsDir(): string { return SHIMS_DIR; }
 
-/** Path to config backups (~/.agents/backups/). */
+/** Path to per-agent installed CLI binaries (~/.agents/.cache/bin/). */
+export function getBinDir(): string { return BIN_DIR; }
+
+/** Path to config backups (~/.agents/.history/backups/). */
 export function getBackupsDir(): string { return BACKUPS_DIR; }
 
-/** Path to plugin bundles (~/.agents/plugins/). */
+/** Path to plugin bundles (~/.agents/.cache/plugins/). */
 export function getPluginsDir(): string { return PLUGINS_DIR; }
 
-/** Path to synced remote session data (~/.agents/drive/). */
+/** Path to synced remote session data (~/.agents/.cache/drive/). */
 export function getDriveDir(): string { return DRIVE_DIR; }
 
-/** Path to soft-deleted resources (~/.agents/trash/). */
+/** Path to soft-deleted resources (~/.agents/.history/trash/). */
 export function getTrashDir(): string { return TRASH_DIR; }
+
+/** Path to local session indexer storage (~/.agents/.history/sessions/). */
+export function getSessionsDir(): string { return SESSIONS_DIR; }
+
+/** Path to the session index database (~/.agents/.history/sessions.db). */
+export function getSessionsDbPath(): string { return SESSIONS_DB_PATH; }
+
+/** Path to teams config + registry (~/.agents/teams/). */
+export function getTeamsDir(): string { return TEAMS_DIR; }
+
+/** Path to teams execution history (~/.agents/.history/teams/agents/). */
+export function getTeamsAgentsDir(): string { return TEAMS_AGENTS_DIR; }
+
+/** Path to cloud dispatch cache (~/.agents/.cache/cloud/). */
+export function getCloudDir(): string { return CLOUD_DIR; }
+
+/** Path to terminal session metadata (~/.agents/.cache/terminals/). */
+export function getTerminalsDir(): string { return TERMINALS_DIR; }
+
+/** Path to runtime logs (~/.agents/.cache/logs/). */
+export function getLogsDir(): string { return LOGS_DIR; }
+
+/** Path to per-process runtime state (~/.agents/.cache/state/). */
+export function getRuntimeStateDir(): string { return RUNTIME_STATE_DIR; }
+
+/** Path to swarmify-extension scratch (~/.agents/.cache/swarmify/). */
+export function getSwarmifyDir(): string { return SWARMIFY_DIR; }
+
+/** Path to browser profile YAMLs (~/.agents/browser/profiles/). */
+export function getBrowserProfilesDir(): string { return BROWSER_PROFILES_DIR; }
+
+/** Path to browser runtime data — chrome-data, pids (~/.agents/.cache/browser/). */
+export function getBrowserRuntimeDir(): string { return BROWSER_RUNTIME_DIR; }
+
+/** Path to helper subprocess scratch (~/.agents/.cache/helpers/). */
+export function getHelpersDir(): string { return HELPERS_DIR; }
+
+/** Path to scheduler daemon scratch (~/.agents/.cache/helpers/daemon/). */
+export function getDaemonDir(): string { return DAEMON_DIR; }
+
+/** Path to PTY server scratch (~/.agents/.cache/helpers/pty/). */
+export function getPtyDir(): string { return PTY_DIR; }
+
+/** Path to remote-resource auto-pull cache (~/.agents/.cache/.fetch/). */
+export function getFetchCacheDir(): string { return FETCH_CACHE_DIR; }
+
+/** Path to the CLI version cache file (~/.agents/.cache/.cli-version-cache.json). */
+export function getCliVersionCachePath(): string { return CLI_VERSION_CACHE_FILE; }
+
+/** Path to the models cache file (~/.agents/.cache/.models-cache.json). */
+export function getModelsCachePath(): string { return MODELS_CACHE_FILE; }
+
+/** Path to the daily update-check sentinel (~/.agents/.cache/.update-check). */
+export function getUpdateCheckPath(): string { return UPDATE_CHECK_FILE; }
+
+/** Path to the migration sentinel (~/.agents/.cache/.migrated). */
+export function getMigratedSentinelPath(): string { return MIGRATED_SENTINEL_FILE; }
 
 /** Path to soft-deleted version dirs (~/.agents/trash/versions/). */
 export function getTrashVersionsDir(): string { return path.join(TRASH_DIR, 'versions'); }
@@ -338,6 +446,8 @@ export function ensureAgentsDir(): void {
   if (!fs.existsSync(SYSTEM_AGENTS_DIR)) {
     fs.mkdirSync(SYSTEM_AGENTS_DIR, opts);
   }
+  if (!fs.existsSync(HISTORY_DIR)) fs.mkdirSync(HISTORY_DIR, opts);
+  if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, opts);
   if (!fs.existsSync(PACKAGES_DIR)) fs.mkdirSync(PACKAGES_DIR, opts);
   if (!fs.existsSync(ROUTINES_DIR)) fs.mkdirSync(ROUTINES_DIR, opts);
   if (!fs.existsSync(RUNS_DIR)) fs.mkdirSync(RUNS_DIR, opts);

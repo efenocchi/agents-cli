@@ -18,8 +18,8 @@ import * as os from 'os';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const USER_AGENTS_DIR = path.join(os.homedir(), '.agents');
-const LOGS_DIR = path.join(USER_AGENTS_DIR, 'logs');
+// Logs live under the cache bucket — they're regenerable telemetry.
+const LOGS_DIR = path.join(os.homedir(), '.agents', '.cache', 'logs');
 
 /** Default retention period in days. */
 const DEFAULT_RETENTION_DAYS = 30;

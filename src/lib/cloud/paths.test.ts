@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as path from 'path';
-import { getUserAgentsDir } from '../state.js';
+import { getUserAgentsDir, getCloudDir } from '../state.js';
 
 describe('cloud path roots', () => {
   it('reads cloud config from ~/.agents/agents.yaml', async () => {
@@ -11,12 +11,12 @@ describe('cloud path roots', () => {
     );
   });
 
-  it('stores cloud task state and consent under ~/.agents/cloud', () => {
-    expect(path.join(getUserAgentsDir(), 'cloud', 'tasks.db')).toBe(
-      path.join(process.env.HOME!, '.agents', 'cloud', 'tasks.db'),
+  it('stores cloud task state and consent under ~/.agents/.cache/cloud', () => {
+    expect(path.join(getCloudDir(), 'tasks.db')).toBe(
+      path.join(process.env.HOME!, '.agents', '.cache', 'cloud', 'tasks.db'),
     );
-    expect(path.join(getUserAgentsDir(), 'cloud', 'rush-consent.json')).toBe(
-      path.join(process.env.HOME!, '.agents', 'cloud', 'rush-consent.json'),
+    expect(path.join(getCloudDir(), 'rush-consent.json')).toBe(
+      path.join(process.env.HOME!, '.agents', '.cache', 'cloud', 'rush-consent.json'),
     );
   });
 });

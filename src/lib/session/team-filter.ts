@@ -11,14 +11,14 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import type { SessionMeta, TeamOrigin } from './types.js';
-import { getAgentsDir } from '../state.js';
+import { getTeamsAgentsDir } from '../state.js';
 
 const HOME = os.homedir();
 
 // Default path; tests can override via AGENTS_TEAMS_DIR env var.
 /** Resolve the directory containing per-session team metadata files. */
 function teamsAgentsDir(): string {
-  return process.env.AGENTS_TEAMS_DIR ?? path.join(getAgentsDir(), 'teams', 'agents');
+  return process.env.AGENTS_TEAMS_DIR ?? getTeamsAgentsDir();
 }
 
 /**

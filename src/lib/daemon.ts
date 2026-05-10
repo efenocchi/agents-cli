@@ -11,14 +11,13 @@ import { spawn, execSync, execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { getAgentsDir } from './state.js';
+import { getDaemonDir as getDaemonDirRoot } from './state.js';
 import { listJobs as listAllJobs } from './routines.js';
 import { JobScheduler } from './scheduler.js';
 import { executeJobDetached, monitorRunningJobs } from './runner.js';
 import { BrowserService } from './browser/service.js';
 import { BrowserIPCServer } from './browser/ipc.js';
 
-const DAEMON_DIR = 'helpers/daemon';
 const PID_FILE = 'daemon.pid';
 const LOCK_FILE = 'daemon.lock';
 const LOG_FILE = 'logs.jsonl';
@@ -28,7 +27,7 @@ const PLIST_NAME = 'com.phnx-labs.agents-daemon';
 const SYSTEMD_UNIT = 'agents-daemon.service';
 
 function getDaemonDir(): string {
-  const dir = path.join(getAgentsDir(), DAEMON_DIR);
+  const dir = getDaemonDirRoot();
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }

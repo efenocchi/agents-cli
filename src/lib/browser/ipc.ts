@@ -1,7 +1,7 @@
 import * as net from 'net';
 import * as fs from 'fs';
 import * as path from 'path';
-import { getAgentsDir } from '../state.js';
+import { getHelpersDir } from '../state.js';
 import { BrowserService } from './service.js';
 import { startDaemon } from '../daemon.js';
 import type { IPCRequest, IPCResponse } from './types.js';
@@ -9,7 +9,7 @@ import type { IPCRequest, IPCResponse } from './types.js';
 const SOCKET_NAME = 'browser.sock';
 
 export function getSocketPath(): string {
-  return path.join(getAgentsDir(), SOCKET_NAME);
+  return path.join(getHelpersDir(), SOCKET_NAME);
 }
 
 export class BrowserIPCServer {
@@ -118,6 +118,11 @@ export class BrowserIPCServer {
       case 'status': {
         const profiles = await this.service.status(request.profile);
         return { ok: true, profiles };
+      }
+
+      case 'history': {
+        const history = await this.service.getHistory(request.limit ?? 10);
+        return { ok: true, history };
       }
 
       case 'navigate': {

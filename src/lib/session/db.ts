@@ -11,10 +11,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import Database from '../sqlite.js';
 import type { SessionAgentId, SessionMeta } from './types.js';
-import { getUserAgentsDir } from '../state.js';
+import { getSessionsDir, getSessionsDbPath } from '../state.js';
 
-const SESSIONS_DIR = path.join(getUserAgentsDir(), 'sessions');
-const DB_PATH = path.join(SESSIONS_DIR, 'sessions.db');
+const SESSIONS_DIR = getSessionsDir();
+const DB_PATH = getSessionsDbPath();
 
 /** Current schema version; bumped when migrations are added. */
 const SCHEMA_VERSION = 5;

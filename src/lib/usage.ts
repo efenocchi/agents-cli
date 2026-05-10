@@ -22,7 +22,7 @@ import {
   setKeychainToken,
   deleteKeychainToken,
 } from './secrets/index.js';
-import { getAgentsDir } from './state.js';
+import { getCacheDir } from './state.js';
 import type { AgentId } from './types.js';
 
 const execFileAsync = promisify(execFile);
@@ -40,7 +40,7 @@ const CLAUDE_SCOPES = [
   'user:file_upload',
 ];
 const CLAUDE_KEYCHAIN_SERVICE = 'Claude Code-credentials';
-const getClaudeUsageCachePath = () => path.join(getAgentsDir(), 'cache', 'claude-usage.json');
+const getClaudeUsageCachePath = () => path.join(getCacheDir(), 'claude-usage.json');
 const CACHED_CLAUDE_USAGE_SOURCE_LABEL = 'last seen live account data';
 
 const COMPACT_BAR_LEN = 5;

@@ -94,21 +94,25 @@ describe('runMigration', () => {
 
     runRealMigration();
 
-    // Orphan system-side version moved to user.
-    expect(fs.existsSync(path.join(userDir, 'versions', 'claude', '2.0.99', 'home', '.claude', '.credentials.json'))).toBe(true);
+    // Post-bucket-refactor paths.
+    const historyDir = path.join(userDir, '.history');
+    const newUserOverlap = path.join(historyDir, 'versions', 'claude', '2.0.50', 'home', '.claude');
+
+    // Orphan system-side version moved into the history bucket.
+    expect(fs.existsSync(path.join(historyDir, 'versions', 'claude', '2.0.99', 'home', '.claude', '.credentials.json'))).toBe(true);
     expect(fs.existsSync(path.join(systemDir, 'versions', 'claude', '2.0.99'))).toBe(false);
 
-    // Overlap merged into user: fresh skill preserved, history copied in.
-    expect(fs.readFileSync(path.join(userOverlap, 'skills', 'mq', 'SKILL.md'), 'utf-8')).toBe('fresh-from-sync');
-    expect(fs.readFileSync(path.join(userOverlap, 'history.jsonl'), 'utf-8')).toBe('legacy-history');
+    // Overlap merged into user (then moved into .history/): fresh skill preserved, history copied in.
+    expect(fs.readFileSync(path.join(newUserOverlap, 'skills', 'mq', 'SKILL.md'), 'utf-8')).toBe('fresh-from-sync');
+    expect(fs.readFileSync(path.join(newUserOverlap, 'history.jsonl'), 'utf-8')).toBe('legacy-history');
 
-    // Legacy system overlap moved into trash.
-    const trashRoot = path.join(userDir, '.trash', 'versions', 'claude', '2.0.50');
+    // Legacy system overlap moved into trash, which now lives under .history/.
+    const trashRoot = path.join(historyDir, 'trash', 'versions', 'claude', '2.0.50');
     expect(fs.existsSync(trashRoot)).toBe(true);
 
-    // Symlink re-pointed to user-side target.
+    // Symlink re-pointed to the post-bucket-refactor target.
     const newTarget = fs.readlinkSync(symlinkPath);
-    expect(path.resolve(path.dirname(symlinkPath), newTarget)).toBe(path.resolve(userOverlap));
+    expect(path.resolve(path.dirname(symlinkPath), newTarget)).toBe(path.resolve(newUserOverlap));
   });
 
   describe('migratePermissionSetsToPresets', () => {
@@ -202,8 +206,9 @@ describe('runMigration', () => {
       fs.mkdirSync(path.join(runsDir, 'old-job'), { recursive: true });
       fs.writeFileSync(path.join(runsDir, 'old-job', 'meta.json'), '{}');
       runRealMigration();
-      // migrateRunsIntoRoutines moved them; runs/ is now empty and removed.
-      expect(fs.existsSync(path.join(userDir, 'routines', 'runs', 'old-job', 'meta.json'))).toBe(true);
+      // migrateRunsIntoRoutines moves runs/ into routines/runs/, then
+      // migrateRuntimeToHistory hoists routines/runs/ into the .history/ bucket.
+      expect(fs.existsSync(path.join(userDir, '.history', 'runs', 'old-job', 'meta.json'))).toBe(true);
       expect(fs.existsSync(runsDir)).toBe(false);
     });
 
