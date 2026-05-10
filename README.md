@@ -253,12 +253,12 @@ Give agents access to a real browser — no relay extension, no cloud service, n
 agents browser profiles create work --browser chrome
 
 # Start a task, navigate, interact
-agents browser start login-flow --profile work
-agents browser navigate login-flow https://app.example.com
+agents browser start --profile work --task login-flow --url https://app.example.com
 agents browser refs login-flow              # Get interactive element refs
-agents browser click login-flow <tab> 42    # Click element ref 42
-agents browser type login-flow <tab> 15 "hello"
+agents browser click login-flow 42          # Click element ref 42
+agents browser type login-flow 15 "hello"   # Type into element ref 15
 agents browser screenshot login-flow        # Smart resizing, token-efficient
+agents browser done login-flow              # Close task's tabs when finished
 ```
 
 ### Why this works where Playwright fails
