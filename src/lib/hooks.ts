@@ -665,30 +665,35 @@ export function listCentralHooks(): HookEntry[] {
 }
 
 /**
- * Parse hooks.yaml manifests. Reads BOTH system (~/.agents-system/hooks.yaml)
- * and user (~/.agents/hooks.yaml), merging with user-wins-on-key-collision
- * precedence. A user entry with `enabled: false` disables the system-shipped
- * hook of the same name without forking the system file.
+ * Parse hook manifests. Reads system hooks from ~/.agents-system/hooks.yaml
+ * (npm-shipped defaults) and user hooks from the `hooks:` section of
+ * ~/.agents/agents.yaml. Merges with user-wins-on-key-collision precedence.
+ * A user entry with `enabled: false` disables the system-shipped hook of
+ * the same name without forking the system file.
  *
  * Hooks marked `enabled: false` are dropped from the returned map.
  */
 export function parseHookManifest(): Record<string, ManifestHook> {
   const merged: Record<string, ManifestHook> = {};
-  // System first (lower precedence), user second (overrides).
-  for (const dir of [getAgentsDir(), getUserAgentsDir()]) {
-    const manifestPath = path.join(dir, 'hooks.yaml');
-    if (!fs.existsSync(manifestPath)) continue;
+
+  // System layer: standalone hooks.yaml (npm-shipped, separate repo).
+  const systemPath = path.join(getAgentsDir(), 'hooks.yaml');
+  if (fs.existsSync(systemPath)) {
     try {
-      const content = fs.readFileSync(manifestPath, 'utf-8');
-      const parsed = yaml.parse(content) as Record<string, ManifestHook> | null;
-      if (!parsed) continue;
-      for (const [name, def] of Object.entries(parsed)) {
-        merged[name] = def;
-      }
-    } catch {
-      /* skip unreadable manifest, keep going */
-    }
+      const parsed = yaml.parse(fs.readFileSync(systemPath, 'utf-8')) as Record<string, ManifestHook> | null;
+      if (parsed) for (const [name, def] of Object.entries(parsed)) merged[name] = def;
+    } catch { /* skip unreadable manifest */ }
   }
+
+  // User layer: hooks: section of agents.yaml.
+  const userMetaPath = path.join(getUserAgentsDir(), 'agents.yaml');
+  if (fs.existsSync(userMetaPath)) {
+    try {
+      const meta = yaml.parse(fs.readFileSync(userMetaPath, 'utf-8')) as { hooks?: Record<string, ManifestHook> } | null;
+      if (meta?.hooks) for (const [name, def] of Object.entries(meta.hooks)) merged[name] = def;
+    } catch { /* skip unreadable meta */ }
+  }
+
   // Strip disabled hooks so they never reach the registrar.
   for (const [name, def] of Object.entries(merged)) {
     if (def.enabled === false) delete merged[name];

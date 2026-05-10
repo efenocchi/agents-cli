@@ -431,6 +431,12 @@ export interface Meta {
    * once. Tracked so a user `registry remove` won't silently re-seed.
    */
   seededPresets?: string[];
+  /**
+   * Hook manifest entries keyed by hook name. Folded into agents.yaml so the
+   * user has a single file to sync. Each entry shape matches ManifestHook
+   * (script, events, timeout, matches, enabled).
+   */
+  hooks?: Record<string, ManifestHook>;
 }
 
 /** Options controlling which agents and resources are synced during `agents pull` / `agents use`. */

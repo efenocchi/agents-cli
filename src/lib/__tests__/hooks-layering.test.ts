@@ -1,9 +1,10 @@
 /**
- * Tests for layered hooks.yaml resolution: system + user merged, user wins.
+ * Tests for layered hook manifest resolution: system + user merged, user wins.
  *
- * The registrar reads BOTH ~/.agents-system/hooks.yaml and ~/.agents/hooks.yaml.
- * A user entry with the same name as a system entry overrides it wholesale.
- * A user entry with `enabled: false` disables the system-shipped hook.
+ * The registrar reads ~/.agents-system/hooks.yaml (npm-shipped defaults) and
+ * the `hooks:` section of ~/.agents/agents.yaml (user). A user entry with
+ * the same name as a system entry overrides it wholesale. A user entry with
+ * `enabled: false` disables the system-shipped hook.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
@@ -72,8 +73,8 @@ describe('parseHookManifest layering', () => {
 
   it('returns user manifest when only user file exists', () => {
     fs.writeFileSync(
-      path.join(USER_DIR, 'hooks.yaml'),
-      'user-hook:\n  script: b.sh\n  events: [Stop]\n',
+      path.join(USER_DIR, 'agents.yaml'),
+      'hooks:\n  user-hook:\n    script: b.sh\n    events: [Stop]\n',
       'utf-8'
     );
     const out = parseHookManifest();
@@ -87,8 +88,8 @@ describe('parseHookManifest layering', () => {
       'utf-8'
     );
     fs.writeFileSync(
-      path.join(USER_DIR, 'hooks.yaml'),
-      'user-hook:\n  script: u.sh\n  events: [Stop]\n',
+      path.join(USER_DIR, 'agents.yaml'),
+      'hooks:\n  user-hook:\n    script: u.sh\n    events: [Stop]\n',
       'utf-8'
     );
     const out = parseHookManifest();
@@ -104,8 +105,8 @@ describe('parseHookManifest layering', () => {
       'utf-8'
     );
     fs.writeFileSync(
-      path.join(USER_DIR, 'hooks.yaml'),
-      'shared:\n  script: user.sh\n  events: [UserPromptSubmit]\n  timeout: 10\n',
+      path.join(USER_DIR, 'agents.yaml'),
+      'hooks:\n  shared:\n    script: user.sh\n    events: [UserPromptSubmit]\n    timeout: 10\n',
       'utf-8'
     );
     const out = parseHookManifest();
@@ -121,8 +122,8 @@ describe('parseHookManifest layering', () => {
       'utf-8'
     );
     fs.writeFileSync(
-      path.join(USER_DIR, 'hooks.yaml'),
-      'enforced:\n  enabled: false\n  script: enforce.sh\n  events: [Stop]\n',
+      path.join(USER_DIR, 'agents.yaml'),
+      'hooks:\n  enforced:\n    enabled: false\n    script: enforce.sh\n    events: [Stop]\n',
       'utf-8'
     );
     const out = parseHookManifest();

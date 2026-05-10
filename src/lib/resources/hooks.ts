@@ -1,7 +1,11 @@
 /**
  * HooksHandler - ResourceHandler implementation for hooks.
  *
- * Hooks are declared in hooks.yaml at each layer (system, user, project).
+ * Hook declarations live in:
+ *   - System: ~/.agents-system/hooks.yaml (npm-shipped defaults)
+ *   - User:   `hooks:` section of ~/.agents/agents.yaml
+ *   - Project: <project>/.agents/hooks.yaml
+ *
  * Resolution: project > user > system (higher layer wins on name conflict).
  * Non-conflicting hooks from all layers are unioned together.
  */
@@ -20,14 +24,21 @@ import {
 export type HookItem = ManifestHook;
 
 /**
- * Get the hooks.yaml path for a given layer directory.
+ * Get the hook manifest path for a layer dir. The user layer reads from
+ * agents.yaml (hooks: section) since that's where user hooks now live.
+ * Other layers continue to use a standalone hooks.yaml.
  */
 function getHooksYamlPath(layerDir: string): string {
+  if (layerDir === getUserAgentsDir()) {
+    return path.join(layerDir, 'agents.yaml');
+  }
   return path.join(layerDir, 'hooks.yaml');
 }
 
 /**
- * Parse hooks.yaml from a directory.
+ * Parse hooks for a layer directory.
+ * - User layer: read `hooks:` section from agents.yaml.
+ * - System / project layer: read top-level map from hooks.yaml.
  * Returns empty object if file doesn't exist or is invalid.
  */
 function parseHooksYaml(dir: string): Record<string, ManifestHook> {
@@ -37,8 +48,13 @@ function parseHooksYaml(dir: string): Record<string, ManifestHook> {
   }
   try {
     const content = fs.readFileSync(manifestPath, 'utf-8');
-    const parsed = yaml.parse(content) as Record<string, ManifestHook> | null;
-    return parsed || {};
+    const parsed = yaml.parse(content) as Record<string, unknown> | null;
+    if (!parsed) return {};
+    if (dir === getUserAgentsDir()) {
+      const hooks = parsed.hooks;
+      return (hooks && typeof hooks === 'object') ? (hooks as Record<string, ManifestHook>) : {};
+    }
+    return parsed as Record<string, ManifestHook>;
   } catch {
     return {};
   }
