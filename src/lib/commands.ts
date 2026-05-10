@@ -12,7 +12,7 @@ import * as path from 'path';
 import * as yaml from 'yaml';
 import { AGENTS, COMMANDS_CAPABLE_AGENTS, ensureCommandsDir } from './agents.js';
 import { markdownToToml } from './convert.js';
-import { getCommandsDir, getUserCommandsDir, getEnabledExtraRepos, getProjectAgentsDir, getSkillsDir } from './state.js';
+import { getCommandsDir, getUserCommandsDir, getEnabledExtraRepos, getProjectAgentsDir, getSkillsDir, getTrashCommandsDir } from './state.js';
 import { getEffectiveHome, getVersionHomePath, listInstalledVersions } from './versions.js';
 import type { AgentId, CommandInstallation } from './types.js';
 import {
@@ -384,6 +384,7 @@ export function installCommandToVersion(
 
 /**
  * Remove a single command from a specific version home.
+ * Soft-deletes to ~/.agents/.trash/commands/.
  */
 export function removeCommandFromVersion(
   agent: AgentId,
@@ -402,7 +403,10 @@ export function removeCommandFromVersion(
     return { success: true };
   }
   try {
-    fs.unlinkSync(targetPath);
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const trashDir = path.join(getTrashCommandsDir(), agent, version, commandName);
+    fs.mkdirSync(trashDir, { recursive: true, mode: 0o700 });
+    fs.renameSync(targetPath, path.join(trashDir, `${commandName}${ext}.${stamp}`));
   } catch (err) {
     return { success: false, error: (err as Error).message };
   }
