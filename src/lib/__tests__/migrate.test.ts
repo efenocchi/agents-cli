@@ -177,4 +177,118 @@ describe('runMigration', () => {
       expect(fs.existsSync(path.join(systemDir, 'permissions', 'presets'))).toBe(false);
     });
   });
+
+  describe('cleanup of orphan user-level files', () => {
+    it('deletes ~/.agents/linear.json', () => {
+      fs.writeFileSync(path.join(userDir, 'linear.json'), '{"apiKey":"lin_legacy"}');
+      runRealMigration();
+      expect(fs.existsSync(path.join(userDir, 'linear.json'))).toBe(false);
+    });
+
+    it('deletes ~/.agents/prompts.json', () => {
+      fs.writeFileSync(path.join(userDir, 'prompts.json'), '[]');
+      runRealMigration();
+      expect(fs.existsSync(path.join(userDir, 'prompts.json'))).toBe(false);
+    });
+
+    it('removes empty ~/.agents/runs/ leftover dir', () => {
+      fs.mkdirSync(path.join(userDir, 'runs'));
+      runRealMigration();
+      expect(fs.existsSync(path.join(userDir, 'runs'))).toBe(false);
+    });
+
+    it('preserves ~/.agents/runs/ if it has contents (legacy not yet migrated)', () => {
+      const runsDir = path.join(userDir, 'runs');
+      fs.mkdirSync(path.join(runsDir, 'old-job'), { recursive: true });
+      fs.writeFileSync(path.join(runsDir, 'old-job', 'meta.json'), '{}');
+      runRealMigration();
+      // migrateRunsIntoRoutines moved them; runs/ is now empty and removed.
+      expect(fs.existsSync(path.join(userDir, 'routines', 'runs', 'old-job', 'meta.json'))).toBe(true);
+      expect(fs.existsSync(runsDir)).toBe(false);
+    });
+
+    it('migrates ~/.agents/config.json to teams/config.json when canonical absent', () => {
+      fs.writeFileSync(path.join(userDir, 'config.json'), '{"agents":{"claude":{"enabled":true}}}');
+      runRealMigration();
+      expect(fs.existsSync(path.join(userDir, 'config.json'))).toBe(false);
+      expect(fs.readFileSync(path.join(userDir, 'teams', 'config.json'), 'utf-8'))
+        .toBe('{"agents":{"claude":{"enabled":true}}}');
+    });
+
+    it('deletes ~/.agents/config.json when canonical teams/config.json exists', () => {
+      fs.writeFileSync(path.join(userDir, 'config.json'), '{"legacy":true}');
+      fs.mkdirSync(path.join(userDir, 'teams'), { recursive: true });
+      fs.writeFileSync(path.join(userDir, 'teams', 'config.json'), '{"canonical":true}');
+      runRealMigration();
+      expect(fs.existsSync(path.join(userDir, 'config.json'))).toBe(false);
+      expect(fs.readFileSync(path.join(userDir, 'teams', 'config.json'), 'utf-8'))
+        .toBe('{"canonical":true}');
+    });
+  });
+
+  describe('foldUserHooksYamlIntoAgentsYaml', () => {
+    it('folds user hooks.yaml into agents.yaml hooks: section and deletes the standalone file', () => {
+      fs.writeFileSync(
+        path.join(userDir, 'agents.yaml'),
+        'agents:\n  claude: 2.1.0\n',
+      );
+      fs.writeFileSync(
+        path.join(userDir, 'hooks.yaml'),
+        'capture-session:\n  script: capture.sh\n  events: [SessionStart]\n  timeout: 5\n',
+      );
+
+      runRealMigration();
+
+      expect(fs.existsSync(path.join(userDir, 'hooks.yaml'))).toBe(false);
+      const meta = fs.readFileSync(path.join(userDir, 'agents.yaml'), 'utf-8');
+      expect(meta).toContain('hooks:');
+      expect(meta).toContain('capture-session');
+      expect(meta).toContain('script: capture.sh');
+      expect(meta).toMatch(/agents:\s*\n\s+claude:/);
+    });
+
+    it('creates agents.yaml when only hooks.yaml exists', () => {
+      fs.writeFileSync(
+        path.join(userDir, 'hooks.yaml'),
+        'lonely:\n  script: a.sh\n  events: [Stop]\n',
+      );
+
+      runRealMigration();
+
+      expect(fs.existsSync(path.join(userDir, 'hooks.yaml'))).toBe(false);
+      const meta = fs.readFileSync(path.join(userDir, 'agents.yaml'), 'utf-8');
+      expect(meta).toContain('hooks:');
+      expect(meta).toContain('lonely:');
+    });
+
+    it('preserves existing agents.yaml hooks: entries on collision (existing wins)', () => {
+      fs.writeFileSync(
+        path.join(userDir, 'agents.yaml'),
+        'hooks:\n  shared:\n    script: existing.sh\n    events: [Stop]\n',
+      );
+      fs.writeFileSync(
+        path.join(userDir, 'hooks.yaml'),
+        'shared:\n  script: incoming.sh\n  events: [SessionStart]\n',
+      );
+
+      runRealMigration();
+
+      const meta = fs.readFileSync(path.join(userDir, 'agents.yaml'), 'utf-8');
+      expect(meta).toContain('script: existing.sh');
+      expect(meta).not.toContain('incoming.sh');
+    });
+
+    it('is idempotent (no hooks.yaml = no-op)', () => {
+      fs.writeFileSync(
+        path.join(userDir, 'agents.yaml'),
+        'agents:\n  claude: 2.1.0\n',
+      );
+
+      runRealMigration();
+      runRealMigration();
+
+      const meta = fs.readFileSync(path.join(userDir, 'agents.yaml'), 'utf-8');
+      expect(meta).toContain('claude: 2.1.0');
+    });
+  });
 });

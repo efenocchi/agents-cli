@@ -8,6 +8,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import * as yaml from 'yaml';
 
 const HOME = os.homedir();
 const SYSTEM_DIR = path.join(HOME, '.agents-system');
@@ -189,6 +190,111 @@ function migrateBackupsToHidden(): void {
   if (!fs.existsSync(src) || fs.existsSync(dest)) return;
   try {
     fs.renameSync(src, dest);
+  } catch { /* best-effort */ }
+}
+
+/**
+ * Fold ~/.agents/hooks.yaml into ~/.agents/agents.yaml under a `hooks:` key,
+ * then delete the standalone hooks.yaml. Single user file to sync.
+ *
+ * On collision (a hook name already exists in agents.yaml hooks:), the
+ * existing agents.yaml entry wins and the standalone copy is dropped — this
+ * matches the behavior a user would get if they had already migrated
+ * manually and edited agents.yaml.
+ *
+ * Idempotent: skips if hooks.yaml is absent or unparseable.
+ */
+function foldUserHooksYamlIntoAgentsYaml(): void {
+  const hooksFile = path.join(USER_DIR, 'hooks.yaml');
+  if (!fs.existsSync(hooksFile)) return;
+
+  let hooks: Record<string, unknown>;
+  try {
+    const raw = fs.readFileSync(hooksFile, 'utf-8');
+    const parsed = yaml.parse(raw) as Record<string, unknown> | null;
+    hooks = parsed && typeof parsed === 'object' ? parsed : {};
+  } catch { return; }
+
+  const metaFile = path.join(USER_DIR, 'agents.yaml');
+  let meta: Record<string, unknown> = {};
+  if (fs.existsSync(metaFile)) {
+    try {
+      const raw = fs.readFileSync(metaFile, 'utf-8');
+      const parsed = yaml.parse(raw) as Record<string, unknown> | null;
+      if (parsed && typeof parsed === 'object') meta = parsed;
+    } catch { return; }
+  }
+
+  const existingHooks = (meta.hooks as Record<string, unknown> | undefined) ?? {};
+  const merged: Record<string, unknown> = { ...hooks, ...existingHooks };
+  meta.hooks = merged;
+
+  const header = `# agents-cli metadata
+# Auto-generated - do not edit manually
+# https://github.com/phnx-labs/agents-cli
+
+`;
+  try {
+    fs.mkdirSync(USER_DIR, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(metaFile, header + yaml.stringify(meta), 'utf-8');
+    fs.unlinkSync(hooksFile);
+    console.log('Folded ~/.agents/hooks.yaml into ~/.agents/agents.yaml (hooks: section)');
+  } catch { /* best-effort */ }
+}
+
+/**
+ * Delete ~/.agents/linear.json. The linear-cli now manages its own
+ * credentials in the OS keychain; this file was a legacy plaintext store.
+ */
+function deleteUserLinearJson(): void {
+  const f = path.join(USER_DIR, 'linear.json');
+  if (!fs.existsSync(f)) return;
+  try {
+    fs.unlinkSync(f);
+  } catch { /* best-effort */ }
+}
+
+/**
+ * Delete ~/.agents/prompts.json. Dead file with zero refs in src/ (the
+ * system-repo copy was cleared by deleteSystemPromptsJson; this is the
+ * matching cleanup at the user layer).
+ */
+function deleteUserPromptsJson(): void {
+  const f = path.join(USER_DIR, 'prompts.json');
+  if (!fs.existsSync(f)) return;
+  try {
+    fs.unlinkSync(f);
+  } catch { /* best-effort */ }
+}
+
+/**
+ * Delete ~/.agents/config.json. The canonical teams config is at
+ * ~/.agents/teams/config.json (teams/persistence.ts). If the canonical
+ * file exists we just unlink the legacy copy; otherwise migrate first.
+ */
+function cleanupUserConfigJson(): void {
+  const legacy = path.join(USER_DIR, 'config.json');
+  if (!fs.existsSync(legacy)) return;
+  const canonical = path.join(USER_DIR, 'teams', 'config.json');
+  try {
+    if (!fs.existsSync(canonical)) {
+      fs.mkdirSync(path.dirname(canonical), { recursive: true, mode: 0o700 });
+      fs.copyFileSync(legacy, canonical);
+    }
+    fs.unlinkSync(legacy);
+  } catch { /* best-effort */ }
+}
+
+/**
+ * Remove an empty ~/.agents/runs/ directory left over after the
+ * migrateRunsIntoRoutines() rename. Some older code paths re-created the
+ * empty parent; this trims it once it has no contents.
+ */
+function cleanupEmptyTopLevelRuns(): void {
+  const dir = path.join(USER_DIR, 'runs');
+  if (!fs.existsSync(dir)) return;
+  try {
+    if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir);
   } catch { /* best-effort */ }
 }
 
@@ -400,4 +506,9 @@ export function runMigration(): void {
   migrateBackupsToHidden();
   migrateAliasesToUser();
   migratePermissionSetsToPresets();
+  deleteUserLinearJson();
+  deleteUserPromptsJson();
+  cleanupUserConfigJson();
+  cleanupEmptyTopLevelRuns();
+  foldUserHooksYamlIntoAgentsYaml();
 }
