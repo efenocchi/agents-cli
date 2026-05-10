@@ -29,7 +29,7 @@ function migrateAgentsYaml(): void {
   try {
     fs.mkdirSync(USER_DIR, { recursive: true, mode: 0o700 });
     fs.renameSync(src, dest);
-    console.log('Migrated agents.yaml to ~/.agents/');
+    console.error('Migrated agents.yaml to ~/.agents/');
   } catch { /* best-effort */ }
 }
 
@@ -148,10 +148,10 @@ function migrateSystemVersionsToUser(): void {
   } catch { /* best-effort */ }
 
   if (movedCount > 0) {
-    console.log(`Migrated ${movedCount} version dir${movedCount === 1 ? '' : 's'} from ~/.agents-system/versions/ to ~/.agents/versions/`);
+    console.error(`Migrated ${movedCount} version dir${movedCount === 1 ? '' : 's'} from ~/.agents-system/versions/ to ~/.agents/versions/`);
   }
   if (skippedCount > 0) {
-    console.log(`Skipped ${skippedCount} version dir${skippedCount === 1 ? '' : 's'} already present in ~/.agents/versions/ (kept legacy copy at ~/.agents-system/versions/)`);
+    console.error(`Skipped ${skippedCount} version dir${skippedCount === 1 ? '' : 's'} already present in ~/.agents/versions/ (kept legacy copy at ~/.agents-system/versions/)`);
   }
 }
 
@@ -240,7 +240,76 @@ function foldUserHooksYamlIntoAgentsYaml(): void {
     fs.mkdirSync(USER_DIR, { recursive: true, mode: 0o700 });
     fs.writeFileSync(metaFile, header + yaml.stringify(meta), 'utf-8');
     fs.unlinkSync(hooksFile);
-    console.log('Folded ~/.agents/hooks.yaml into ~/.agents/agents.yaml (hooks: section)');
+    console.error('Folded ~/.agents/hooks.yaml into ~/.agents/agents.yaml (hooks: section)');
+  } catch { /* best-effort */ }
+}
+
+/**
+ * Fold ~/.agents/browser/profiles/*.yaml into ~/.agents/agents.yaml under a
+ * `browser:` key, then delete the profiles directory. Single user file to sync.
+ *
+ * On collision (a profile name already exists in agents.yaml browser:), the
+ * existing agents.yaml entry wins and the standalone copy is dropped.
+ *
+ * Idempotent: skips if profiles dir is absent or empty.
+ */
+function foldBrowserProfilesIntoAgentsYaml(): void {
+  const profilesDir = path.join(USER_DIR, 'browser', 'profiles');
+  if (!fs.existsSync(profilesDir)) return;
+
+  let files: string[];
+  try {
+    files = fs.readdirSync(profilesDir).filter((f) => f.endsWith('.yaml'));
+  } catch { return; }
+  if (files.length === 0) return;
+
+  const profiles: Record<string, unknown> = {};
+  for (const file of files) {
+    try {
+      const raw = fs.readFileSync(path.join(profilesDir, file), 'utf-8');
+      const parsed = yaml.parse(raw) as Record<string, unknown> | null;
+      if (!parsed || typeof parsed !== 'object') continue;
+      const name = (parsed.name as string) || file.replace(/\.yaml$/, '');
+      const { name: _, ...config } = parsed;
+      profiles[name] = config;
+    } catch { /* skip unreadable file */ }
+  }
+
+  if (Object.keys(profiles).length === 0) return;
+
+  const metaFile = path.join(USER_DIR, 'agents.yaml');
+  let meta: Record<string, unknown> = {};
+  if (fs.existsSync(metaFile)) {
+    try {
+      const raw = fs.readFileSync(metaFile, 'utf-8');
+      const parsed = yaml.parse(raw) as Record<string, unknown> | null;
+      if (parsed && typeof parsed === 'object') meta = parsed;
+    } catch { return; }
+  }
+
+  const existingBrowser = (meta.browser as Record<string, unknown> | undefined) ?? {};
+  const merged: Record<string, unknown> = { ...profiles, ...existingBrowser };
+  meta.browser = merged;
+
+  const header = `# agents-cli metadata
+# Auto-generated - do not edit manually
+# https://github.com/phnx-labs/agents-cli
+
+`;
+  try {
+    fs.mkdirSync(USER_DIR, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(metaFile, header + yaml.stringify(meta), 'utf-8');
+    for (const file of files) {
+      try { fs.unlinkSync(path.join(profilesDir, file)); } catch { /* best-effort */ }
+    }
+    try { fs.rmdirSync(profilesDir); } catch { /* may not be empty */ }
+    try {
+      const browserDir = path.join(USER_DIR, 'browser');
+      if (fs.existsSync(browserDir) && fs.readdirSync(browserDir).length === 0) {
+        fs.rmdirSync(browserDir);
+      }
+    } catch { /* best-effort */ }
+    console.error('Folded ~/.agents/browser/profiles/ into ~/.agents/agents.yaml (browser: section)');
   } catch { /* best-effort */ }
 }
 
@@ -382,7 +451,7 @@ function mergeOverlappingVersionHomes(): void {
   } catch { /* best-effort */ }
 
   if (mergedCount > 0) {
-    console.log(`Merged ${mergedCount} overlapping version home${mergedCount === 1 ? '' : 's'} from legacy ~/.agents-system/versions/ into ~/.agents/versions/ (legacy moved to ~/.agents/.trash/versions/)`);
+    console.error(`Merged ${mergedCount} overlapping version home${mergedCount === 1 ? '' : 's'} from legacy ~/.agents-system/versions/ into ~/.agents/versions/ (legacy moved to ~/.agents/.trash/versions/)`);
   }
 }
 
@@ -433,7 +502,7 @@ function migratePermissionSetsToPresets(): void {
     try {
       fs.renameSync(src, dest);
       const label = root === USER_DIR ? '~/.agents' : '~/.agents-system';
-      console.log(`Migrated ${label}/permissions/sets/ to ${label}/permissions/presets/`);
+      console.error(`Migrated ${label}/permissions/sets/ to ${label}/permissions/presets/`);
     } catch { /* best-effort */ }
   }
 }
@@ -492,7 +561,7 @@ function repairAgentConfigSymlinks(): void {
   }
 
   if (repaired > 0) {
-    console.log(`Repaired ${repaired} agent config symlink${repaired === 1 ? '' : 's'} to point at ~/.agents/versions/`);
+    console.error(`Repaired ${repaired} agent config symlink${repaired === 1 ? '' : 's'} to point at ~/.agents/versions/`);
   }
 }
 
@@ -696,8 +765,421 @@ function migrateRuntimeToCache(): void {
   moveFileOnce(path.join(USER_DIR, 'watchdog.log'), path.join(CACHE_DIR, 'logs', 'watchdog.log'));
 }
 
+/**
+ * Merge a SQLite database file at `src` into the one at `dest`, then delete the
+ * source (including its WAL/SHM sidecars). User-side rows win on collision via
+ * INSERT OR IGNORE.
+ *
+ * If `dest` is missing, the source is simply moved into place (no merge). If
+ * the SQLite open fails (corrupt / zero-byte / locked), the source is dropped
+ * so the system repo returns to npm-shipped state — the data is stale-anyway
+ * runtime state, not user resources.
+ */
+async function mergeSqliteDb(src: string, dest: string): Promise<void> {
+  if (!fs.existsSync(src)) return;
+  try {
+    if (fs.statSync(src).size === 0) {
+      // Zero-byte legacy DB — drop sidecars too and leave dest alone.
+      try { fs.unlinkSync(src); } catch { /* best-effort */ }
+      for (const ext of ['-shm', '-wal']) {
+        try { fs.unlinkSync(src + ext); } catch { /* best-effort */ }
+      }
+      return;
+    }
+  } catch { /* best-effort */ }
+
+  if (!fs.existsSync(dest)) {
+    try {
+      fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
+      fs.renameSync(src, dest);
+      for (const ext of ['-shm', '-wal']) {
+        if (fs.existsSync(src + ext)) {
+          try { fs.renameSync(src + ext, dest + ext); } catch { /* best-effort */ }
+        }
+      }
+      return;
+    } catch { /* fall through to merge */ }
+  }
+
+  // Both files exist — open the dest DB and ATTACH src, then INSERT OR IGNORE
+  // every user table. Dynamic import keeps the sqlite shim off the hot path
+  // for CLI starts that don't actually need a merge.
+  try {
+    const sqliteMod = (await import('./sqlite.js')) as { default: new (file: string) => SqliteLike };
+    const Database = sqliteMod.default;
+    const db = new Database(dest);
+    try {
+      db.exec(`ATTACH DATABASE '${src.replace(/'/g, "''")}' AS src`);
+      const tables = db.prepare<{ name: string }>(
+        `SELECT name FROM src.sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`,
+      ).all() as Array<{ name: string }>;
+      for (const { name } of tables) {
+        try {
+          const row = db.prepare<{ sql: string }>(
+            `SELECT sql FROM src.sqlite_master WHERE type='table' AND name = ?`,
+          ).get(name) as { sql?: string } | undefined;
+          if (row?.sql) {
+            const ddl = row.sql.replace(/^CREATE TABLE\s+/i, 'CREATE TABLE IF NOT EXISTS ');
+            db.exec(ddl);
+          }
+        } catch { /* table likely exists already */ }
+        const quoted = '"' + name.replace(/"/g, '""') + '"';
+        try {
+          db.exec(`INSERT OR IGNORE INTO main.${quoted} SELECT * FROM src.${quoted}`);
+        } catch { /* schema drift — skip table */ }
+      }
+      try { db.exec('DETACH DATABASE src'); } catch { /* best-effort */ }
+    } finally {
+      try { db.close(); } catch { /* best-effort */ }
+    }
+    try { fs.unlinkSync(src); } catch { /* best-effort */ }
+    for (const ext of ['-shm', '-wal']) {
+      try { fs.unlinkSync(src + ext); } catch { /* best-effort */ }
+    }
+  } catch {
+    // Merge failed — drop the source so the system repo returns to clean state.
+    // The user-side DB is authoritative; system-side rows were duplicate state.
+    try { fs.unlinkSync(src); } catch { /* best-effort */ }
+    for (const ext of ['-shm', '-wal']) {
+      try { fs.unlinkSync(src + ext); } catch { /* best-effort */ }
+    }
+  }
+}
+
+interface SqliteLike {
+  exec(sql: string): void;
+  prepare<T = unknown>(sql: string): { get(...a: unknown[]): unknown; all(...a: unknown[]): unknown[] };
+  close(): void;
+}
+
+/**
+ * Move ~/.agents-system/sessions/ into ~/.agents/.history/sessions/.
+ *
+ * Filesystem entries (claude/, index.jsonl, content_index.jsonl, etc.) merge
+ * directory-by-directory with user-side winning on collision. The bundled
+ * sessions.db (plus WAL/SHM) goes through mergeSqliteDb so historical rows
+ * land in the user DB.
+ */
+async function migrateSystemSessionsToHistory(): Promise<void> {
+  const src = path.join(SYSTEM_DIR, 'sessions');
+  if (!fs.existsSync(src)) return;
+  const dest = path.join(HISTORY_DIR, 'sessions');
+  try { fs.mkdirSync(dest, { recursive: true, mode: 0o700 }); } catch { /* best-effort */ }
+
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(src, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    const s = path.join(src, entry.name);
+    if (entry.name === 'sessions.db' || entry.name === 'sessions.db-shm' || entry.name === 'sessions.db-wal') {
+      // Handled by mergeSqliteDb on the canonical .db name below.
+      continue;
+    }
+    const d = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      moveDirOnce(s, d);
+    } else {
+      moveFileOnce(s, d);
+    }
+  }
+
+  await mergeSqliteDb(path.join(src, 'sessions.db'), path.join(dest, 'sessions.db'));
+
+  try {
+    if (fs.readdirSync(src).length === 0) fs.rmdirSync(src);
+  } catch { /* best-effort */ }
+}
+
+/**
+ * Move ~/.agents-system/teams/ contents to ~/.agents/teams/ (registry/config)
+ * and ~/.agents/.history/teams/ (per-run dirs).
+ *
+ * Strategy:
+ *   config.json, registry.json   -> ~/.agents/teams/        (live state)
+ *   agents/                       -> ~/.agents/.history/teams/agents/
+ *   <anything else>               -> ~/.agents/.history/teams/<name>/  (per-run dirs)
+ */
+function migrateSystemTeamsToUser(): void {
+  const src = path.join(SYSTEM_DIR, 'teams');
+  if (!fs.existsSync(src)) return;
+  const liveDest = path.join(USER_DIR, 'teams');
+  const historyDest = path.join(HISTORY_DIR, 'teams');
+
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(src, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    const s = path.join(src, entry.name);
+    if (entry.name === 'config.json' || entry.name === 'registry.json') {
+      moveFileOnce(s, path.join(liveDest, entry.name));
+      continue;
+    }
+    if (entry.name === 'agents' && entry.isDirectory()) {
+      moveDirOnce(s, path.join(historyDest, 'agents'));
+      continue;
+    }
+    if (entry.isDirectory()) {
+      moveDirOnce(s, path.join(historyDest, entry.name));
+    } else {
+      moveFileOnce(s, path.join(historyDest, entry.name));
+    }
+  }
+
+  try {
+    if (fs.readdirSync(src).length === 0) fs.rmdirSync(src);
+  } catch { /* best-effort */ }
+}
+
+/**
+ * Move ~/.agents-system/trash/ -> ~/.agents/.history/trash/.
+ *
+ * The system trash was where the legacy `mergeOverlappingVersionHomes()` parked
+ * orphan version homes. Folding it into the history bucket keeps "everything
+ * recoverable" in one place.
+ */
+function migrateSystemTrashToHistory(): void {
+  const src = path.join(SYSTEM_DIR, 'trash');
+  if (!fs.existsSync(src)) return;
+  moveDirOnce(src, path.join(HISTORY_DIR, 'trash'));
+}
+
+/**
+ * Move ~/.agents-system/cache/ contents into ~/.agents/.cache/.
+ *
+ * Special cases:
+ *   sessions.db        -> mergeSqliteDb into HISTORY_DIR/sessions/sessions.db
+ *   cloud-runs/        -> .cache/cloud-runs/
+ *   claude-usage.json  -> drop (regenerable per-version cache)
+ *   <anything else>    -> .cache/<name> (merge-on-collision)
+ */
+async function migrateSystemCacheToUserCache(): Promise<void> {
+  const src = path.join(SYSTEM_DIR, 'cache');
+  if (!fs.existsSync(src)) return;
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(src, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    const s = path.join(src, entry.name);
+    if (entry.name === 'sessions.db' || entry.name === 'sessions.db-shm' || entry.name === 'sessions.db-wal') {
+      // Sessions DB belongs in HISTORY, not CACHE — merge into the durable one.
+      if (entry.name === 'sessions.db') {
+        await mergeSqliteDb(s, path.join(HISTORY_DIR, 'sessions', 'sessions.db'));
+      }
+      // Sidecars get dropped if they outlived the merge or were orphaned.
+      try { if (fs.existsSync(s)) fs.unlinkSync(s); } catch { /* best-effort */ }
+      continue;
+    }
+    if (entry.name === 'claude-usage.json') {
+      try { fs.unlinkSync(s); } catch { /* best-effort */ }
+      continue;
+    }
+    const d = path.join(CACHE_DIR, entry.name);
+    if (entry.isDirectory()) {
+      moveDirOnce(s, d);
+    } else {
+      moveFileOnce(s, d);
+    }
+  }
+
+  try {
+    if (fs.readdirSync(src).length === 0) fs.rmdirSync(src);
+  } catch { /* best-effort */ }
+}
+
+/**
+ * Merge ~/.agents-system/cloud/tasks.db into ~/.agents/.cache/cloud/tasks.db.
+ */
+async function migrateSystemCloudToCache(): Promise<void> {
+  const srcDir = path.join(SYSTEM_DIR, 'cloud');
+  if (!fs.existsSync(srcDir)) return;
+  await mergeSqliteDb(path.join(srcDir, 'tasks.db'), path.join(CACHE_DIR, 'cloud', 'tasks.db'));
+
+  // Any other files in cloud/ get moved into the user cache bucket.
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(srcDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const s = path.join(srcDir, entry.name);
+    const d = path.join(CACHE_DIR, 'cloud', entry.name);
+    if (entry.isDirectory()) {
+      moveDirOnce(s, d);
+    } else {
+      moveFileOnce(s, d);
+    }
+  }
+  try {
+    if (fs.readdirSync(srcDir).length === 0) fs.rmdirSync(srcDir);
+  } catch { /* best-effort */ }
+}
+
+/**
+ * Legacy ~/.agents-system/swarm/ predates the rename to teams/. Fold any
+ * per-agent dirs into ~/.agents/.history/teams/agents/ and drop the bookkeeping
+ * JSONs (cache.json, config.json, teams.json) — those are regenerable.
+ */
+function migrateLegacySwarmToTeams(): void {
+  const src = path.join(SYSTEM_DIR, 'swarm');
+  if (!fs.existsSync(src)) return;
+  const agentsSrc = path.join(src, 'agents');
+  if (fs.existsSync(agentsSrc)) {
+    moveDirOnce(agentsSrc, path.join(HISTORY_DIR, 'teams', 'agents'));
+  }
+  for (const dead of ['cache.json', 'config.json', 'teams.json']) {
+    const f = path.join(src, dead);
+    if (fs.existsSync(f)) {
+      try { fs.unlinkSync(f); } catch { /* best-effort */ }
+    }
+  }
+  try {
+    if (fs.readdirSync(src).length === 0) fs.rmdirSync(src);
+  } catch { /* best-effort */ }
+}
+
+/**
+ * Move ~/.agents-system/repos/<alias>/ to ~/.agents-<alias>/ peer dirs.
+ *
+ * Extra DotAgents repos are user-defined config and belong as peer dirs to
+ * ~/.agents/, not nested under the npm-shipped system repo. The dir name in
+ * `repos/` becomes the alias.
+ */
+function migrateSystemReposToPeerDirs(): void {
+  const src = path.join(SYSTEM_DIR, 'repos');
+  if (!fs.existsSync(src)) return;
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(src, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  let moved = 0;
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const alias = entry.name;
+    const s = path.join(src, alias);
+    const d = path.join(HOME, `.agents-${alias}`);
+    if (fs.existsSync(d)) {
+      // Peer dir already exists — drop the system-side copy to avoid drift.
+      try { fs.rmSync(s, { recursive: true, force: true }); } catch { /* best-effort */ }
+      continue;
+    }
+    try {
+      fs.renameSync(s, d);
+      moved++;
+    } catch { /* best-effort, leave in place */ }
+  }
+  try {
+    if (fs.readdirSync(src).length === 0) fs.rmdirSync(src);
+  } catch { /* best-effort */ }
+  if (moved > 0) {
+    console.error(`Moved ${moved} extra repo${moved === 1 ? '' : 's'} from ~/.agents-system/repos/ to ~/.agents-<alias>/ peer dirs`);
+  }
+}
+
+/**
+ * Drop known-dead artifacts from ~/.agents-system/ that are pure regenerable
+ * runtime state and don't belong anywhere:
+ *   bin/agents-keychain-*  — per-version keychain helper, rebuilt on demand
+ *   shims/                  — moved long ago, only empty leftover remains
+ */
+function dropDeadSystemArtifacts(): void {
+  const binDir = path.join(SYSTEM_DIR, 'bin');
+  if (fs.existsSync(binDir)) {
+    try {
+      for (const name of fs.readdirSync(binDir)) {
+        if (name.startsWith('agents-keychain-')) {
+          try { fs.unlinkSync(path.join(binDir, name)); } catch { /* best-effort */ }
+        }
+      }
+      if (fs.readdirSync(binDir).length === 0) fs.rmdirSync(binDir);
+    } catch { /* best-effort */ }
+  }
+
+  const shimsDir = path.join(SYSTEM_DIR, 'shims');
+  if (fs.existsSync(shimsDir)) {
+    try {
+      if (fs.readdirSync(shimsDir).length === 0) fs.rmdirSync(shimsDir);
+    } catch { /* best-effort */ }
+  }
+
+  // After migrateSystemVersionsToUser() moves real version dirs out, the system
+  // may still hold an empty `versions/<agent>/` skeleton with a stray .DS_Store.
+  // Sweep it: if every leaf file is .DS_Store, drop the tree entirely.
+  const versionsDir = path.join(SYSTEM_DIR, 'versions');
+  if (fs.existsSync(versionsDir)) {
+    try {
+      if (containsOnlyDsStore(versionsDir)) {
+        fs.rmSync(versionsDir, { recursive: true, force: true });
+      }
+    } catch { /* best-effort */ }
+  }
+}
+
+function containsOnlyDsStore(dir: string): boolean {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      if (!containsOnlyDsStore(path.join(dir, entry.name))) return false;
+    } else if (entry.name !== '.DS_Store') {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * After the sweep runs, warn (once per invocation) about any unrecognized
+ * subdirectory left in ~/.agents-system/. The system repo is the npm-shipped
+ * defaults — anything outside the allowlist is drift that future maintainers
+ * need to handle explicitly.
+ */
+function warnSystemOrphans(): void {
+  const SHIPPED_ALLOWLIST = new Set<string>([
+    // resource directories shipped by the npm package
+    'commands', 'hooks', 'skills', 'rules', 'mcp', 'permissions', 'subagents', 'profiles', 'agents',
+    // top-level metadata files
+    'agents.yaml', 'hooks.yaml', 'README.md', 'CHANGELOG.md',
+    // git + repo metadata
+    '.git', '.githooks', '.gitignore', '.assets', '.environment', '.plans',
+    // benign noise that's safe to ignore
+    '.DS_Store', '.claude',
+  ]);
+
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(SYSTEM_DIR);
+  } catch {
+    return;
+  }
+  // Transient runtime sockets (.sock) are bound by long-running helpers like the
+  // VS Code extension; they're live state, not stale data, and a future fix in
+  // those helpers will move them into ~/.agents/.cache/ — until then, suppress.
+  const orphans = entries.filter((name) => !SHIPPED_ALLOWLIST.has(name) && !name.endsWith('.sock'));
+  if (orphans.length === 0) return;
+  console.error(`~/.agents-system/ has unexpected entries (not part of the npm-shipped defaults): ${orphans.join(', ')}`);
+}
+
 /** Run all idempotent migrations. Safe to call multiple times. */
-export function runMigration(): void {
+export async function runMigration(): Promise<void> {
   migrateAgentsYaml();
   deleteSystemPromptsJson();
   migrateSystemConfigJson();
@@ -714,9 +1196,25 @@ export function runMigration(): void {
   cleanupUserConfigJson();
   cleanupEmptyTopLevelRuns();
   foldUserHooksYamlIntoAgentsYaml();
+  foldBrowserProfilesIntoAgentsYaml();
   // Bucket moves: collapse runtime state into ~/.agents/.history and ~/.agents/.cache.
-  // Symlink repair runs LAST so it can find the post-move version homes.
   migrateRuntimeToHistory();
   migrateRuntimeToCache();
+
+  // System-repo sweep: move every remaining operational dir into its canonical
+  // user-bucket location, then drop known-dead artifacts and warn about
+  // anything we don't recognize. Order: durable (sessions/teams/trash/repos/
+  // legacy-swarm) -> caches (cache/, cloud/) -> drops -> orphan check.
+  await migrateSystemSessionsToHistory();
+  migrateSystemTeamsToUser();
+  migrateSystemTrashToHistory();
+  migrateLegacySwarmToTeams();
+  migrateSystemReposToPeerDirs();
+  await migrateSystemCacheToUserCache();
+  await migrateSystemCloudToCache();
+  dropDeadSystemArtifacts();
+  warnSystemOrphans();
+
+  // Symlink repair runs LAST so it can find the post-move version homes.
   repairAgentConfigSymlinks();
 }

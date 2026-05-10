@@ -702,7 +702,7 @@ if (process.env.AGENTS_SKIP_MIGRATION !== '1') {
   try {
     const { runMigration } = await import('./lib/migrate.js');
     const sentinel = getMigratedSentinelPath();
-    const sentinelValue = `${VERSION}-v6`;
+    const sentinelValue = `${VERSION}-v8`;
     let needRun = true;
     try {
       if (fs.existsSync(sentinel) && fs.readFileSync(sentinel, 'utf-8').trim() === sentinelValue) {
@@ -710,7 +710,7 @@ if (process.env.AGENTS_SKIP_MIGRATION !== '1') {
       }
     } catch { /* best-effort — fall through to run */ }
     if (needRun) {
-      runMigration();
+      await runMigration();
       try {
         fs.mkdirSync(path.dirname(sentinel), { recursive: true });
         fs.writeFileSync(sentinel, sentinelValue);
