@@ -174,8 +174,43 @@ export function getPermissionsDir(): string { return SYSTEM_PERMISSIONS_DIR; }
 /** Path to subagent definition directories — system repo. */
 export function getSubagentsDir(): string { return SYSTEM_SUBAGENTS_DIR; }
 
-/** Path to ~/.agents-system/promptcuts.yaml. */
+/** Path to ~/.agents-system/hooks/promptcuts.yaml (system defaults). */
 export function getPromptcutsPath(): string { return SYSTEM_PROMPTCUTS_FILE; }
+
+/**
+ * Resolve the effective promptcuts file: user file if it exists, otherwise
+ * the system file. Use this for callers that need a single path (doctor
+ * diff, displaying which file is in play). Callers that need the merged
+ * shortcut set should use readMergedPromptcuts() instead.
+ */
+export function getEffectivePromptcutsPath(): string {
+  if (fs.existsSync(USER_PROMPTCUTS_FILE)) return USER_PROMPTCUTS_FILE;
+  return SYSTEM_PROMPTCUTS_FILE;
+}
+
+/**
+ * Read promptcuts from system + user with user precedence. Returns the
+ * merged `shortcuts` map. Same layering model as parseHookManifest().
+ * Returns an empty object when neither file exists or both fail to parse.
+ */
+export function readMergedPromptcuts(): Record<string, unknown> {
+  const merged: Record<string, unknown> = {};
+  for (const filePath of [SYSTEM_PROMPTCUTS_FILE, USER_PROMPTCUTS_FILE]) {
+    if (!fs.existsSync(filePath)) continue;
+    try {
+      const parsed = yaml.parse(fs.readFileSync(filePath, 'utf-8')) as
+        | { shortcuts?: Record<string, unknown> }
+        | null;
+      if (!parsed?.shortcuts) continue;
+      for (const [key, value] of Object.entries(parsed.shortcuts)) {
+        merged[key] = value;
+      }
+    } catch {
+      // Skip unreadable file, keep going
+    }
+  }
+  return merged;
+}
 
 /** Path to the legacy MCP config JSON. */
 export function getMcpConfigPath(): string { return SYSTEM_MCP_CONFIG_FILE; }
