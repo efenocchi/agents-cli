@@ -41,6 +41,16 @@ import {
   iterHooksCapableVersions,
   removeHookFromVersion,
 } from '../lib/hooks.js';
+import {
+  diffVersionPlugins,
+  iterPluginsCapableVersions,
+  removePluginSkillFromVersion,
+} from '../lib/plugins.js';
+import {
+  diffVersionSubagents,
+  iterSubagentsCapableVersions,
+  removeSubagentFromVersion,
+} from '../lib/subagents.js';
 import { getGlobalDefault } from '../lib/versions.js';
 import { resolveAgentName, formatAgentError } from '../lib/agents.js';
 import { pruneDuplicates } from './view.js';
@@ -49,11 +59,11 @@ import { getTrashDir } from '../lib/state.js';
 import { countSessionsOlderThan, deleteSessionsOlderThan } from '../lib/session/db.js';
 import { previewRunsPrune, pruneRuns, countAllRuns } from '../lib/routines.js';
 
-type ResourceType = 'commands' | 'skills' | 'hooks';
+type ResourceType = 'commands' | 'skills' | 'hooks' | 'plugins' | 'subagents';
 type StateType = 'trash' | 'sessions' | 'runs';
 type PruneType = ResourceType | 'versions' | StateType;
 
-const RESOURCE_TYPES: ResourceType[] = ['commands', 'skills', 'hooks'];
+const RESOURCE_TYPES: ResourceType[] = ['commands', 'skills', 'hooks', 'plugins', 'subagents'];
 const STATE_TYPES: StateType[] = ['trash', 'sessions', 'runs'];
 const ALL_TYPES: PruneType[] = [...RESOURCE_TYPES, 'versions', ...STATE_TYPES];
 
@@ -110,6 +120,24 @@ function collectOrphans(types: ResourceType[], all: boolean): OrphanGroup[] {
     }
   }
 
+  if (types.includes('plugins')) {
+    for (const { agent, version } of scopePairs(iterPluginsCapableVersions(), all)) {
+      const diff = diffVersionPlugins(agent, version);
+      if (diff.orphans.length > 0) {
+        groups.push({ type: 'plugins', agent, version, orphans: diff.orphans });
+      }
+    }
+  }
+
+  if (types.includes('subagents')) {
+    for (const { agent, version } of scopePairs(iterSubagentsCapableVersions(), all)) {
+      const diff = diffVersionSubagents(agent, version);
+      if (diff.orphans.length > 0) {
+        groups.push({ type: 'subagents', agent, version, orphans: diff.orphans });
+      }
+    }
+  }
+
   return groups;
 }
 
@@ -121,6 +149,10 @@ function removeOne(group: OrphanGroup, name: string): { success: boolean; error?
       return removeSkillFromVersion(group.agent, group.version, name);
     case 'hooks':
       return removeHookFromVersion(group.agent, group.version, name);
+    case 'plugins':
+      return removePluginSkillFromVersion(group.agent, group.version, name);
+    case 'subagents':
+      return removeSubagentFromVersion(group.agent, group.version, name);
   }
 }
 

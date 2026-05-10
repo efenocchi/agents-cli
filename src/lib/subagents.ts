@@ -10,7 +10,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'yaml';
-import { getSubagentsDir, getUserSubagentsDir } from './state.js';
+import { getSubagentsDir, getUserSubagentsDir, getTrashSubagentsDir } from './state.js';
+import { listInstalledVersions, getVersionHomePath } from './versions.js';
 import { safeJoin } from './paths.js';
 import type { AgentId, DiscoveredSubagent, InstalledSubagent, SubagentFrontmatter } from './types.js';
 
@@ -464,4 +465,111 @@ export function listSubagentsForAgent(
   }
 
   return subagents;
+}
+
+// Agents that support subagents
+const SUBAGENTS_CAPABLE_AGENTS: AgentId[] = ['claude', 'openclaw'];
+
+export interface VersionSubagentDiff {
+  agent: AgentId;
+  version: string;
+  orphans: string[];
+}
+
+/**
+ * Compare a version home's subagents against discovered subagents.
+ * Returns orphan subagent names.
+ */
+export function diffVersionSubagents(agent: AgentId, version: string): VersionSubagentDiff {
+  const versionHome = getVersionHomePath(agent, version);
+  const orphans: string[] = [];
+
+  // Get all discovered subagent names
+  const discovered = new Set<string>();
+  for (const dir of [getSubagentsDir(), getUserSubagentsDir()]) {
+    if (fs.existsSync(dir)) {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (entry.isDirectory()) {
+          discovered.add(entry.name);
+        }
+      }
+    }
+  }
+
+  // Check what's installed
+  if (agent === 'claude') {
+    const agentsDir = path.join(versionHome, '.claude', 'agents');
+    if (fs.existsSync(agentsDir)) {
+      for (const file of fs.readdirSync(agentsDir)) {
+        if (!file.endsWith('.md')) continue;
+        const name = path.basename(file, '.md');
+        if (!discovered.has(name)) {
+          orphans.push(name);
+        }
+      }
+    }
+  } else if (agent === 'openclaw') {
+    const openclawDir = path.join(versionHome, '.openclaw');
+    if (fs.existsSync(openclawDir)) {
+      for (const entry of fs.readdirSync(openclawDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        if (!discovered.has(entry.name)) {
+          orphans.push(entry.name);
+        }
+      }
+    }
+  }
+
+  return { agent, version, orphans: orphans.sort() };
+}
+
+/**
+ * Iterate all (agent, version) pairs that support subagents and are installed.
+ */
+export function iterSubagentsCapableVersions(filter?: { agent?: AgentId; version?: string }): Array<{ agent: AgentId; version: string }> {
+  const pairs: Array<{ agent: AgentId; version: string }> = [];
+  const agents = filter?.agent ? [filter.agent] : SUBAGENTS_CAPABLE_AGENTS;
+  for (const agent of agents) {
+    if (!SUBAGENTS_CAPABLE_AGENTS.includes(agent)) continue;
+    const versions = listInstalledVersions(agent);
+    for (const version of versions) {
+      if (filter?.version && filter.version !== version) continue;
+      pairs.push({ agent, version });
+    }
+  }
+  return pairs;
+}
+
+/**
+ * Remove a single subagent from a specific version home.
+ * Soft-deletes to ~/.agents/.trash/subagents/.
+ */
+export function removeSubagentFromVersion(
+  agent: AgentId,
+  version: string,
+  subagentName: string
+): { success: boolean; error?: string } {
+  const versionHome = getVersionHomePath(agent, version);
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const trashDir = path.join(getTrashSubagentsDir(), agent, version, subagentName);
+
+  try {
+    if (agent === 'claude') {
+      const targetPath = path.join(versionHome, '.claude', 'agents', `${subagentName}.md`);
+      if (fs.existsSync(targetPath)) {
+        fs.mkdirSync(trashDir, { recursive: true, mode: 0o700 });
+        fs.renameSync(targetPath, path.join(trashDir, `${subagentName}.md.${stamp}`));
+      }
+    } else if (agent === 'openclaw') {
+      const targetDir = path.join(versionHome, '.openclaw', subagentName);
+      if (fs.existsSync(targetDir)) {
+        const trashDest = path.join(trashDir, stamp);
+        fs.mkdirSync(trashDir, { recursive: true, mode: 0o700 });
+        fs.renameSync(targetDir, trashDest);
+      }
+    }
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: (err as Error).message };
+  }
 }

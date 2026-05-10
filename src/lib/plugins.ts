@@ -9,7 +9,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { AgentId, DiscoveredPlugin, PluginManifest } from './types.js';
-import { getPluginsDir } from './state.js';
+import { getPluginsDir, getTrashPluginsDir } from './state.js';
+import { listInstalledVersions, getVersionHomePath } from './versions.js';
 import { AGENTS, PLUGINS_CAPABLE_AGENTS } from './agents.js';
 
 const PLUGIN_MANIFEST_DIR = '.claude-plugin';
@@ -617,13 +618,15 @@ export function removePluginFromVersion(
 
 /**
  * Remove orphaned plugin skill directories from a version home.
+ * Soft-deletes to ~/.agents/.trash/plugins/.
  * An orphan is a skill dir with the plugin prefix pattern (name--skill)
  * where the plugin no longer exists in ~/.agents/plugins/.
  */
 export function cleanOrphanedPluginSkills(
   agent: AgentId,
   versionHome: string,
-  activePluginNames: Set<string>
+  activePluginNames: Set<string>,
+  version?: string
 ): string[] {
   const removed: string[] = [];
   const skillsDir = path.join(versionHome, `.${agent}`, 'skills');
@@ -639,7 +642,11 @@ export function cleanOrphanedPluginSkills(
     const pluginName = entry.name.slice(0, dashIdx);
     if (!activePluginNames.has(pluginName)) {
       try {
-        fs.rmSync(path.join(skillsDir, entry.name), { recursive: true, force: true });
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const trashDir = path.join(getTrashPluginsDir(), agent, version || 'unknown', entry.name);
+        const trashDest = path.join(trashDir, stamp);
+        fs.mkdirSync(trashDir, { recursive: true, mode: 0o700 });
+        fs.renameSync(path.join(skillsDir, entry.name), trashDest);
         removed.push(entry.name);
       } catch {
         // Skip on error
@@ -647,4 +654,85 @@ export function cleanOrphanedPluginSkills(
     }
   }
   return removed;
+}
+
+export interface VersionPluginDiff {
+  agent: AgentId;
+  version: string;
+  orphans: string[];
+}
+
+/**
+ * Compare a version home's plugin skills against discovered plugins.
+ * Returns orphan plugin skill names (pattern: pluginName--skillName).
+ */
+export function diffVersionPlugins(agent: AgentId, version: string): VersionPluginDiff {
+  const versionHome = getVersionHomePath(agent, version);
+  const skillsDir = path.join(versionHome, `.${agent}`, 'skills');
+  const orphans: string[] = [];
+
+  if (!fs.existsSync(skillsDir)) {
+    return { agent, version, orphans };
+  }
+
+  const activePlugins = new Set(discoverPlugins().map(p => p.name));
+  const entries = fs.readdirSync(skillsDir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const dashIdx = entry.name.indexOf('--');
+    if (dashIdx === -1) continue;
+
+    const pluginName = entry.name.slice(0, dashIdx);
+    if (!activePlugins.has(pluginName)) {
+      orphans.push(entry.name);
+    }
+  }
+
+  return { agent, version, orphans: orphans.sort() };
+}
+
+/**
+ * Iterate all (agent, version) pairs that support plugins and are installed.
+ */
+export function iterPluginsCapableVersions(filter?: { agent?: AgentId; version?: string }): Array<{ agent: AgentId; version: string }> {
+  const pairs: Array<{ agent: AgentId; version: string }> = [];
+  const agents = filter?.agent ? [filter.agent] : PLUGINS_CAPABLE_AGENTS;
+  for (const agent of agents) {
+    if (!PLUGINS_CAPABLE_AGENTS.includes(agent)) continue;
+    const versions = listInstalledVersions(agent);
+    for (const version of versions) {
+      if (filter?.version && filter.version !== version) continue;
+      pairs.push({ agent, version });
+    }
+  }
+  return pairs;
+}
+
+/**
+ * Remove a single orphan plugin skill from a version home.
+ * Soft-deletes to ~/.agents/.trash/plugins/.
+ */
+export function removePluginSkillFromVersion(
+  agent: AgentId,
+  version: string,
+  skillName: string
+): { success: boolean; error?: string } {
+  const versionHome = getVersionHomePath(agent, version);
+  const skillPath = path.join(versionHome, `.${agent}`, 'skills', skillName);
+
+  if (!fs.existsSync(skillPath)) {
+    return { success: true };
+  }
+
+  try {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const trashDir = path.join(getTrashPluginsDir(), agent, version, skillName);
+    const trashDest = path.join(trashDir, stamp);
+    fs.mkdirSync(trashDir, { recursive: true, mode: 0o700 });
+    fs.renameSync(skillPath, trashDest);
+  } catch (err) {
+    return { success: false, error: (err as Error).message };
+  }
+  return { success: true };
 }

@@ -273,6 +273,21 @@ export function getTrashDir(): string { return TRASH_DIR; }
 /** Path to soft-deleted version dirs (~/.agents/trash/versions/). */
 export function getTrashVersionsDir(): string { return path.join(TRASH_DIR, 'versions'); }
 
+/** Path to soft-deleted skills (~/.agents/trash/skills/). */
+export function getTrashSkillsDir(): string { return path.join(TRASH_DIR, 'skills'); }
+
+/** Path to soft-deleted commands (~/.agents/trash/commands/). */
+export function getTrashCommandsDir(): string { return path.join(TRASH_DIR, 'commands'); }
+
+/** Path to soft-deleted hooks (~/.agents/trash/hooks/). */
+export function getTrashHooksDir(): string { return path.join(TRASH_DIR, 'hooks'); }
+
+/** Path to soft-deleted plugins (~/.agents/trash/plugins/). */
+export function getTrashPluginsDir(): string { return path.join(TRASH_DIR, 'plugins'); }
+
+/** Path to soft-deleted subagents (~/.agents/trash/subagents/). */
+export function getTrashSubagentsDir(): string { return path.join(TRASH_DIR, 'subagents'); }
+
 /**
  * Path to a single user-level extra DotAgent repo clone (~/.agents-<alias>/).
  *
