@@ -103,6 +103,7 @@ export async function launchBrowser(
     '--disable-backgrounding-occluded-windows',
     '--disable-renderer-backgrounding',
     ...(options.headless ? ['--headless=new'] : []),
+    ...(options.viewport ? [`--window-size=${options.viewport.width},${options.viewport.height}`] : []),
     ...(options.args || []),
   ];
 

@@ -630,7 +630,12 @@ export class BrowserService {
     height: number,
     options: { mobile?: boolean; deviceScaleFactor?: number; tabHint?: string } = {}
   ): Promise<void> {
-    const { conn, target } = await this.getTarget(taskId, options.tabHint);
+    const { conn, task } = await this.findTask(taskId);
+    const shortId = options.tabHint ? await this.resolveTabHint(conn, task, options.tabHint) : this.resolveCurrentTab(task);
+    const cdpTargetId = this.getCdpTargetId(task, shortId);
+    const target = await this.getTarget(conn, cdpTargetId);
+    if (!target) throw new Error(`Tab ${shortId} not found`);
+
     const sessionId = await this.getSessionId(conn, target.targetId);
 
     await conn.cdp.send(
@@ -716,7 +721,12 @@ export class BrowserService {
     taskId: string,
     options: { level?: string; clear?: boolean; tabHint?: string } = {}
   ): Promise<import('./types.js').ConsoleEntry[]> {
-    const { conn, target } = await this.getTarget(taskId, options.tabHint);
+    const { conn, task } = await this.findTask(taskId);
+    const shortId = options.tabHint ? await this.resolveTabHint(conn, task, options.tabHint) : this.resolveCurrentTab(task);
+    const cdpTargetId = this.getCdpTargetId(task, shortId);
+    const target = await this.getTarget(conn, cdpTargetId);
+    if (!target) throw new Error(`Tab ${shortId} not found`);
+
     const sessionId = await this.getSessionId(conn, target.targetId);
     await this.enableRuntimeForSession(conn, sessionId);
 
@@ -734,7 +744,12 @@ export class BrowserService {
     taskId: string,
     options: { clear?: boolean; tabHint?: string } = {}
   ): Promise<import('./types.js').ErrorEntry[]> {
-    const { conn, target } = await this.getTarget(taskId, options.tabHint);
+    const { conn, task } = await this.findTask(taskId);
+    const shortId = options.tabHint ? await this.resolveTabHint(conn, task, options.tabHint) : this.resolveCurrentTab(task);
+    const cdpTargetId = this.getCdpTargetId(task, shortId);
+    const target = await this.getTarget(conn, cdpTargetId);
+    if (!target) throw new Error(`Tab ${shortId} not found`);
+
     const sessionId = await this.getSessionId(conn, target.targetId);
     await this.enableRuntimeForSession(conn, sessionId);
 
@@ -789,7 +804,12 @@ export class BrowserService {
     taskId: string,
     options: { filter?: string; clear?: boolean; tabHint?: string } = {}
   ): Promise<import('./types.js').NetworkRequest[]> {
-    const { conn, target } = await this.getTarget(taskId, options.tabHint);
+    const { conn, task } = await this.findTask(taskId);
+    const shortId = options.tabHint ? await this.resolveTabHint(conn, task, options.tabHint) : this.resolveCurrentTab(task);
+    const cdpTargetId = this.getCdpTargetId(task, shortId);
+    const target = await this.getTarget(conn, cdpTargetId);
+    if (!target) throw new Error(`Tab ${shortId} not found`);
+
     const sessionId = await this.getSessionId(conn, target.targetId);
     await this.enableNetworkForSession(conn, sessionId, taskId);
 
@@ -809,7 +829,12 @@ export class BrowserService {
     urlPattern: string,
     options: { timeout?: number; maxChars?: number; tabHint?: string } = {}
   ): Promise<string> {
-    const { conn, target } = await this.getTarget(taskId, options.tabHint);
+    const { conn, task } = await this.findTask(taskId);
+    const shortId = options.tabHint ? await this.resolveTabHint(conn, task, options.tabHint) : this.resolveCurrentTab(task);
+    const cdpTargetId = this.getCdpTargetId(task, shortId);
+    const target = await this.getTarget(conn, cdpTargetId);
+    if (!target) throw new Error(`Tab ${shortId} not found`);
+
     const sessionId = await this.getSessionId(conn, target.targetId);
     await this.enableNetworkForSession(conn, sessionId, taskId);
 
@@ -861,7 +886,12 @@ export class BrowserService {
       return;
     }
 
-    const { conn, target } = await this.getTarget(taskId, options.tabHint);
+    const { conn, task } = await this.findTask(taskId);
+    const shortId = options.tabHint ? await this.resolveTabHint(conn, task, options.tabHint) : this.resolveCurrentTab(task);
+    const cdpTargetId = this.getCdpTargetId(task, shortId);
+    const target = await this.getTarget(conn, cdpTargetId);
+    if (!target) throw new Error(`Tab ${shortId} not found`);
+
     const sessionId = await this.getSessionId(conn, target.targetId);
     const start = Date.now();
 
@@ -918,7 +948,12 @@ export class BrowserService {
   // ─── Downloads ───────────────────────────────────────────────────────────────
 
   async setDownloadPath(taskId: string, downloadPath: string, tabHint?: string): Promise<void> {
-    const { conn, target } = await this.getTarget(taskId, tabHint);
+    const { conn, task } = await this.findTask(taskId);
+    const shortId = tabHint ? await this.resolveTabHint(conn, task, tabHint) : this.resolveCurrentTab(task);
+    const cdpTargetId = this.getCdpTargetId(task, shortId);
+    const target = await this.getTarget(conn, cdpTargetId);
+    if (!target) throw new Error(`Tab ${shortId} not found`);
+
     const sessionId = await this.getSessionId(conn, target.targetId);
 
     await conn.cdp.send(
@@ -999,11 +1034,12 @@ export class BrowserService {
     const forkName = `${profile.name}.${forkNum}`;
 
     const port = allocatePort();
+    const chromeOpts = { ...profile.chrome, viewport: profile.viewport };
     const { pid, wsUrl } = await launchBrowser(
       forkName,
       profile.browser,
       port,
-      profile.chrome,
+      chromeOpts,
       profile.secrets,
       profile.binary
     );
