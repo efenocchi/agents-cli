@@ -85,11 +85,21 @@ function registerProfilesCommands(browser: Command): void {
   profiles
     .command('show <name>')
     .description('Show profile details')
-    .action(async (name: string) => {
+    .option('--json', 'Output machine-readable JSON')
+    .action(async (name: string, opts) => {
       const profile = await getProfile(name);
       if (!profile) {
-        console.error(`Profile "${name}" not found`);
+        if (opts.json) {
+          console.log(JSON.stringify({ ok: false, error: `Profile "${name}" not found` }));
+        } else {
+          console.error(`Profile "${name}" not found`);
+        }
         process.exit(1);
+      }
+
+      if (opts.json) {
+        console.log(JSON.stringify(profile, null, 2));
+        return;
       }
 
       console.log(`Name: ${profile.name}`);
@@ -178,6 +188,7 @@ function registerTaskCommands(browser: Command): void {
     .command('tabs [task]')
     .description('List open tabs')
     .option('-p, --profile <name>', 'Filter by profile')
+    .option('--json', 'Output machine-readable JSON')
     .action(async (task: string | undefined, opts) => {
       const response = await sendIPCRequest({
         action: 'tabs',
@@ -186,8 +197,17 @@ function registerTaskCommands(browser: Command): void {
       });
 
       if (!response.ok) {
-        console.error(response.error);
+        if (opts.json) {
+          console.log(JSON.stringify({ ok: false, error: response.error }));
+        } else {
+          console.error(response.error);
+        }
         process.exit(1);
+      }
+
+      if (opts.json) {
+        console.log(JSON.stringify(response.tabs ?? [], null, 2));
+        return;
       }
 
       if (!response.tabs || response.tabs.length === 0) {
@@ -195,13 +215,13 @@ function registerTaskCommands(browser: Command): void {
         return;
       }
 
-      console.log('TASK'.padEnd(15) + 'TAB'.padEnd(12) + 'URL');
-      console.log('-'.repeat(80));
+      const idWidth = Math.max(3, ...response.tabs.map((t) => t.id.length)) + 2;
+      console.log('TASK'.padEnd(15) + 'TAB'.padEnd(idWidth) + 'URL');
+      console.log('-'.repeat(15 + idWidth + 55));
       for (const tab of response.tabs) {
-        const shortId = tab.id.slice(0, 8);
         console.log(
           tab.task.padEnd(15) +
-            shortId.padEnd(12) +
+            tab.id.padEnd(idWidth) +
             tab.url.slice(0, 55)
         );
       }
@@ -268,6 +288,7 @@ function registerTaskCommands(browser: Command): void {
     .command('status')
     .description('Show running browser tasks')
     .option('-p, --profile <name>', 'Filter by profile')
+    .option('--json', 'Output machine-readable JSON')
     .action(async (opts) => {
       const response = await sendIPCRequest({
         action: 'status',
@@ -275,8 +296,17 @@ function registerTaskCommands(browser: Command): void {
       });
 
       if (!response.ok) {
-        console.error(response.error);
+        if (opts.json) {
+          console.log(JSON.stringify({ ok: false, error: response.error }));
+        } else {
+          console.error(response.error);
+        }
         process.exit(1);
+      }
+
+      if (opts.json) {
+        console.log(JSON.stringify(response.profiles ?? [], null, 2));
+        return;
       }
 
       if (!response.profiles || response.profiles.length === 0) {
@@ -285,7 +315,11 @@ function registerTaskCommands(browser: Command): void {
       }
 
       for (const profile of response.profiles) {
-        console.log(`\n${profile.name} (port ${profile.port}, pid ${profile.pid})`);
+        const portLabel =
+          profile.configuredPort && profile.configuredPort !== profile.port
+            ? `port ${profile.port} (configured ${profile.configuredPort})`
+            : `port ${profile.port}`;
+        console.log(`\n${profile.name} (${portLabel}, pid ${profile.pid})`);
         if (profile.tasks.length === 0) {
           console.log('  No active tasks');
         } else {
@@ -307,6 +341,7 @@ function registerTaskCommands(browser: Command): void {
     .command('tasks')
     .description('List all browser tasks')
     .option('-p, --profile <name>', 'Filter by profile')
+    .option('--json', 'Output machine-readable JSON')
     .action(async (opts) => {
       const response = await sendIPCRequest({
         action: 'status',
@@ -314,7 +349,11 @@ function registerTaskCommands(browser: Command): void {
       });
 
       if (!response.ok) {
-        console.error(response.error);
+        if (opts.json) {
+          console.log(JSON.stringify({ ok: false, error: response.error }));
+        } else {
+          console.error(response.error);
+        }
         process.exit(1);
       }
 
@@ -328,6 +367,11 @@ function registerTaskCommands(browser: Command): void {
             created: task.createdAt,
           });
         }
+      }
+
+      if (opts.json) {
+        console.log(JSON.stringify(allTasks, null, 2));
+        return;
       }
 
       if (allTasks.length === 0) {

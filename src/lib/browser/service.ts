@@ -1,7 +1,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { CDPClient, discoverBrowserWsUrl } from './cdp.js';
-import { getProfile, getProfileRuntimeDir, getBrowserRuntimeDir } from './profiles.js';
+import { CDPClient, discoverBrowserWsUrl, verifyBrowserIdentity } from './cdp.js';
+import {
+  getProfile,
+  getProfileRuntimeDir,
+  getBrowserRuntimeDir,
+  listProfiles,
+  extractConfiguredPort,
+} from './profiles.js';
 import { killChrome, getRunningChromeInfo, launchBrowser, allocatePort } from './chrome.js';
 import { connectLocal } from './drivers/local.js';
 import { connectSSH } from './drivers/ssh.js';
@@ -382,19 +388,58 @@ export class BrowserService {
   }
 
   async status(profileName?: string): Promise<ProfileStatus[]> {
+    const seen = new Set<string>();
     const statuses: ProfileStatus[] = [];
 
-    if (profileName) {
-      const status = await this.getProfileStatus(profileName);
-      if (status) statuses.push(status);
-    } else {
-      for (const name of this.connections.keys()) {
-        const status = await this.getProfileStatus(name);
-        if (status) statuses.push(status);
+    const candidates = profileName ? [profileName] : Array.from(this.connections.keys());
+    for (const name of candidates) {
+      const status = await this.getProfileStatus(name);
+      if (status) {
+        statuses.push(status);
+        seen.add(name);
       }
     }
 
+    if (!profileName) {
+      const profiles = await listProfiles();
+      for (const profile of profiles) {
+        if (seen.has(profile.name)) continue;
+        const reconciled = await this.reconcileFromDisk(profile.name);
+        if (reconciled) statuses.push(reconciled);
+      }
+    } else if (!seen.has(profileName)) {
+      const reconciled = await this.reconcileFromDisk(profileName);
+      if (reconciled) statuses.push(reconciled);
+    }
+
     return statuses;
+  }
+
+  private async reconcileFromDisk(profileName: string): Promise<ProfileStatus | null> {
+    const info = getRunningChromeInfo(profileName);
+    if (!info) return null;
+
+    const profile = await getProfile(profileName);
+    const tasks = this.loadTaskState(profileName);
+    const taskStatuses: TaskStatus[] = [];
+    for (const [, task] of tasks) {
+      taskStatuses.push({
+        id: task.id,
+        tabCount: task.tabIds.length,
+        createdAt: task.createdAt,
+      });
+    }
+
+    const configuredPort = profile ? extractConfiguredPort(profile) : undefined;
+
+    return {
+      name: profileName,
+      running: true,
+      port: info.port,
+      pid: info.pid,
+      configuredPort: configuredPort !== info.port ? configuredPort : undefined,
+      tasks: taskStatuses,
+    };
   }
 
   async shutdown(): Promise<void> {
@@ -456,7 +501,8 @@ export class BrowserService {
     const existingInfo = getRunningChromeInfo(profile.name);
 
     if (existingInfo) {
-      const wsUrl = await discoverBrowserWsUrl(existingInfo.port);
+      const { wsUrl, browser } = await discoverBrowserWsUrl(existingInfo.port);
+      verifyBrowserIdentity(browser, profile.browser, existingInfo.port);
       const cdp = new CDPClient();
       await cdp.connect(wsUrl);
       await this.enableDomains(cdp);
@@ -533,7 +579,8 @@ export class BrowserService {
 
     if (url.protocol === 'http:' || url.protocol === 'https:') {
       const port = parseInt(url.port || (url.protocol === 'https:' ? '443' : '80'), 10);
-      const wsUrl = await discoverBrowserWsUrl(port, url.hostname);
+      const { wsUrl, browser } = await discoverBrowserWsUrl(port, url.hostname);
+      verifyBrowserIdentity(browser, profile.browser, port, url.hostname);
       const cdp = new CDPClient();
       await cdp.connect(wsUrl);
       await this.enableDomains(cdp);
@@ -644,11 +691,15 @@ export class BrowserService {
       });
     }
 
+    const profile = await getProfile(profileName);
+    const configuredPort = profile ? extractConfiguredPort(profile) : undefined;
+
     return {
       name: profileName,
       running: true,
       port: conn.port,
       pid: conn.pid,
+      configuredPort: configuredPort !== conn.port ? configuredPort : undefined,
       tasks,
     };
   }

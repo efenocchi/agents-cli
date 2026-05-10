@@ -1,6 +1,5 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
 import * as yaml from 'yaml';
 import { getUserAgentsDir } from '../state.js';
 import type { BrowserProfile } from './types.js';
@@ -12,8 +11,7 @@ export function getBrowserProfilesDir(): string {
 }
 
 export function getBrowserRuntimeDir(): string {
-  const agentsDir = path.join(os.homedir(), '.agents');
-  return path.join(agentsDir, 'browser');
+  return path.join(getUserAgentsDir(), 'browser');
 }
 
 export function getProfilePath(name: string): string {
@@ -76,4 +74,23 @@ export async function deleteProfile(name: string): Promise<void> {
   }
 
   fs.unlinkSync(filePath);
+}
+
+/**
+ * Extract the port intended by the profile's first endpoint.
+ * Returns undefined for endpoint shapes that don't carry a port (e.g. ws:// without one).
+ */
+export function extractConfiguredPort(profile: BrowserProfile): number | undefined {
+  const endpoint = profile.endpoints[0];
+  if (!endpoint) return undefined;
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    return undefined;
+  }
+  if (url.port) return parseInt(url.port, 10);
+  if (url.protocol === 'cdp:') return 9222;
+  if (url.protocol === 'ssh:') return 9222;
+  return undefined;
 }

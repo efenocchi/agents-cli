@@ -38,6 +38,8 @@ export interface ProfileStatus {
   running: boolean;
   port?: number;
   pid?: number;
+  /** The port declared in the profile's first endpoint, when it differs from the running port. */
+  configuredPort?: number;
   tasks: TaskStatus[];
 }
 

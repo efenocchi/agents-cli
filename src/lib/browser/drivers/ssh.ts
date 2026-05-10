@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'child_process';
 import * as net from 'net';
-import { CDPClient, discoverBrowserWsUrl } from '../cdp.js';
+import { CDPClient, discoverBrowserWsUrl, verifyBrowserIdentity } from '../cdp.js';
 import { allocatePort } from '../chrome.js';
 import type { BrowserProfile } from '../types.js';
 
@@ -41,7 +41,13 @@ export async function connectSSH(
     throw new Error(`SSH tunnel failed to establish to ${host}`);
   }
 
-  const wsUrl = await discoverBrowserWsUrl(localPort);
+  const { wsUrl, browser } = await discoverBrowserWsUrl(localPort);
+  try {
+    verifyBrowserIdentity(browser, profile.browser, remotePort, host);
+  } catch (err) {
+    tunnel.kill();
+    throw err;
+  }
   const cdp = new CDPClient();
   await cdp.connect(wsUrl);
 
