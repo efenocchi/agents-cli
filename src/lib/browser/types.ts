@@ -21,7 +21,6 @@ export interface Task {
   id: string;
   name: string;
   profile: string;
-  windowTargetId?: string;
   tabs: Record<string, string>; // shortId (8 chars) -> CDP targetId
   currentTabId?: string; // shortId of current tab
   createdAt: number;
@@ -54,7 +53,8 @@ export interface TaskStatus {
 }
 
 export type IPCAction =
-  | 'open'
+  | 'start'
+  | 'done'
   | 'stop'
   | 'status'
   | 'navigate'

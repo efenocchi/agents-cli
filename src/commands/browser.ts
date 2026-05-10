@@ -123,14 +123,14 @@ function registerProfilesCommands(browser: Command): void {
 
 function registerTaskCommands(browser: Command): void {
   browser
-    .command('open')
-    .description('Open browser with a profile')
+    .command('start')
+    .description('Start a browser task with a profile')
     .requiredOption('-p, --profile <name>', 'Browser profile to use')
     .option('-t, --task <name>', 'Task name (auto-generated if omitted)')
     .option('-u, --url <url>', 'Open URL in first tab')
     .action(async (opts) => {
       const response = await sendIPCRequest({
-        action: 'open',
+        action: 'start',
         profile: opts.profile,
         taskName: opts.task,
         url: opts.url,
@@ -142,10 +142,27 @@ function registerTaskCommands(browser: Command): void {
       }
 
       if (opts.url && response.tabId) {
-        console.log(`Opened task "${response.task}" with tab ${response.tabId}`);
+        console.log(`Started task "${response.task}" with tab ${response.tabId}`);
       } else {
-        console.log(`Opened task "${response.task}"`);
+        console.log(`Started task "${response.task}"`);
       }
+    });
+
+  browser
+    .command('done <task>')
+    .description('Complete a task and close its tabs')
+    .action(async (task: string) => {
+      const response = await sendIPCRequest({
+        action: 'done',
+        task,
+      });
+
+      if (!response.ok) {
+        console.error(response.error);
+        process.exit(1);
+      }
+
+      console.log(`Completed task: ${task}`);
     });
 
   browser
