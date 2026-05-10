@@ -42,7 +42,7 @@ vi.mock('../rules/compile.js', () => ({
 }));
 
 vi.mock('../permissions.js', () => ({
-  getActivePermissionSetName: () => null,
+  getActivePermissionPresetName: () => null,
 }));
 
 import { loadSyncManifest, saveSyncManifest, buildManifest, isSyncStale } from '../sync-manifest.js';
