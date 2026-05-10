@@ -37,6 +37,7 @@ import {
   tryParseSkillMetadata,
   diffVersionSkills,
   iterSkillsCapableVersions,
+  removeSkillFromVersion,
   type SkillParseError,
   type VersionSkillDiff,
 } from '../lib/skills.js';
@@ -56,6 +57,8 @@ import {
   parseCommaSeparatedList,
   printWithPager,
   requireInteractiveSelection,
+  promptRemovalTargets,
+  type RemovalTarget,
 } from './utils.js';
 import {
   showResourceList,
@@ -374,15 +377,31 @@ Examples:
   agents skills remove
 `)
     .action(async (name?: string) => {
+      // Build map of skill -> targets for all installed versions
+      type SkillTargetInfo = { name: string; targets: Array<{ agent: AgentId; version: string }> };
+      const skillTargetMap = new Map<string, SkillTargetInfo>();
+
+      for (const { agent, version } of iterSkillsCapableVersions()) {
+        const home = getVersionHomePath(agent, version);
+        const skills = listInstalledSkillsWithScope(agent, process.cwd(), { home });
+        for (const skill of skills) {
+          if (skill.scope !== 'user') continue;
+          const existing = skillTargetMap.get(skill.name);
+          if (existing) {
+            existing.targets.push({ agent, version });
+          } else {
+            skillTargetMap.set(skill.name, { name: skill.name, targets: [{ agent, version }] });
+          }
+        }
+      }
+
       let skillsToRemove: string[];
 
       if (name) {
         skillsToRemove = [name];
       } else {
-        // Interactive picker
-        const installedSkills = listInstalledSkills();
-        if (installedSkills.size === 0) {
-          console.log(chalk.yellow('No skills installed.'));
+        if (skillTargetMap.size === 0) {
+          console.log(chalk.yellow('No skills installed in any version.'));
           return;
         }
 
@@ -393,12 +412,13 @@ Examples:
         }
 
         try {
-          const choices = Array.from(installedSkills.entries()).map(([skillName, skill]) => ({
-            value: skillName,
-            name: skill.metadata.description
-              ? `${skillName} - ${skill.metadata.description}`
-              : skillName,
-          }));
+          const choices = Array.from(skillTargetMap.values()).map((skill) => {
+            const agents = [...new Set(skill.targets.map((t) => AGENTS[t.agent].name))];
+            return {
+              value: skill.name,
+              name: `${skill.name} (${agents.join(', ')})`,
+            };
+          });
 
           const selected = await checkbox({
             message: 'Select skills to remove',
@@ -420,13 +440,43 @@ Examples:
         }
       }
 
+      let removed = 0;
       for (const skillName of skillsToRemove) {
-        const result = uninstallSkill(skillName);
-        if (result.success) {
-          console.log(chalk.green(`Removed skill '${skillName}'`));
-        } else {
-          console.log(chalk.red(result.error || `Failed to remove skill '${skillName}'`));
+        const skillInfo = skillTargetMap.get(skillName);
+        if (!skillInfo || skillInfo.targets.length === 0) {
+          console.log(chalk.yellow(`  Skill '${skillName}' not found in any version.`));
+          continue;
         }
+
+        const removalTargets: RemovalTarget[] = skillInfo.targets.map((t) => ({
+          agent: t.agent,
+          version: t.version,
+          label: `${agentLabel(t.agent)}@${t.version}`,
+        }));
+
+        const selectedTargets = await promptRemovalTargets(skillName, removalTargets);
+
+        if (selectedTargets.length === 0) {
+          console.log(chalk.gray(`  Skipped '${skillName}'.`));
+          continue;
+        }
+
+        for (const target of selectedTargets) {
+          const result = removeSkillFromVersion(target.agent as AgentId, target.version, skillName);
+          if (result.success) {
+            console.log(`  ${chalk.red('-')} ${target.label}: ${skillName}`);
+            removed++;
+          } else if (result.error) {
+            console.log(`  ${chalk.yellow('!')} ${target.label}: ${result.error}`);
+          }
+        }
+      }
+
+      if (removed === 0) {
+        console.log(chalk.yellow('No skills removed.'));
+      } else {
+        console.log(chalk.green(`\nRemoved ${removed} skill(s) from version homes.`));
+        console.log(chalk.gray('Central source unchanged. Skills will re-sync on next agent launch.'));
       }
     });
 

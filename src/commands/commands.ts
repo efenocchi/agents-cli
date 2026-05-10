@@ -35,6 +35,7 @@ import {
   getCommandInfo,
   diffVersionCommands,
   iterCommandsCapableVersions,
+  removeCommandFromVersion,
   type VersionCommandDiff,
 } from '../lib/commands.js';
 import { getCommandsDir } from '../lib/state.js';
@@ -61,6 +62,8 @@ import {
   parseCommaSeparatedList,
   printWithPager,
   requireInteractiveSelection,
+  promptRemovalTargets,
+  type RemovalTarget,
 } from './utils.js';
 
 /** Register the `agents commands` command tree (list, add, remove, sync, prune, view). */
@@ -347,15 +350,31 @@ Examples:
   agents commands remove
 `)
     .action(async (name?: string, options?: { agents?: string }) => {
+      // Build map of command -> targets for all installed versions
+      type CmdTargetInfo = { name: string; targets: Array<{ agent: AgentId; version: string }> };
+      const cmdTargetMap = new Map<string, CmdTargetInfo>();
+
+      for (const { agent, version } of iterCommandsCapableVersions()) {
+        const home = getVersionHomePath(agent, version);
+        const commands = listInstalledCommandsWithScope(agent, process.cwd(), { home });
+        for (const cmd of commands) {
+          if (cmd.scope !== 'user') continue;
+          const existing = cmdTargetMap.get(cmd.name);
+          if (existing) {
+            existing.targets.push({ agent, version });
+          } else {
+            cmdTargetMap.set(cmd.name, { name: cmd.name, targets: [{ agent, version }] });
+          }
+        }
+      }
+
       let commandsToRemove: string[];
 
       if (name) {
         commandsToRemove = [name];
       } else {
-        // Interactive picker
-        const centralCommands = listCentralCommands();
-        if (centralCommands.length === 0) {
-          console.log(chalk.yellow('No commands installed.'));
+        if (cmdTargetMap.size === 0) {
+          console.log(chalk.yellow('No commands installed in any version.'));
           return;
         }
 
@@ -366,12 +385,17 @@ Examples:
         }
 
         try {
+          const choices = Array.from(cmdTargetMap.values()).map((cmd) => {
+            const agents = [...new Set(cmd.targets.map((t) => AGENTS[t.agent].name))];
+            return {
+              value: cmd.name,
+              name: `${cmd.name} (${agents.join(', ')})`,
+            };
+          });
+
           const selected = await checkbox({
             message: 'Select commands to remove',
-            choices: centralCommands.map((cmd) => ({
-              value: cmd,
-              name: cmd,
-            })),
+            choices,
           });
 
           if (selected.length === 0) {
@@ -389,22 +413,57 @@ Examples:
         }
       }
 
-      const agents = options?.agents
-        ? (options.agents.split(',') as AgentId[])
-        : ALL_AGENT_IDS;
-
+      let removed = 0;
       for (const cmdName of commandsToRemove) {
-        let removed = 0;
-        for (const agentId of agents) {
-          if (uninstallCommand(agentId, cmdName)) {
-            console.log(`  ${chalk.red('-')} ${agentLabel(agentId)}: ${cmdName}`);
+        const cmdInfo = cmdTargetMap.get(cmdName);
+        if (!cmdInfo || cmdInfo.targets.length === 0) {
+          console.log(chalk.yellow(`  Command '${cmdName}' not found in any version.`));
+          continue;
+        }
+
+        // Filter by --agents if specified
+        let availableTargets = cmdInfo.targets;
+        if (options?.agents) {
+          const requestedAgents = new Set(options.agents.split(','));
+          availableTargets = availableTargets.filter((t) => requestedAgents.has(t.agent));
+        }
+
+        if (availableTargets.length === 0) {
+          console.log(chalk.yellow(`  Command '${cmdName}' not found in specified agents.`));
+          continue;
+        }
+
+        const removalTargets: RemovalTarget[] = availableTargets.map((t) => ({
+          agent: t.agent,
+          version: t.version,
+          label: `${agentLabel(t.agent)}@${t.version}`,
+        }));
+
+        const selectedTargets = await promptRemovalTargets(cmdName, removalTargets, {
+          skipPrompt: !!options?.agents,
+        });
+
+        if (selectedTargets.length === 0) {
+          console.log(chalk.gray(`  Skipped '${cmdName}'.`));
+          continue;
+        }
+
+        for (const target of selectedTargets) {
+          const result = removeCommandFromVersion(target.agent as AgentId, target.version, cmdName);
+          if (result.success) {
+            console.log(`  ${chalk.red('-')} ${target.label}: ${cmdName}`);
             removed++;
+          } else if (result.error) {
+            console.log(`  ${chalk.yellow('!')} ${target.label}: ${result.error}`);
           }
         }
+      }
 
-        if (removed === 0) {
-          console.log(chalk.yellow(`Command '${cmdName}' not found for any agent`));
-        }
+      if (removed === 0) {
+        console.log(chalk.yellow('No commands removed.'));
+      } else {
+        console.log(chalk.green(`\nRemoved ${removed} command(s) from version homes.`));
+        console.log(chalk.gray('Central source unchanged. Commands will re-sync on next agent launch.'));
       }
     });
 

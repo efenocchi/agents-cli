@@ -27,6 +27,8 @@ import {
   isInteractiveTerminal,
   requireDestructiveArg,
   requireInteractiveSelection,
+  promptRemovalTargets,
+  type RemovalTarget,
 } from './utils.js';
 import { itemPicker } from '../lib/picker.js';
 import type { DiscoveredPlugin } from '../lib/types.js';
@@ -292,7 +294,7 @@ Examples:
   # Unsync but keep source directory
   agents plugins remove rush-toolkit --keep-source
 `)
-    .action((nameArg: string | undefined, options: { keepSource?: boolean }) => {
+    .action(async (nameArg: string | undefined, options: { keepSource?: boolean }) => {
       if (!nameArg) {
         requireDestructiveArg({
           argName: 'name',
@@ -315,41 +317,73 @@ Examples:
         process.exit(1);
       }
 
+      // Build list of targets that have this plugin synced
+      const availableTargets: Array<{ agent: AgentId; version: string }> = [];
+      for (const agentId of PLUGINS_CAPABLE_AGENTS) {
+        if (plugin && !pluginSupportsAgent(plugin, agentId)) continue;
+        const versions = listInstalledVersions(agentId);
+        for (const version of versions) {
+          const versionHome = getVersionHomePath(agentId, version);
+          if (plugin && isPluginSynced(plugin, agentId, versionHome)) {
+            availableTargets.push({ agent: agentId, version });
+          }
+        }
+      }
+
+      if (availableTargets.length === 0) {
+        console.log(chalk.yellow(`Plugin '${name}' not synced to any version.`));
+        if (!options.keepSource && fs.existsSync(pluginRoot)) {
+          fs.rmSync(pluginRoot, { recursive: true, force: true });
+          console.log(chalk.green(`Deleted ${formatPath(pluginRoot)}`));
+        }
+        return;
+      }
+
+      // Show multi-select picker for targets
+      const removalTargets: RemovalTarget[] = availableTargets.map((t) => ({
+        agent: t.agent,
+        version: t.version,
+        label: `${agentLabel(t.agent)}@${t.version}`,
+      }));
+
+      const selectedTargets = await promptRemovalTargets(name, removalTargets);
+
+      if (selectedTargets.length === 0) {
+        console.log(chalk.gray('Cancelled.'));
+        return;
+      }
+
       let totalSkills = 0;
       let totalHooks = 0;
       let totalPerms = 0;
       let versionsTouched = 0;
 
-      for (const agentId of PLUGINS_CAPABLE_AGENTS) {
-        const versions = listInstalledVersions(agentId);
-        for (const version of versions) {
-          const versionHome = getVersionHomePath(agentId, version);
-          const r = removePluginFromVersion(name, resolvedRoot, agentId, versionHome);
-          if (r.skills.length > 0 || r.hooks.length > 0 || r.permissions > 0) {
-            versionsTouched += 1;
-            totalSkills += r.skills.length;
-            totalHooks += r.hooks.length;
-            totalPerms += r.permissions;
-            console.log(
-              chalk.gray(
-                `  ${agentLabel(agentId)}@${version}: ${r.skills.length} skill(s), ${r.hooks.length} hook(s), ${r.permissions} perm(s)`
-              )
-            );
-          }
+      for (const target of selectedTargets) {
+        const versionHome = getVersionHomePath(target.agent as AgentId, target.version);
+        const r = removePluginFromVersion(name, resolvedRoot, target.agent as AgentId, versionHome);
+        if (r.skills.length > 0 || r.hooks.length > 0 || r.permissions > 0) {
+          versionsTouched += 1;
+          totalSkills += r.skills.length;
+          totalHooks += r.hooks.length;
+          totalPerms += r.permissions;
+          console.log(`  ${chalk.red('-')} ${target.label}: ${r.skills.length} skill(s), ${r.hooks.length} hook(s), ${r.permissions} perm(s)`);
         }
       }
 
       console.log(
         chalk.green(
-          `Unsynced ${name} from ${versionsTouched} version(s) — ${totalSkills} skills, ${totalHooks} hooks, ${totalPerms} permissions`
+          `\nUnsynced ${name} from ${versionsTouched} version(s) — ${totalSkills} skills, ${totalHooks} hooks, ${totalPerms} permissions`
         )
       );
 
-      if (!options.keepSource) {
+      // Only delete source if ALL targets were selected
+      if (!options.keepSource && selectedTargets.length === availableTargets.length) {
         if (fs.existsSync(pluginRoot)) {
           fs.rmSync(pluginRoot, { recursive: true, force: true });
           console.log(chalk.green(`Deleted ${formatPath(pluginRoot)}`));
         }
+      } else if (!options.keepSource && selectedTargets.length < availableTargets.length) {
+        console.log(chalk.gray(`Source kept — plugin still synced to other versions.`));
       } else {
         console.log(chalk.gray(`Kept source at ${formatPath(pluginRoot)}`));
       }
