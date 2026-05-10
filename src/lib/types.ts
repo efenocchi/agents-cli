@@ -201,7 +201,7 @@ export interface RepoInfo {
 
 /** Canonical system repo cloned into ~/.agents-system/. */
 export const DEFAULT_SYSTEM_REPO = 'gh:phnx-labs/.agents-system';
-/** Mirror system repo (phnx-labs) — will become the default once fully released. */
+/** Legacy system repo — kept so existing installs still recognize their origin. */
 export const MIRROR_SYSTEM_REPO = 'gh:phnx-labs/.agents-system';
 
 /** Strip the `gh:` prefix and `.git` suffix to get a GitHub `owner/repo` slug. */
