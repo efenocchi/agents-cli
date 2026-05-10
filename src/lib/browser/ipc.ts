@@ -236,6 +236,100 @@ export class BrowserIPCServer {
         return { ok: true };
       }
 
+      case 'set-viewport': {
+        if (!request.task || !request.width || !request.height) {
+          return { ok: false, error: 'Task, width, and height required' };
+        }
+        await this.service.setViewport(request.task, request.width, request.height, {
+          mobile: request.mobile,
+          deviceScaleFactor: request.deviceScaleFactor,
+          tabHint: request.tabId,
+        });
+        return { ok: true };
+      }
+
+      case 'set-device': {
+        if (!request.task || !request.deviceName) {
+          return { ok: false, error: 'Task and device name required' };
+        }
+        await this.service.setDevice(request.task, request.deviceName, request.tabId);
+        return { ok: true };
+      }
+
+      case 'console': {
+        if (!request.task) {
+          return { ok: false, error: 'Task required' };
+        }
+        const logs = await this.service.getConsoleLogs(request.task, {
+          level: request.level,
+          clear: request.clear,
+          tabHint: request.tabId,
+        });
+        return { ok: true, logs };
+      }
+
+      case 'errors': {
+        if (!request.task) {
+          return { ok: false, error: 'Task required' };
+        }
+        const errors = await this.service.getErrors(request.task, {
+          clear: request.clear,
+          tabHint: request.tabId,
+        });
+        return { ok: true, errors };
+      }
+
+      case 'requests': {
+        if (!request.task) {
+          return { ok: false, error: 'Task required' };
+        }
+        const requests = await this.service.getNetworkRequests(request.task, {
+          filter: request.filter,
+          clear: request.clear,
+          tabHint: request.tabId,
+        });
+        return { ok: true, requests };
+      }
+
+      case 'response-body': {
+        if (!request.task || !request.urlPattern) {
+          return { ok: false, error: 'Task and URL pattern required' };
+        }
+        const body = await this.service.getResponseBody(request.task, request.urlPattern, {
+          timeout: request.timeout,
+          maxChars: request.maxChars,
+          tabHint: request.tabId,
+        });
+        return { ok: true, body };
+      }
+
+      case 'wait': {
+        if (!request.task || !request.waitType || request.waitValue === undefined) {
+          return { ok: false, error: 'Task, wait type, and wait value required' };
+        }
+        await this.service.wait(request.task, request.waitType, request.waitValue, {
+          timeout: request.timeout,
+          tabHint: request.tabId,
+        });
+        return { ok: true };
+      }
+
+      case 'set-download-path': {
+        if (!request.task || !request.downloadPath) {
+          return { ok: false, error: 'Task and download path required' };
+        }
+        await this.service.setDownloadPath(request.task, request.downloadPath, request.tabId);
+        return { ok: true };
+      }
+
+      case 'wait-download': {
+        if (!request.task) {
+          return { ok: false, error: 'Task required' };
+        }
+        const downloadPath = await this.service.waitForDownload(request.task, request.timeout);
+        return { ok: true, downloadPath };
+      }
+
       default:
         return { ok: false, error: `Unknown action: ${request.action}` };
     }

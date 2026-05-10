@@ -82,7 +82,16 @@ export type IPCAction =
   | 'click'
   | 'type'
   | 'press'
-  | 'hover';
+  | 'hover'
+  | 'set-viewport'
+  | 'set-device'
+  | 'console'
+  | 'errors'
+  | 'requests'
+  | 'response-body'
+  | 'wait'
+  | 'set-download-path'
+  | 'wait-download';
 
 export interface IPCRequest {
   action: IPCAction;
@@ -98,6 +107,25 @@ export interface IPCRequest {
   key?: string;
   interactive?: boolean;
   limit?: number;
+  // Viewport/device
+  width?: number;
+  height?: number;
+  deviceName?: string;
+  mobile?: boolean;
+  deviceScaleFactor?: number;
+  // Console/errors
+  level?: 'log' | 'info' | 'warn' | 'error';
+  clear?: boolean;
+  // Network
+  filter?: string;
+  urlPattern?: string;
+  maxChars?: number;
+  // Wait
+  waitType?: 'time' | 'selector' | 'url' | 'function' | 'load';
+  waitValue?: string | number;
+  timeout?: number;
+  // Downloads
+  downloadPath?: string;
 }
 
 export interface IPCResponse {
@@ -112,6 +140,48 @@ export interface IPCResponse {
   result?: unknown;
   path?: string;
   refs?: string;
+  // Console/errors
+  logs?: ConsoleEntry[];
+  errors?: ErrorEntry[];
+  // Network
+  requests?: NetworkRequest[];
+  body?: string;
+  // Downloads
+  downloadPath?: string;
+  // Devices
+  devices?: string[];
+}
+
+export interface ConsoleEntry {
+  level: 'log' | 'info' | 'warn' | 'error';
+  text: string;
+  timestamp: number;
+  url?: string;
+  line?: number;
+}
+
+export interface ErrorEntry {
+  message: string;
+  stack?: string;
+  timestamp: number;
+  url?: string;
+  line?: number;
+}
+
+export interface NetworkRequest {
+  id: string;
+  url: string;
+  method: string;
+  status?: number;
+  mimeType?: string;
+  timestamp: number;
+}
+
+export interface DeviceDescriptor {
+  width: number;
+  height: number;
+  deviceScaleFactor: number;
+  mobile: boolean;
 }
 
 export const TASK_ID_REGEX = /^[a-z0-9][a-z0-9-]*$/;

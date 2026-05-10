@@ -437,6 +437,27 @@ export interface Meta {
    * (script, events, timeout, matches, enabled).
    */
   hooks?: Record<string, ManifestHook>;
+  /**
+   * Browser profile definitions keyed by profile name. Portable user config
+   * that syncs with `agents repo push/pull`. Runtime state (chrome-data, pids)
+   * lives separately in ~/.agents/.cache/browser/<profile>/.
+   */
+  browser?: Record<string, BrowserProfileConfig>;
+}
+
+/** Browser profile definition stored in agents.yaml. */
+export interface BrowserProfileConfig {
+  description?: string;
+  browser: 'chrome' | 'comet' | 'chromium' | 'brave' | 'edge' | 'custom';
+  binary?: string;
+  electron?: boolean;
+  endpoints: string[];
+  chrome?: {
+    headless?: boolean;
+    args?: string[];
+  };
+  secrets?: string;
+  viewport?: { width: number; height: number };
 }
 
 /** Options controlling which agents and resources are synced during `agents pull` / `agents use`. */

@@ -49,6 +49,13 @@ export class BrowserService {
   private connections = new Map<string, ProfileConnection>();
   private forkingProfiles = new Set<string>();
 
+  // Per-task storage for console, errors, network, downloads
+  private consoleLogs = new Map<string, import('./types.js').ConsoleEntry[]>();
+  private pageErrors = new Map<string, import('./types.js').ErrorEntry[]>();
+  private networkRequests = new Map<string, import('./types.js').NetworkRequest[]>();
+  private pendingDownloads = new Map<string, { path: string; filename?: string; completed: boolean }>();
+  private enabledSessions = new Map<string, Set<string>>(); // sessionId -> enabled domains
+
   async start(
     profileName: string,
     opts: { taskName?: string; url?: string } = {}
@@ -613,6 +620,355 @@ export class BrowserService {
       configuredPort: configuredPort !== info.port ? configuredPort : undefined,
       tasks: taskStatuses,
     };
+  }
+
+  // ─── Viewport & Device Emulation ──────────────────────────────────────────────
+
+  async setViewport(
+    taskId: string,
+    width: number,
+    height: number,
+    options: { mobile?: boolean; deviceScaleFactor?: number; tabHint?: string } = {}
+  ): Promise<void> {
+    const { conn, target } = await this.getTarget(taskId, options.tabHint);
+    const sessionId = await this.getSessionId(conn, target.targetId);
+
+    await conn.cdp.send(
+      'Emulation.setDeviceMetricsOverride',
+      {
+        width,
+        height,
+        deviceScaleFactor: options.deviceScaleFactor ?? 1,
+        mobile: options.mobile ?? false,
+      },
+      sessionId
+    );
+  }
+
+  async setDevice(taskId: string, deviceName: string, tabHint?: string): Promise<void> {
+    const { getDevice } = await import('./devices.js');
+    const device = getDevice(deviceName);
+    if (!device) {
+      const { listDevices } = await import('./devices.js');
+      throw new Error(`Unknown device "${deviceName}". Available: ${listDevices().join(', ')}`);
+    }
+    await this.setViewport(taskId, device.width, device.height, {
+      mobile: device.mobile,
+      deviceScaleFactor: device.deviceScaleFactor,
+      tabHint,
+    });
+  }
+
+  // ─── Console & Errors ────────────────────────────────────────────────────────
+
+  private async enableRuntimeForSession(conn: ProfileConnection, sessionId: string): Promise<void> {
+    const key = `${sessionId}:Runtime`;
+    if (this.enabledSessions.get(sessionId)?.has('Runtime')) return;
+
+    await conn.cdp.send('Runtime.enable', {}, sessionId);
+
+    if (!this.enabledSessions.has(sessionId)) {
+      this.enabledSessions.set(sessionId, new Set());
+    }
+    this.enabledSessions.get(sessionId)!.add('Runtime');
+
+    conn.cdp.on('Runtime.consoleAPICalled', (params: any) => {
+      if (params.sessionId !== sessionId) return;
+      const taskId = this.findTaskBySession(conn, sessionId);
+      if (!taskId) return;
+
+      const entry: import('./types.js').ConsoleEntry = {
+        level: params.type === 'warning' ? 'warn' : params.type,
+        text: params.args?.map((a: any) => a.value ?? a.description ?? '').join(' ') || '',
+        timestamp: Date.now(),
+        url: params.stackTrace?.callFrames?.[0]?.url,
+        line: params.stackTrace?.callFrames?.[0]?.lineNumber,
+      };
+
+      if (!this.consoleLogs.has(taskId)) this.consoleLogs.set(taskId, []);
+      const logs = this.consoleLogs.get(taskId)!;
+      logs.push(entry);
+      if (logs.length > 1000) logs.shift();
+    });
+
+    conn.cdp.on('Runtime.exceptionThrown', (params: any) => {
+      if (params.sessionId !== sessionId) return;
+      const taskId = this.findTaskBySession(conn, sessionId);
+      if (!taskId) return;
+
+      const ex = params.exceptionDetails;
+      const entry: import('./types.js').ErrorEntry = {
+        message: ex.exception?.description || ex.text || 'Unknown error',
+        stack: ex.stackTrace?.callFrames?.map((f: any) => `  at ${f.functionName || '<anonymous>'} (${f.url}:${f.lineNumber})`).join('\n'),
+        timestamp: Date.now(),
+        url: ex.url,
+        line: ex.lineNumber,
+      };
+
+      if (!this.pageErrors.has(taskId)) this.pageErrors.set(taskId, []);
+      const errors = this.pageErrors.get(taskId)!;
+      errors.push(entry);
+      if (errors.length > 500) errors.shift();
+    });
+  }
+
+  async getConsoleLogs(
+    taskId: string,
+    options: { level?: string; clear?: boolean; tabHint?: string } = {}
+  ): Promise<import('./types.js').ConsoleEntry[]> {
+    const { conn, target } = await this.getTarget(taskId, options.tabHint);
+    const sessionId = await this.getSessionId(conn, target.targetId);
+    await this.enableRuntimeForSession(conn, sessionId);
+
+    let logs = this.consoleLogs.get(taskId) || [];
+    if (options.level) {
+      logs = logs.filter((l) => l.level === options.level);
+    }
+    if (options.clear) {
+      this.consoleLogs.set(taskId, []);
+    }
+    return logs;
+  }
+
+  async getErrors(
+    taskId: string,
+    options: { clear?: boolean; tabHint?: string } = {}
+  ): Promise<import('./types.js').ErrorEntry[]> {
+    const { conn, target } = await this.getTarget(taskId, options.tabHint);
+    const sessionId = await this.getSessionId(conn, target.targetId);
+    await this.enableRuntimeForSession(conn, sessionId);
+
+    const errors = this.pageErrors.get(taskId) || [];
+    if (options.clear) {
+      this.pageErrors.set(taskId, []);
+    }
+    return errors;
+  }
+
+  // ─── Network Requests ────────────────────────────────────────────────────────
+
+  private async enableNetworkForSession(conn: ProfileConnection, sessionId: string, taskId: string): Promise<void> {
+    if (this.enabledSessions.get(sessionId)?.has('Network')) return;
+
+    await conn.cdp.send('Network.enable', {}, sessionId);
+
+    if (!this.enabledSessions.has(sessionId)) {
+      this.enabledSessions.set(sessionId, new Set());
+    }
+    this.enabledSessions.get(sessionId)!.add('Network');
+
+    const requestMap = new Map<string, import('./types.js').NetworkRequest>();
+
+    conn.cdp.on('Network.requestWillBeSent', (params: any) => {
+      if (params.sessionId !== sessionId) return;
+      const req: import('./types.js').NetworkRequest = {
+        id: params.requestId,
+        url: params.request.url,
+        method: params.request.method,
+        timestamp: Date.now(),
+      };
+      requestMap.set(params.requestId, req);
+
+      if (!this.networkRequests.has(taskId)) this.networkRequests.set(taskId, []);
+      const reqs = this.networkRequests.get(taskId)!;
+      reqs.push(req);
+      if (reqs.length > 500) reqs.shift();
+    });
+
+    conn.cdp.on('Network.responseReceived', (params: any) => {
+      if (params.sessionId !== sessionId) return;
+      const req = requestMap.get(params.requestId);
+      if (req) {
+        req.status = params.response.status;
+        req.mimeType = params.response.mimeType;
+      }
+    });
+  }
+
+  async getNetworkRequests(
+    taskId: string,
+    options: { filter?: string; clear?: boolean; tabHint?: string } = {}
+  ): Promise<import('./types.js').NetworkRequest[]> {
+    const { conn, target } = await this.getTarget(taskId, options.tabHint);
+    const sessionId = await this.getSessionId(conn, target.targetId);
+    await this.enableNetworkForSession(conn, sessionId, taskId);
+
+    let requests = this.networkRequests.get(taskId) || [];
+    if (options.filter) {
+      const f = options.filter.toLowerCase();
+      requests = requests.filter((r) => r.url.toLowerCase().includes(f));
+    }
+    if (options.clear) {
+      this.networkRequests.set(taskId, []);
+    }
+    return requests;
+  }
+
+  async getResponseBody(
+    taskId: string,
+    urlPattern: string,
+    options: { timeout?: number; maxChars?: number; tabHint?: string } = {}
+  ): Promise<string> {
+    const { conn, target } = await this.getTarget(taskId, options.tabHint);
+    const sessionId = await this.getSessionId(conn, target.targetId);
+    await this.enableNetworkForSession(conn, sessionId, taskId);
+
+    const timeout = options.timeout ?? 30000;
+    const maxChars = options.maxChars ?? 200000;
+    const start = Date.now();
+    const pattern = urlPattern.includes('*')
+      ? new RegExp(urlPattern.replace(/\*/g, '.*'), 'i')
+      : null;
+
+    while (Date.now() - start < timeout) {
+      const requests = this.networkRequests.get(taskId) || [];
+      const match = requests.find((r) =>
+        pattern ? pattern.test(r.url) : r.url.includes(urlPattern)
+      );
+
+      if (match && match.status) {
+        try {
+          const { body, base64Encoded } = (await conn.cdp.send(
+            'Network.getResponseBody',
+            { requestId: match.id },
+            sessionId
+          )) as { body: string; base64Encoded: boolean };
+
+          const text = base64Encoded ? Buffer.from(body, 'base64').toString('utf-8') : body;
+          return text.slice(0, maxChars);
+        } catch {
+          // Request may have been evicted, continue waiting
+        }
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+
+    throw new Error(`No response matching "${urlPattern}" within ${timeout}ms`);
+  }
+
+  // ─── Wait Conditions ─────────────────────────────────────────────────────────
+
+  async wait(
+    taskId: string,
+    type: 'time' | 'selector' | 'url' | 'function' | 'load',
+    value: string | number,
+    options: { timeout?: number; tabHint?: string } = {}
+  ): Promise<void> {
+    const timeout = options.timeout ?? 30000;
+
+    if (type === 'time') {
+      await new Promise((r) => setTimeout(r, typeof value === 'number' ? value : parseInt(value as string, 10)));
+      return;
+    }
+
+    const { conn, target } = await this.getTarget(taskId, options.tabHint);
+    const sessionId = await this.getSessionId(conn, target.targetId);
+    const start = Date.now();
+
+    while (Date.now() - start < timeout) {
+      let condition = false;
+
+      if (type === 'selector') {
+        const result = (await conn.cdp.send(
+          'Runtime.evaluate',
+          { expression: `!!document.querySelector(${JSON.stringify(value)})`, returnByValue: true },
+          sessionId
+        )) as { result: { value: boolean } };
+        condition = result.result.value === true;
+      } else if (type === 'url') {
+        const result = (await conn.cdp.send(
+          'Runtime.evaluate',
+          { expression: 'location.href', returnByValue: true },
+          sessionId
+        )) as { result: { value: string } };
+        const pattern = (value as string).includes('*')
+          ? new RegExp((value as string).replace(/\*/g, '.*'), 'i')
+          : null;
+        condition = pattern ? pattern.test(result.result.value) : result.result.value.includes(value as string);
+      } else if (type === 'function') {
+        const result = (await conn.cdp.send(
+          'Runtime.evaluate',
+          { expression: `!!(${value})`, returnByValue: true },
+          sessionId
+        )) as { result: { value: boolean } };
+        condition = result.result.value === true;
+      } else if (type === 'load') {
+        const result = (await conn.cdp.send(
+          'Runtime.evaluate',
+          { expression: 'document.readyState', returnByValue: true },
+          sessionId
+        )) as { result: { value: string } };
+        if (value === 'domcontentloaded') {
+          condition = result.result.value !== 'loading';
+        } else if (value === 'load' || value === 'complete') {
+          condition = result.result.value === 'complete';
+        } else if (value === 'networkidle') {
+          // Simplified: check if document is complete
+          condition = result.result.value === 'complete';
+        }
+      }
+
+      if (condition) return;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    throw new Error(`Wait condition "${type}:${value}" not met within ${timeout}ms`);
+  }
+
+  // ─── Downloads ───────────────────────────────────────────────────────────────
+
+  async setDownloadPath(taskId: string, downloadPath: string, tabHint?: string): Promise<void> {
+    const { conn, target } = await this.getTarget(taskId, tabHint);
+    const sessionId = await this.getSessionId(conn, target.targetId);
+
+    await conn.cdp.send(
+      'Browser.setDownloadBehavior',
+      {
+        behavior: 'allow',
+        downloadPath,
+        eventsEnabled: true,
+      },
+      sessionId
+    );
+
+    this.pendingDownloads.set(taskId, { path: downloadPath, completed: false });
+
+    conn.cdp.on('Browser.downloadProgress', (params: any) => {
+      if (params.state === 'completed') {
+        const dl = this.pendingDownloads.get(taskId);
+        if (dl) {
+          dl.completed = true;
+          dl.filename = params.suggestedFilename;
+        }
+      }
+    });
+  }
+
+  async waitForDownload(taskId: string, timeout: number = 60000): Promise<string> {
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+      const dl = this.pendingDownloads.get(taskId);
+      if (dl?.completed) {
+        const fullPath = dl.filename ? `${dl.path}/${dl.filename}` : dl.path;
+        this.pendingDownloads.delete(taskId);
+        return fullPath;
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    throw new Error(`Download not completed within ${timeout}ms`);
+  }
+
+  // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+  private findTaskBySession(conn: ProfileConnection, sessionId: string): string | undefined {
+    for (const [taskId, task] of conn.tasks) {
+      for (const tabId of Object.values(task.tabs)) {
+        if (conn.sessionCache.get(tabId) === sessionId) {
+          return taskId;
+        }
+      }
+    }
+    return undefined;
   }
 
   async shutdown(): Promise<void> {

@@ -1,82 +1,95 @@
-import * as fs from 'fs';
 import * as path from 'path';
-import * as yaml from 'yaml';
 import {
-  getBrowserProfilesDir as getBrowserProfilesDirRoot,
   getBrowserRuntimeDir as getBrowserRuntimeDirRoot,
+  readMeta,
+  writeMeta,
 } from '../state.js';
+import type { BrowserProfileConfig } from '../types.js';
 import type { BrowserProfile } from './types.js';
 
 export type { BrowserProfile } from './types.js';
 
-export function getBrowserProfilesDir(): string {
-  return getBrowserProfilesDirRoot();
-}
-
 export function getBrowserRuntimeDir(): string {
   return getBrowserRuntimeDirRoot();
-}
-
-export function getProfilePath(name: string): string {
-  return path.join(getBrowserProfilesDir(), `${name}.yaml`);
 }
 
 export function getProfileRuntimeDir(name: string): string {
   return path.join(getBrowserRuntimeDir(), name);
 }
 
+function configToProfile(name: string, config: BrowserProfileConfig): BrowserProfile {
+  return {
+    name,
+    description: config.description,
+    browser: config.browser,
+    binary: config.binary,
+    electron: config.electron,
+    endpoints: config.endpoints,
+    chrome: config.chrome,
+    secrets: config.secrets,
+    viewport: config.viewport,
+  };
+}
+
+function profileToConfig(profile: BrowserProfile): BrowserProfileConfig {
+  const config: BrowserProfileConfig = {
+    browser: profile.browser,
+    endpoints: profile.endpoints,
+  };
+  if (profile.description) config.description = profile.description;
+  if (profile.binary) config.binary = profile.binary;
+  if (profile.electron) config.electron = profile.electron;
+  if (profile.chrome) config.chrome = profile.chrome;
+  if (profile.secrets) config.secrets = profile.secrets;
+  if (profile.viewport) config.viewport = profile.viewport;
+  return config;
+}
+
 export async function listProfiles(): Promise<BrowserProfile[]> {
-  const dir = getBrowserProfilesDir();
-  if (!fs.existsSync(dir)) return [];
+  const meta = readMeta();
+  if (!meta.browser) return [];
 
-  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.yaml'));
-  const profiles: BrowserProfile[] = [];
-
-  for (const file of files) {
-    const content = fs.readFileSync(path.join(dir, file), 'utf-8');
-    const profile = yaml.parse(content) as BrowserProfile;
-    profiles.push(profile);
-  }
-
-  return profiles;
+  return Object.entries(meta.browser).map(([name, config]) =>
+    configToProfile(name, config)
+  );
 }
 
 export async function getProfile(name: string): Promise<BrowserProfile | null> {
-  const filePath = getProfilePath(name);
-  if (!fs.existsSync(filePath)) return null;
-
-  const content = fs.readFileSync(filePath, 'utf-8');
-  return yaml.parse(content) as BrowserProfile;
+  const meta = readMeta();
+  const config = meta.browser?.[name];
+  if (!config) return null;
+  return configToProfile(name, config);
 }
 
 export async function createProfile(profile: BrowserProfile): Promise<void> {
-  const dir = getBrowserProfilesDir();
-  fs.mkdirSync(dir, { recursive: true });
-
-  const filePath = getProfilePath(profile.name);
-  if (fs.existsSync(filePath)) {
+  const meta = readMeta();
+  if (meta.browser?.[profile.name]) {
     throw new Error(`Profile "${profile.name}" already exists`);
   }
 
-  fs.writeFileSync(filePath, yaml.stringify(profile), 'utf-8');
+  meta.browser = meta.browser ?? {};
+  meta.browser[profile.name] = profileToConfig(profile);
+  writeMeta(meta);
 }
 
 export async function updateProfile(profile: BrowserProfile): Promise<void> {
-  const filePath = getProfilePath(profile.name);
-  if (!fs.existsSync(filePath)) {
+  const meta = readMeta();
+  if (!meta.browser?.[profile.name]) {
     throw new Error(`Profile "${profile.name}" does not exist`);
   }
 
-  fs.writeFileSync(filePath, yaml.stringify(profile), 'utf-8');
+  meta.browser[profile.name] = profileToConfig(profile);
+  writeMeta(meta);
 }
 
 export async function deleteProfile(name: string): Promise<void> {
-  const filePath = getProfilePath(name);
-  if (!fs.existsSync(filePath)) {
+  const meta = readMeta();
+  if (!meta.browser?.[name]) {
     throw new Error(`Profile "${name}" does not exist`);
   }
 
-  fs.unlinkSync(filePath);
+  delete meta.browser[name];
+  writeMeta(meta);
 }
 
 /**
