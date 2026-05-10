@@ -58,10 +58,11 @@ describe('HooksHandler', () => {
 
       // User hook
       fs.writeFileSync(
-        path.join(USER_DIR, 'hooks.yaml'),
-        `user-hook:
-  script: user.sh
-  events: [SessionStart]
+        path.join(USER_DIR, 'agents.yaml'),
+        `hooks:
+  user-hook:
+    script: user.sh
+    events: [SessionStart]
 `,
         'utf-8'
       );
@@ -97,11 +98,12 @@ describe('HooksHandler', () => {
     it('project beats user on name conflict', () => {
       // User defines hook "shared"
       fs.writeFileSync(
-        path.join(USER_DIR, 'hooks.yaml'),
-        `shared:
-  script: user-version.sh
-  events: [Stop]
-  timeout: 10
+        path.join(USER_DIR, 'agents.yaml'),
+        `hooks:
+  shared:
+    script: user-version.sh
+    events: [Stop]
+    timeout: 10
 `,
         'utf-8'
       );
@@ -141,11 +143,12 @@ describe('HooksHandler', () => {
 
       // User also defines hook "shared" - should win
       fs.writeFileSync(
-        path.join(USER_DIR, 'hooks.yaml'),
-        `shared:
-  script: user-version.sh
-  events: [UserPromptSubmit]
-  timeout: 15
+        path.join(USER_DIR, 'agents.yaml'),
+        `hooks:
+  shared:
+    script: user-version.sh
+    events: [UserPromptSubmit]
+    timeout: 15
 `,
         'utf-8'
       );
@@ -173,11 +176,12 @@ describe('HooksHandler', () => {
 
       // User disables it
       fs.writeFileSync(
-        path.join(USER_DIR, 'hooks.yaml'),
-        `enforced:
-  enabled: false
-  script: enforce.sh
-  events: [Stop]
+        path.join(USER_DIR, 'agents.yaml'),
+        `hooks:
+  enforced:
+    enabled: false
+    script: enforce.sh
+    events: [Stop]
 `,
         'utf-8'
       );
@@ -223,10 +227,11 @@ describe('HooksHandler', () => {
       );
 
       fs.writeFileSync(
-        path.join(USER_DIR, 'hooks.yaml'),
-        `shared:
-  script: user.sh
-  events: [SessionStart]
+        path.join(USER_DIR, 'agents.yaml'),
+        `hooks:
+  shared:
+    script: user.sh
+    events: [SessionStart]
 `,
         'utf-8'
       );
@@ -249,10 +254,11 @@ describe('HooksHandler', () => {
       );
 
       fs.writeFileSync(
-        path.join(USER_DIR, 'hooks.yaml'),
-        `shared:
-  script: user.sh
-  events: [SessionStart]
+        path.join(USER_DIR, 'agents.yaml'),
+        `hooks:
+  shared:
+    script: user.sh
+    events: [SessionStart]
 `,
         'utf-8'
       );
@@ -284,11 +290,12 @@ describe('HooksHandler', () => {
       );
 
       fs.writeFileSync(
-        path.join(USER_DIR, 'hooks.yaml'),
-        `disabled-hook:
-  enabled: false
-  script: system.sh
-  events: [Stop]
+        path.join(USER_DIR, 'agents.yaml'),
+        `hooks:
+  disabled-hook:
+    enabled: false
+    script: system.sh
+    events: [Stop]
 `,
         'utf-8'
       );
