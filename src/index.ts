@@ -704,7 +704,7 @@ if (process.env.AGENTS_SKIP_MIGRATION !== '1') {
   try {
     const { runMigration } = await import('./lib/migrate.js');
     const sentinel = path.join(getAgentsDir(), '.migrated');
-    const sentinelValue = `${VERSION}-v2`;
+    const sentinelValue = `${VERSION}-v4`;
     let needRun = true;
     try {
       if (fs.existsSync(sentinel) && fs.readFileSync(sentinel, 'utf-8').trim() === sentinelValue) {
