@@ -43,7 +43,7 @@ import {
 import { resolveResource } from './resources.js';
 import { listMcpServerConfigs } from './mcp.js';
 import { isRulesStale } from './rules/compile.js';
-import { getActivePermissionSetName } from './permissions.js';
+import { getActivePermissionPresetName } from './permissions.js';
 import { listInstalledSubagents } from './subagents.js';
 import { safeJoin } from './paths.js';
 
@@ -76,7 +76,7 @@ interface RulesEntry {
 /** Permissions: all group files across all scopes (merged). */
 interface PermEntry {
   groups:        Record<string, FileEntry>; // key = group name, first-wins per name
-  permissionSet: string | null;             // AGENTS_PERMISSION_SET env var at sync time
+  permissionPreset: string | null;          // AGENTS_PERMISSION_PRESET env var at sync time
 }
 
 export interface SyncManifest {
@@ -368,7 +368,7 @@ export function buildManifest(
     mcp,
     permissions: {
       groups:        permGroups,
-      permissionSet: getActivePermissionSetName(),
+      permissionPreset: getActivePermissionPresetName(),
     },
     subagents,
   };
@@ -444,7 +444,7 @@ export function isSyncStale(
   }
 
   // ── Permissions ───────────────────────────────────────────────────────────
-  if (manifest.permissions.permissionSet !== getActivePermissionSetName()) return true;
+  if (manifest.permissions.permissionPreset !== getActivePermissionPresetName()) return true;
   const currentGroups = collectPermissionGroupFiles();
   if (nameSetDiffers(Object.keys(manifest.permissions.groups), Object.keys(currentGroups))) return true;
   for (const [name, filePath] of Object.entries(currentGroups)) {
