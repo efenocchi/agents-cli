@@ -60,8 +60,8 @@ describe('querySessions version filter', () => {
     expect(rows.map(r => r.id).sort()).toEqual(['s2-newer', 's3-same']);
   });
 
-  it('stores the sessions database under ~/.agents/sessions', () => {
-    expect(getDBPath()).toBe(path.join(TEST_HOME, '.agents', 'sessions', 'sessions.db'));
+  it('stores the sessions database under ~/.agents/.history/sessions', () => {
+    expect(getDBPath()).toBe(path.join(TEST_HOME, '.agents', '.history', 'sessions', 'sessions.db'));
   });
 
   it('returns no sessions for an unknown version', () => {

@@ -1,17 +1,20 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'yaml';
-import { getUserAgentsDir } from '../state.js';
+import {
+  getBrowserProfilesDir as getBrowserProfilesDirRoot,
+  getBrowserRuntimeDir as getBrowserRuntimeDirRoot,
+} from '../state.js';
 import type { BrowserProfile } from './types.js';
 
 export type { BrowserProfile } from './types.js';
 
 export function getBrowserProfilesDir(): string {
-  return path.join(getUserAgentsDir(), 'browser', 'profiles');
+  return getBrowserProfilesDirRoot();
 }
 
 export function getBrowserRuntimeDir(): string {
-  return path.join(getUserAgentsDir(), 'browser');
+  return getBrowserRuntimeDirRoot();
 }
 
 export function getProfilePath(name: string): string {

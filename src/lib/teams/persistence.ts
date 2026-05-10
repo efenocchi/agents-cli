@@ -14,7 +14,7 @@ import { constants as fsConstants } from 'fs';
 import { randomBytes } from 'crypto';
 import lockfile from 'proper-lockfile';
 import { AgentType } from './parsers.js';
-import { getUserAgentsDir } from '../state.js';
+import { getTeamsDir, getTeamsAgentsDir } from '../state.js';
 
 /**
  * Atomic JSON write: writes to a sibling tmp file then renames over the
@@ -63,8 +63,9 @@ async function withConfigLock<T>(p: string, fn: () => Promise<T>): Promise<T> {
 // All supported teammate agent types
 const ALL_AGENTS: AgentType[] = ['claude', 'codex', 'gemini', 'cursor', 'opencode'];
 
-// Teams data lives under ~/.agents/teams/
-const TEAMS_DIR = path.join(getUserAgentsDir(), 'teams');
+// Teams config + registry live under ~/.agents/teams/ (definitions);
+// per-run agent execution dirs live under ~/.agents/.history/teams/agents/.
+const TEAMS_DIR = getTeamsDir();
 
 // Legacy paths (for migration)
 const LEGACY_CONFIG_DIR = path.join(homedir(), '.agents');
@@ -106,8 +107,17 @@ export async function resolveBaseDir(): Promise<string> {
 }
 
 async function resolveAgentsPath(): Promise<string> {
-  const base = await resolveBaseDir();
-  return path.join(base, 'agents');
+  const historyAgents = getTeamsAgentsDir();
+  if (await ensureWritableDir(historyAgents)) {
+    return historyAgents;
+  }
+  // Last-resort temp fallback so dispatch keeps working when ~/.agents is unwritable.
+  const tmpAgents = path.join(TMP_FALLBACK_DIR, 'agents');
+  if (await ensureWritableDir(tmpAgents)) {
+    console.warn(`[agents teams] Falling back to temp agents dir at ${tmpAgents}`);
+    return tmpAgents;
+  }
+  throw new Error('Unable to determine a writable agents directory');
 }
 
 async function resolveConfigPath(): Promise<string> {

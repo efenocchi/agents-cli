@@ -11,7 +11,7 @@ import * as path from 'path';
 import * as yaml from 'yaml';
 import type { AgentId, RunStrategy } from './types.js';
 import { getAccountInfo, type AccountInfo } from './agents.js';
-import { readMeta, writeMeta, getAgentsDir } from './state.js';
+import { readMeta, writeMeta, getHelpersDir, getUserAgentsDir } from './state.js';
 import { listInstalledVersions, getVersionHomePath, resolveVersion } from './versions.js';
 import {
   getUsageInfoByIdentity,
@@ -20,10 +20,8 @@ import {
   type UsageSnapshot,
 } from './usage.js';
 
-const ROTATE_DIR = 'helpers/rotate';
-
 function getRotateDir(): string {
-  const dir = path.join(getAgentsDir(), ROTATE_DIR);
+  const dir = path.join(getHelpersDir(), 'rotate');
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -65,7 +63,7 @@ export function normalizeRunStrategy(value: unknown): RunStrategy | null {
 /** Read project-local run strategy from the nearest agents.yaml, if present. */
 export function getProjectRunStrategy(agent: AgentId, startPath: string): RunStrategy | null {
   let dir = path.resolve(startPath);
-  const userAgentsYaml = path.join(getAgentsDir(), 'agents.yaml');
+  const userAgentsYaml = path.join(getUserAgentsDir(), 'agents.yaml');
 
   while (dir !== path.dirname(dir)) {
     const manifestPath = path.join(dir, 'agents.yaml');

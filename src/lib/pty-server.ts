@@ -15,7 +15,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
-import { getAgentsDir } from './state.js';
+import { getPtyDir as getPtyDirRoot } from './state.js';
 
 /**
  * Capture a stable identifier for a process at the moment it was started.
@@ -54,7 +54,6 @@ export function captureProcessStartTime(pid: number): string | null {
 // --- Constants ---
 
 const SENTINEL = '__AGENTS_PTY_DONE__';
-const PTY_DIR = 'helpers/pty';
 const SOCKET_NAME = 'pty.sock';
 const PID_FILE = 'pty.pid';
 const LOG_FILE = 'logs.jsonl';
@@ -109,7 +108,7 @@ function buildPtyEnv(): Record<string, string> {
 
 /** Get the PTY helper directory, creating it if needed. */
 function getPtyDir(): string {
-  const dir = path.join(getAgentsDir(), PTY_DIR);
+  const dir = getPtyDirRoot();
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -202,7 +201,7 @@ export async function runPtyServer(): Promise<void> {
     } catch {}
   } catch (err) {
     console.error('node-pty is required for PTY support.');
-    console.error('Install: cd ' + getAgentsDir() + '/../agents-cli && bun add node-pty');
+    console.error('Install: cd ' + '~/agents-cli && bun add node-pty');
     process.exit(1);
   }
 
@@ -212,7 +211,7 @@ export async function runPtyServer(): Promise<void> {
     XtermTerminal = (xterm as any).Terminal || (xterm as any).default?.Terminal;
   } catch {
     console.error('@xterm/headless is required for PTY support.');
-    console.error('Install: cd ' + getAgentsDir() + '/../agents-cli && bun add @xterm/headless');
+    console.error('Install: cd ' + '~/agents-cli && bun add @xterm/headless');
     process.exit(1);
   }
 
@@ -552,11 +551,11 @@ export async function runPtyServer(): Promise<void> {
     conn.on('error', () => {});
   });
 
-  // Lock down ~/.agents-system/ before opening the socket — without this, any local
-  // user with execute on the parent dir could connect to the socket during
-  // the listen()-to-chmod() window. macOS BSD AF_UNIX semantics make socket
-  // mode advisory only, so the parent dir is the real boundary.
-  const agentsDir = getAgentsDir();
+  // Lock down the PTY scratch dir before opening the socket — without this,
+  // any local user with execute on the parent dir could connect to the socket
+  // during the listen()-to-chmod() window. macOS BSD AF_UNIX semantics make
+  // socket mode advisory only, so the parent dir is the real boundary.
+  const agentsDir = getPtyDirRoot();
   fs.mkdirSync(agentsDir, { recursive: true });
   fs.chmodSync(agentsDir, 0o700);
 

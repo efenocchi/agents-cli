@@ -220,7 +220,8 @@ async function showWhatsNew(fromVersion: string, toVersion: string): Promise<voi
 }
 
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
-const UPDATE_CHECK_FILE = path.join(getAgentsDir(), '.update-check');
+import { getUpdateCheckPath, getMigratedSentinelPath, getUserAgentsDir } from './lib/state.js';
+const UPDATE_CHECK_FILE = getUpdateCheckPath();
 
 /** Read the cached update-check state from disk. Returns null if the file is missing or corrupt. */
 function readUpdateCache(): { lastCheck: number; latestVersion: string; dismissed?: string } | null {
@@ -664,7 +665,7 @@ async function registerLazyCommands(): Promise<void> {
 }
 
 await registerLazyCommands();
-const metaFilePath = path.join(getAgentsDir(), 'agents.yaml');
+const metaFilePath = path.join(getUserAgentsDir(), 'agents.yaml');
 const firstRun =
   passedArgs.length === 0 &&
   !fs.existsSync(metaFilePath) &&
@@ -700,8 +701,8 @@ if (!firstRun && requestedCommand && !SETUP_EXEMPT_COMMANDS.has(requestedCommand
 if (process.env.AGENTS_SKIP_MIGRATION !== '1') {
   try {
     const { runMigration } = await import('./lib/migrate.js');
-    const sentinel = path.join(getAgentsDir(), '.migrated');
-    const sentinelValue = `${VERSION}-v5`;
+    const sentinel = getMigratedSentinelPath();
+    const sentinelValue = `${VERSION}-v6`;
     let needRun = true;
     try {
       if (fs.existsSync(sentinel) && fs.readFileSync(sentinel, 'utf-8').trim() === sentinelValue) {

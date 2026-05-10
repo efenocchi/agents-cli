@@ -69,7 +69,7 @@ function makeSkillDir(parentDir: string, skillName: string, opts: { withRules?: 
  * For claude the cliCommand is 'claude'.
  */
 function fakeInstalledVersion(home: string, agent: string, version: string, cliCommand: string = agent): void {
-  const binDir = path.join(home, '.agents', 'versions', agent, version, 'node_modules', '.bin');
+  const binDir = path.join(home, '.agents', '.history', 'versions', agent, version, 'node_modules', '.bin');
   fs.mkdirSync(binDir, { recursive: true });
   const binPath = path.join(binDir, cliCommand);
   fs.writeFileSync(binPath, '#!/bin/sh\necho stub\n', { mode: 0o755 });
@@ -86,7 +86,7 @@ function plantSkillInVersionHome(
   skillName: string,
   opts: { withRules?: boolean } = {}
 ): string {
-  const skillsDir = path.join(home, '.agents', 'versions', agent, version, 'home', `.${agent}`, 'skills');
+  const skillsDir = path.join(home, '.agents', '.history', 'versions', agent, version, 'home', `.${agent}`, 'skills');
   fs.mkdirSync(skillsDir, { recursive: true });
   return makeSkillDir(skillsDir, skillName, opts);
 }
@@ -103,7 +103,7 @@ describe('removeSkillFromVersion — soft-delete', () => {
     plantSkillInVersionHome(home, agent, version, skillName);
 
     const skillInVersion = path.join(
-      home, '.agents', 'versions', agent, version, 'home', `.${agent}`, 'skills', skillName
+      home, '.agents', '.history', 'versions', agent, version, 'home', `.${agent}`, 'skills', skillName
     );
     expect(fs.existsSync(skillInVersion), 'skill must exist before removal').toBe(true);
 
@@ -114,7 +114,7 @@ describe('removeSkillFromVersion — soft-delete', () => {
     expect(fs.existsSync(skillInVersion), 'skill must be gone from version home').toBe(false);
 
     // Trash root must exist
-    const trashRoot = path.join(home, '.agents', '.trash', 'skills', agent, version, skillName);
+    const trashRoot = path.join(home, '.agents', '.history', 'trash', 'skills', agent, version, skillName);
     expect(fs.existsSync(trashRoot), 'trash root for skill must exist').toBe(true);
 
     // Exactly one timestamped snapshot inside trash root
@@ -136,7 +136,7 @@ describe('removeSkillFromVersion — soft-delete', () => {
 
     runSkills(home, `skills.removeSkillFromVersion('${agent}', '${version}', '${skillName}')`);
 
-    const trashRoot = path.join(home, '.agents', '.trash', 'skills', agent, version, skillName);
+    const trashRoot = path.join(home, '.agents', '.history', 'trash', 'skills', agent, version, skillName);
     const [snapshot] = fs.readdirSync(trashRoot);
     const snapshotDir = path.join(trashRoot, snapshot);
 
@@ -150,7 +150,7 @@ describe('removeSkillFromVersion — soft-delete', () => {
     const result = runSkills(home, `skills.removeSkillFromVersion('claude', '2.0.0', 'nonexistent')`);
     expect(result).toMatchObject({ success: true });
     // No trash directory should be created for a missing skill
-    const trashRoot = path.join(home, '.agents', '.trash', 'skills', 'claude', '2.0.0', 'nonexistent');
+    const trashRoot = path.join(home, '.agents', '.history', 'trash', 'skills', 'claude', '2.0.0', 'nonexistent');
     expect(fs.existsSync(trashRoot)).toBe(false);
   });
 
@@ -163,7 +163,7 @@ describe('removeSkillFromVersion — soft-delete', () => {
     plantSkillInVersionHome(home, agent, version, skillName);
     runSkills(home, `skills.removeSkillFromVersion('${agent}', '${version}', '${skillName}')`);
 
-    const trashRoot = path.join(home, '.agents', '.trash', 'skills', agent, version, skillName);
+    const trashRoot = path.join(home, '.agents', '.history', 'trash', 'skills', agent, version, skillName);
     const stat = fs.statSync(trashRoot);
     // 0o700 = owner rwx only
     expect(stat.mode & 0o777).toBe(0o700);
@@ -183,7 +183,7 @@ describe('removeSkillFromVersion — soft-delete', () => {
     plantSkillInVersionHome(home, agent, version, skillName);
     runSkills(home, `skills.removeSkillFromVersion('${agent}', '${version}', '${skillName}')`);
 
-    const trashRoot = path.join(home, '.agents', '.trash', 'skills', agent, version, skillName);
+    const trashRoot = path.join(home, '.agents', '.history', 'trash', 'skills', agent, version, skillName);
     const snapshots = fs.readdirSync(trashRoot);
     expect(snapshots).toHaveLength(2);
   });
@@ -197,7 +197,7 @@ describe('removeSkillFromVersion — soft-delete', () => {
     plantSkillInVersionHome(home, agent, version, skillName);
     runSkills(home, `skills.removeSkillFromVersion('${agent}', '${version}', '${skillName}')`);
 
-    const expectedTrashBase = path.join(home, '.agents', '.trash', 'skills');
+    const expectedTrashBase = path.join(home, '.agents', '.history', 'trash', 'skills');
     expect(fs.existsSync(expectedTrashBase)).toBe(true);
 
     // Structure: .trash/skills/<agent>/<version>/<skillName>/<timestamp>/
@@ -272,7 +272,7 @@ describe('diffVersionSkills — orphan detection', () => {
     plantSkillInVersionHome(home, agent, version, skillName);
     // Make the version home skill content identical to central
     const versionSkillMd = path.join(
-      home, '.agents', 'versions', agent, version, 'home', `.${agent}`, 'skills', skillName, 'SKILL.md'
+      home, '.agents', '.history', 'versions', agent, version, 'home', `.${agent}`, 'skills', skillName, 'SKILL.md'
     );
     const centralSkillMd = path.join(centralSkillsDir, skillName, 'SKILL.md');
     fs.writeFileSync(versionSkillMd, fs.readFileSync(centralSkillMd, 'utf-8'), 'utf-8');

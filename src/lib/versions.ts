@@ -1311,7 +1311,7 @@ export function resolveVersionAliasLoose(agent: AgentId, raw: string | undefined
  * Get version specified in a project-root agents.yaml (not the user ~/.agents-system/agents.yaml).
  */
 export function getProjectVersion(agent: AgentId, startPath: string): string | null {
-  const userAgentsYaml = path.join(getAgentsDir(), 'agents.yaml');
+  const userAgentsYaml = path.join(getUserAgentsDir(), 'agents.yaml');
   let dir = path.resolve(startPath);
 
   while (dir !== path.dirname(dir)) {

@@ -111,8 +111,8 @@ you never need to start it manually.
     .action(async (options) => {
       warnDeprecated('logs', 'agents routines scheduler-logs');
       if (options.follow) {
-        const { getAgentsDir } = await import('../lib/state.js');
-        const logPath = path.join(getAgentsDir(), 'helpers/daemon/logs.jsonl');
+        const { getDaemonDir } = await import('../lib/state.js');
+        const logPath = path.join(getDaemonDir(), 'logs.jsonl');
         const child = spawn('tail', ['-f', logPath], { stdio: ['ignore', 'pipe', 'pipe'] });
         child.stdout.pipe(process.stdout);
         child.stderr.pipe(process.stderr);

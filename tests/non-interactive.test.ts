@@ -43,7 +43,7 @@ function writeFakeManagedVersion(
   cliName: string,
   script: string = '#!/bin/sh\nexit 0\n',
 ): void {
-  const binaryDir = path.join(home, '.agents', 'versions', agent, version, 'node_modules', '.bin');
+  const binaryDir = path.join(home, '.agents', '.history', 'versions', agent, version, 'node_modules', '.bin');
   fs.mkdirSync(binaryDir, { recursive: true });
   const binaryPath = path.join(binaryDir, cliName);
   fs.writeFileSync(binaryPath, script);
@@ -126,6 +126,7 @@ describe('non-interactive CLI usage', () => {
     const targetPath = path.join(
       home,
       '.agents',
+      '.history',
       'versions',
       'codex',
       '0.1.0',
@@ -151,6 +152,7 @@ describe('non-interactive CLI usage', () => {
     const requestedPath = path.join(
       home,
       '.agents',
+      '.history',
       'versions',
       'codex',
       '0.2.0',
@@ -162,6 +164,7 @@ describe('non-interactive CLI usage', () => {
     const untouchedPath = path.join(
       home,
       '.agents',
+      '.history',
       'versions',
       'codex',
       '0.1.0',
@@ -205,6 +208,7 @@ describe('non-interactive CLI usage', () => {
     const requestedPath = path.join(
       home,
       '.agents',
+      '.history',
       'versions',
       'codex',
       '0.2.0',
@@ -216,6 +220,7 @@ describe('non-interactive CLI usage', () => {
     const untouchedPath = path.join(
       home,
       '.agents',
+      '.history',
       'versions',
       'codex',
       '0.1.0',
@@ -249,9 +254,9 @@ describe('non-interactive CLI usage', () => {
     expect(manifest).toContain('demo:');
     expect(manifest).toContain('codex:');
     expect(manifest).toContain('- 0.2.0');
-    expect(log).toContain(path.join(home, '.agents', 'versions', 'codex', '0.2.0', 'home'));
+    expect(log).toContain(path.join(home, '.agents', '.history', 'versions', 'codex', '0.2.0', 'home'));
     expect(log).toContain('mcp add demo -- demo-server');
-    expect(log).not.toContain(path.join(home, '.agents', 'versions', 'codex', '0.1.0', 'home'));
+    expect(log).not.toContain(path.join(home, '.agents', '.history', 'versions', 'codex', '0.1.0', 'home'));
   });
 
   it('removes MCPs only from the requested explicit version target', () => {
@@ -265,8 +270,8 @@ describe('non-interactive CLI usage', () => {
     const log = fs.readFileSync(logPath, 'utf-8');
 
     expect(result.status).toBe(0);
-    expect(log).toContain(path.join(home, '.agents', 'versions', 'codex', '0.2.0', 'home'));
+    expect(log).toContain(path.join(home, '.agents', '.history', 'versions', 'codex', '0.2.0', 'home'));
     expect(log).toContain('mcp remove demo');
-    expect(log).not.toContain(path.join(home, '.agents', 'versions', 'codex', '0.1.0', 'home'));
+    expect(log).not.toContain(path.join(home, '.agents', '.history', 'versions', 'codex', '0.1.0', 'home'));
   });
 });
