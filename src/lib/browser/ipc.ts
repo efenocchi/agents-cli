@@ -79,12 +79,20 @@ export class BrowserIPCServer {
 
   private async handleRequest(request: IPCRequest): Promise<IPCResponse> {
     switch (request.action) {
-      case 'start': {
+      case 'open': {
         if (!request.profile) {
           return { ok: false, error: 'Profile required' };
         }
-        const result = await this.service.start(request.profile, request.task);
-        return { ok: true, task: result.task, windowTargetId: result.windowTargetId };
+        const result = await this.service.open(request.profile, {
+          taskName: request.taskName,
+          url: request.url,
+        });
+        return {
+          ok: true,
+          task: result.name,
+          tabId: result.tabId,
+          windowTargetId: result.windowTargetId,
+        };
       }
 
       case 'stop': {
@@ -116,22 +124,41 @@ export class BrowserIPCServer {
         return { ok: true, tabId: result.tabId };
       }
 
-      case 'tabs': {
-        const tabs = await this.service.tabs(request.task, request.profile);
-        return { ok: true, tabs };
+      case 'tab-add': {
+        if (!request.task || !request.url) {
+          return { ok: false, error: 'Task and URL required' };
+        }
+        const result = await this.service.tabAdd(request.task, request.url, request.profile);
+        return { ok: true, tabId: result.tabId };
       }
 
-      case 'close': {
+      case 'tab-focus': {
+        if (!request.task || !request.tabId) {
+          return { ok: false, error: 'Task and tabId required' };
+        }
+        const result = await this.service.tabFocus(request.task, request.tabId);
+        return { ok: true, tabId: result.tabId };
+      }
+
+      case 'tab-close': {
         if (!request.task) {
           return { ok: false, error: 'Task required' };
         }
-        await this.service.close(request.task, request.tabId);
+        await this.service.tabClose(request.task, request.tabId);
         return { ok: true };
       }
 
+      case 'tab-list': {
+        if (!request.task) {
+          return { ok: false, error: 'Task required' };
+        }
+        const tabs = await this.service.tabList(request.task);
+        return { ok: true, tabs: tabs.map(t => ({ id: t.id, url: t.url, title: t.title, task: request.task! })) };
+      }
+
       case 'evaluate': {
-        if (!request.task || request.tabId === undefined || !request.expr) {
-          return { ok: false, error: 'Task, tabId, and expression required' };
+        if (!request.task || !request.expr) {
+          return { ok: false, error: 'Task and expression required' };
         }
         const result = await this.service.evaluate(
           request.task,
@@ -165,34 +192,34 @@ export class BrowserIPCServer {
       }
 
       case 'click': {
-        if (!request.task || !request.tabId || request.ref === undefined) {
-          return { ok: false, error: 'Task, tabId, and ref required' };
+        if (!request.task || request.ref === undefined) {
+          return { ok: false, error: 'Task and ref required' };
         }
-        await this.service.click(request.task, request.tabId, request.ref);
+        await this.service.click(request.task, request.ref, request.tabId);
         return { ok: true };
       }
 
       case 'type': {
-        if (!request.task || !request.tabId || request.ref === undefined || !request.text) {
-          return { ok: false, error: 'Task, tabId, ref, and text required' };
+        if (!request.task || request.ref === undefined || !request.text) {
+          return { ok: false, error: 'Task, ref, and text required' };
         }
-        await this.service.type(request.task, request.tabId, request.ref, request.text);
+        await this.service.type(request.task, request.ref, request.text, request.tabId);
         return { ok: true };
       }
 
       case 'press': {
-        if (!request.task || !request.tabId || !request.key) {
-          return { ok: false, error: 'Task, tabId, and key required' };
+        if (!request.task || !request.key) {
+          return { ok: false, error: 'Task and key required' };
         }
-        await this.service.press(request.task, request.tabId, request.key);
+        await this.service.press(request.task, request.key, request.tabId);
         return { ok: true };
       }
 
       case 'hover': {
-        if (!request.task || !request.tabId || request.ref === undefined) {
-          return { ok: false, error: 'Task, tabId, and ref required' };
+        if (!request.task || request.ref === undefined) {
+          return { ok: false, error: 'Task and ref required' };
         }
-        await this.service.hover(request.task, request.tabId, request.ref);
+        await this.service.hover(request.task, request.ref, request.tabId);
         return { ok: true };
       }
 

@@ -7,7 +7,6 @@ import {
   type BrowserProfile,
 } from '../lib/browser/profiles.js';
 import { sendIPCRequest } from '../lib/browser/ipc.js';
-import { isValidTaskId } from '../lib/browser/types.js';
 
 export function registerBrowserCommand(program: Command): void {
   const browser = program
@@ -124,19 +123,17 @@ function registerProfilesCommands(browser: Command): void {
 
 function registerTaskCommands(browser: Command): void {
   browser
-    .command('start [task]')
-    .description('Start a browser task')
+    .command('open')
+    .description('Open browser with a profile')
     .requiredOption('-p, --profile <name>', 'Browser profile to use')
-    .action(async (task: string | undefined, opts) => {
-      if (task && !isValidTaskId(task)) {
-        console.error('Task ID must be lowercase alphanumeric with hyphens');
-        process.exit(1);
-      }
-
+    .option('-t, --task <name>', 'Task name (auto-generated if omitted)')
+    .option('-u, --url <url>', 'Open URL in first tab')
+    .action(async (opts) => {
       const response = await sendIPCRequest({
-        action: 'start',
+        action: 'open',
         profile: opts.profile,
-        task,
+        taskName: opts.task,
+        url: opts.url,
       });
 
       if (!response.ok) {
@@ -144,7 +141,11 @@ function registerTaskCommands(browser: Command): void {
         process.exit(1);
       }
 
-      console.log(response.task);
+      if (opts.url && response.tabId) {
+        console.log(`Opened task "${response.task}" with tab ${response.tabId}`);
+      } else {
+        console.log(`Opened task "${response.task}"`);
+      }
     });
 
   browser
@@ -166,7 +167,7 @@ function registerTaskCommands(browser: Command): void {
 
   browser
     .command('navigate <task> <url>')
-    .description('Open a URL in the task window')
+    .description('Navigate current tab to URL (creates tab if none exist)')
     .option('-p, --profile <name>', 'Browser profile (optional if task is unique)')
     .action(async (task: string, url: string, opts) => {
       const response = await sendIPCRequest({
@@ -181,19 +182,76 @@ function registerTaskCommands(browser: Command): void {
         process.exit(1);
       }
 
+      console.log(`Navigated ${response.tabId} to ${url}`);
+    });
+
+  // Tab subcommand group
+  const tab = browser.command('tab').description('Manage tabs');
+
+  tab
+    .command('add <task> <url>')
+    .description('Open URL in new tab (becomes current)')
+    .option('-p, --profile <name>', 'Browser profile')
+    .action(async (task: string, url: string, opts) => {
+      const response = await sendIPCRequest({
+        action: 'tab-add',
+        task,
+        url,
+        profile: opts.profile,
+      });
+
+      if (!response.ok) {
+        console.error(response.error);
+        process.exit(1);
+      }
+
       console.log(`Opened tab ${response.tabId}: ${url}`);
     });
 
-  browser
-    .command('tabs [task]')
-    .description('List open tabs')
-    .option('-p, --profile <name>', 'Filter by profile')
-    .option('--json', 'Output machine-readable JSON')
-    .action(async (task: string | undefined, opts) => {
+  tab
+    .command('focus <task> <tabId>')
+    .description('Switch to tab (by ID, prefix, or URL substring)')
+    .action(async (task: string, tabId: string) => {
       const response = await sendIPCRequest({
-        action: 'tabs',
+        action: 'tab-focus',
         task,
-        profile: opts.profile,
+        tabId,
+      });
+
+      if (!response.ok) {
+        console.error(response.error);
+        process.exit(1);
+      }
+
+      console.log(`Focused tab ${response.tabId}`);
+    });
+
+  tab
+    .command('close <task> [tabId]')
+    .description('Close tab(s) — omit tabId to close all')
+    .action(async (task: string, tabId: string | undefined) => {
+      const response = await sendIPCRequest({
+        action: 'tab-close',
+        task,
+        tabId,
+      });
+
+      if (!response.ok) {
+        console.error(response.error);
+        process.exit(1);
+      }
+
+      console.log(tabId ? `Closed tab ${tabId}` : `Closed all tabs for ${task}`);
+    });
+
+  tab
+    .command('list <task>')
+    .description('List tabs for a task')
+    .option('--json', 'Output machine-readable JSON')
+    .action(async (task: string, opts) => {
+      const response = await sendIPCRequest({
+        action: 'tab-list',
+        task,
       });
 
       if (!response.ok) {
@@ -215,35 +273,14 @@ function registerTaskCommands(browser: Command): void {
         return;
       }
 
-      const idWidth = Math.max(3, ...response.tabs.map((t) => t.id.length)) + 2;
-      console.log('TASK'.padEnd(15) + 'TAB'.padEnd(idWidth) + 'URL');
-      console.log('-'.repeat(15 + idWidth + 55));
-      for (const tab of response.tabs) {
-        console.log(
-          tab.task.padEnd(15) +
-            tab.id.padEnd(idWidth) +
-            tab.url.slice(0, 55)
-        );
+      console.log('TAB'.padEnd(12) + 'URL');
+      console.log('-'.repeat(70));
+      for (const t of response.tabs) {
+        const current = (t as { id: string; url: string; current?: boolean }).current ? ' *' : '';
+        console.log(t.id.padEnd(12) + t.url.slice(0, 55) + current);
       }
     });
 
-  browser
-    .command('close <task> [tabId]')
-    .description('Close tabs for a task')
-    .action(async (task: string, tabId: string | undefined) => {
-      const response = await sendIPCRequest({
-        action: 'close',
-        task,
-        tabId,
-      });
-
-      if (!response.ok) {
-        console.error(response.error);
-        process.exit(1);
-      }
-
-      console.log(tabId ? `Closed tab ${tabId}` : `Closed all tabs for task ${task}`);
-    });
 
   browser
     .command('screenshot <task> [tabId]')
@@ -266,13 +303,14 @@ function registerTaskCommands(browser: Command): void {
     });
 
   browser
-    .command('evaluate <task> <tabId> <expression>')
-    .description('Evaluate JavaScript in a tab')
-    .action(async (task: string, tabId: string, expression: string) => {
+    .command('evaluate <task> <expression>')
+    .description('Evaluate JavaScript in current tab')
+    .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
+    .action(async (task: string, expression: string, opts) => {
       const response = await sendIPCRequest({
         action: 'evaluate',
         task,
-        tabId,
+        tabId: opts.tab,
         expr: expression,
       });
 
@@ -323,12 +361,13 @@ function registerTaskCommands(browser: Command): void {
         if (profile.tasks.length === 0) {
           console.log('  No active tasks');
         } else {
-          console.log('  TASK'.padEnd(17) + 'TABS'.padEnd(8) + 'CREATED');
+          console.log('  TASK'.padEnd(25) + 'TABS'.padEnd(8) + 'CREATED');
           for (const task of profile.tasks) {
             const age = formatAge(task.createdAt);
+            const name = (task as { name?: string }).name || task.id;
             console.log(
               '  ' +
-                task.id.padEnd(15) +
+                name.padEnd(23) +
                 String(task.tabCount).padEnd(8) +
                 age
             );
@@ -392,15 +431,16 @@ function registerTaskCommands(browser: Command): void {
     });
 
   browser
-    .command('refs <task> [tabId]')
+    .command('refs <task>')
     .description('Get DOM refs for interactive elements')
+    .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
     .option('--all', 'Include non-interactive elements')
     .option('-l, --limit <n>', 'Max elements (default 500)', '500')
-    .action(async (task: string, tabId: string | undefined, opts) => {
+    .action(async (task: string, opts) => {
       const response = await sendIPCRequest({
         action: 'refs',
         task,
-        tabId,
+        tabId: opts.tab,
         interactive: !opts.all,
         limit: parseInt(opts.limit, 10),
       });
@@ -414,13 +454,14 @@ function registerTaskCommands(browser: Command): void {
     });
 
   browser
-    .command('click <task> <tabId> <ref>')
+    .command('click <task> <ref>')
     .description('Click an element by ref')
-    .action(async (task: string, tabId: string, ref: string) => {
+    .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
+    .action(async (task: string, ref: string, opts) => {
       const response = await sendIPCRequest({
         action: 'click',
         task,
-        tabId,
+        tabId: opts.tab,
         ref: parseInt(ref, 10),
       });
 
@@ -433,13 +474,14 @@ function registerTaskCommands(browser: Command): void {
     });
 
   browser
-    .command('type <task> <tabId> <ref> <text>')
+    .command('type <task> <ref> <text>')
     .description('Type text into an element by ref')
-    .action(async (task: string, tabId: string, ref: string, text: string) => {
+    .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
+    .action(async (task: string, ref: string, text: string, opts) => {
       const response = await sendIPCRequest({
         action: 'type',
         task,
-        tabId,
+        tabId: opts.tab,
         ref: parseInt(ref, 10),
         text,
       });
@@ -453,13 +495,14 @@ function registerTaskCommands(browser: Command): void {
     });
 
   browser
-    .command('press <task> <tabId> <key>')
+    .command('press <task> <key>')
     .description('Press a key (Enter, Tab, Escape, etc)')
-    .action(async (task: string, tabId: string, key: string) => {
+    .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
+    .action(async (task: string, key: string, opts) => {
       const response = await sendIPCRequest({
         action: 'press',
         task,
-        tabId,
+        tabId: opts.tab,
         key,
       });
 
@@ -472,13 +515,14 @@ function registerTaskCommands(browser: Command): void {
     });
 
   browser
-    .command('hover <task> <tabId> <ref>')
+    .command('hover <task> <ref>')
     .description('Hover over an element by ref')
-    .action(async (task: string, tabId: string, ref: string) => {
+    .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
+    .action(async (task: string, ref: string, opts) => {
       const response = await sendIPCRequest({
         action: 'hover',
         task,
-        tabId,
+        tabId: opts.tab,
         ref: parseInt(ref, 10),
       });
 
