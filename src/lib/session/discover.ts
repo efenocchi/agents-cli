@@ -14,7 +14,7 @@ import * as crypto from 'crypto';
 import * as readline from 'readline';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { getAgentsDir } from '../state.js';
+import { getAgentsDir, getUserAgentsDir } from '../state.js';
 
 const execFileAsync = promisify(execFile);
 import type { SessionAgentId, SessionMeta } from './types.js';
@@ -39,6 +39,13 @@ import {
 } from './db.js';
 
 const HOME = os.homedir();
+// Versions can live under either repo: the user repo (current canonical
+// location, ~/.agents/versions/) or the system repo (legacy / npm-shipped,
+// ~/.agents-system/versions/). Both must be scanned — sessions written by
+// any installed version end up in that version's projects/ dir, and the user
+// can be running one repo's version while another repo holds older versions
+// whose JSONLs the user still wants to search.
+const VERSIONS_ROOTS = [getUserAgentsDir(), getAgentsDir()];
 const AGENTS_DIR = getAgentsDir();
 const RUSH_SESSIONS_DIR = path.join(HOME, '.rush', 'sessions');
 const HERMES_SESSIONS_DIR = path.join(HOME, '.hermes', 'sessions');
@@ -297,8 +304,9 @@ export function getAgentSessionDirs(agent: string, subdir: string): string[] {
 
   addDir(path.join(HOME, `.${agent}`, subdir));
 
-  const versionsBase = path.join(AGENTS_DIR, 'versions', agent);
-  if (fs.existsSync(versionsBase)) {
+  for (const root of VERSIONS_ROOTS) {
+    const versionsBase = path.join(root, 'versions', agent);
+    if (!fs.existsSync(versionsBase)) continue;
     try {
       for (const version of fs.readdirSync(versionsBase)) {
         addDir(path.join(versionsBase, version, 'home', `.${agent}`, subdir));
@@ -336,8 +344,9 @@ function getClaudeAccount(): string | undefined {
     path.join(HOME, '.claude.json'),
   ];
 
-  const versionsBase = path.join(AGENTS_DIR, 'versions', 'claude');
-  if (fs.existsSync(versionsBase)) {
+  for (const root of VERSIONS_ROOTS) {
+    const versionsBase = path.join(root, 'versions', 'claude');
+    if (!fs.existsSync(versionsBase)) continue;
     try {
       for (const version of fs.readdirSync(versionsBase)) {
         candidates.push(path.join(versionsBase, version, 'home', '.claude', '.claude.json'));
@@ -535,8 +544,9 @@ function getCodexAccount(): string | undefined {
 
   const candidates = [path.join(HOME, '.codex', 'auth.json')];
 
-  const versionsBase = path.join(AGENTS_DIR, 'versions', 'codex');
-  if (fs.existsSync(versionsBase)) {
+  for (const root of VERSIONS_ROOTS) {
+    const versionsBase = path.join(root, 'versions', 'codex');
+    if (!fs.existsSync(versionsBase)) continue;
     try {
       for (const version of fs.readdirSync(versionsBase)) {
         candidates.push(path.join(versionsBase, version, 'home', '.codex', 'auth.json'));
@@ -1672,20 +1682,22 @@ function normalizeVersion(version?: string | null): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
-/** Extract the version number from a managed ~/.agents/versions/<agent>/<version>/... path. */
+/** Extract the version number from a managed versions/<agent>/<version>/... path under either repo. */
 function extractVersionFromManagedPath(agent: SessionAgentId, sourcePath?: string): string | undefined {
   if (!sourcePath) return undefined;
 
   const candidates = [sourcePath, safeRealpathSync(sourcePath) || ''];
-  const marker = `/.agents/versions/${agent}/`;
+  const markers = [`/.agents/versions/${agent}/`, `/.agents-system/versions/${agent}/`];
 
   for (const candidate of candidates) {
     if (!candidate) continue;
     const normalized = candidate.split(path.sep).join('/');
-    const start = normalized.indexOf(marker);
-    if (start === -1) continue;
-    const version = normalized.slice(start + marker.length).split('/')[0];
-    if (version) return version;
+    for (const marker of markers) {
+      const start = normalized.indexOf(marker);
+      if (start === -1) continue;
+      const version = normalized.slice(start + marker.length).split('/')[0];
+      if (version) return version;
+    }
   }
 
   return undefined;

@@ -204,6 +204,11 @@ export function getDB(): Database.Database {
   db.pragma('journal_mode = WAL');
   db.pragma('synchronous = NORMAL');
   db.pragma('temp_store = MEMORY');
+  // Wait up to 10s instead of failing immediately on SQLITE_BUSY. Multiple
+  // agents (CLIs, indexers, hooks) all open this DB concurrently; without a
+  // busy timeout, parallel writers throw "database is locked" the moment one
+  // holds the write lock. 10s is well above any realistic transaction here.
+  db.pragma('busy_timeout = 10000');
   db.exec(SCHEMA);
 
   const current = db.prepare(`SELECT value FROM meta WHERE key = 'schema_version'`).get() as { value: string } | undefined;
