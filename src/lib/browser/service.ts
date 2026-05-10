@@ -523,7 +523,10 @@ export class BrowserService {
       try {
         const conn = await this.connectEndpoint(profile, endpoint);
         if (conn) return conn;
-      } catch {
+      } catch (err) {
+        if (err instanceof Error && err.message.startsWith('Browser identity mismatch')) {
+          throw err;
+        }
         // Try next endpoint
       }
     }
