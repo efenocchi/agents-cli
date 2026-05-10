@@ -33,6 +33,7 @@ interface ProfileConnection {
   electron?: boolean;
   forkedFrom?: string;
   tasks: Map<string, Task>;
+  windowId?: string; // single window shared by all tasks
   targetCache?: { targets: TargetInfo[]; ts: number };
   sessionCache: Map<string, string>;
 }
@@ -47,10 +48,10 @@ export class BrowserService {
   private connections = new Map<string, ProfileConnection>();
   private forkingProfiles = new Set<string>();
 
-  async open(
+  async start(
     profileName: string,
     opts: { taskName?: string; url?: string } = {}
-  ): Promise<{ task: string; name: string; tabId?: string; windowTargetId?: string }> {
+  ): Promise<{ task: string; name: string; tabId?: string; windowId?: string }> {
     const profile = await getProfile(profileName);
     if (!profile) {
       throw new Error(`Profile "${profileName}" not found`);
@@ -89,24 +90,24 @@ export class BrowserService {
       this.connections.set(profileName, conn);
     }
 
-    const { windowTargetId } = await this.createTaskWindow(conn, taskId);
-
     const task: Task = {
       id: taskId,
       name: taskName,
       profile: effectiveProfileName,
-      windowTargetId,
       tabs: {},
       currentTabId: undefined,
       createdAt: Date.now(),
       pid: conn.pid,
     };
 
-    // For Electron, track the window as a tab
-    if (conn.electron && windowTargetId) {
-      const shortId = generateShortId();
-      task.tabs[shortId] = windowTargetId;
-      task.currentTabId = shortId;
+    // For Electron, get the existing window as the tab
+    if (conn.electron) {
+      const windowId = await this.getOrCreateWindow(conn);
+      if (windowId) {
+        const shortId = generateShortId();
+        task.tabs[shortId] = windowId;
+        task.currentTabId = shortId;
+      }
     }
 
     conn.tasks.set(taskName, task);
@@ -114,21 +115,31 @@ export class BrowserService {
 
     emit('browser.launch', { profile: effectiveProfileName, task: taskName, pid: conn.pid });
 
-    // If URL provided, open first tab
+    // If URL provided, create tab directly (no about:blank)
     let tabId: string | undefined;
-    if (opts.url) {
+    if (opts.url && !conn.electron) {
+      const result = (await conn.cdp.send('Target.createTarget', {
+        url: opts.url,
+      })) as { targetId: string };
+      const shortId = generateShortId();
+      task.tabs[shortId] = result.targetId;
+      task.currentTabId = shortId;
+      this.invalidateTargetCache(conn);
+      await this.saveTaskState(effectiveProfileName, conn.tasks);
+      tabId = shortId;
+    } else if (opts.url && conn.electron) {
       const result = await this.navigate(taskName, opts.url, effectiveProfileName);
       tabId = result.tabId;
     }
 
-    return { task: taskId, name: taskName, tabId, windowTargetId };
+    return { task: taskId, name: taskName, tabId };
   }
 
   async stop(taskName: string): Promise<{ ok: boolean; profile?: string }> {
     for (const [profileName, conn] of this.connections) {
       const task = conn.tasks.get(taskName);
       if (task) {
-        // Close all tabs
+        // Close task's tabs (not the window - it's shared)
         await Promise.all(
           Object.values(task.tabs).map((cdpId) =>
             conn.cdp.send('Target.closeTarget', { targetId: cdpId }).catch(() => {
@@ -140,14 +151,6 @@ export class BrowserService {
           conn.sessionCache.delete(cdpId);
         }
         this.invalidateTargetCache(conn);
-
-        if (task.windowTargetId) {
-          try {
-            await conn.cdp.send('Target.closeTarget', { targetId: task.windowTargetId });
-          } catch {
-            // Window already closed
-          }
-        }
 
         conn.tasks.delete(taskName);
         await this.saveTaskState(profileName, conn.tasks);
@@ -165,6 +168,10 @@ export class BrowserService {
     }
 
     return { ok: false };
+  }
+
+  async done(taskName: string): Promise<{ ok: boolean; profile?: string }> {
+    return this.stop(taskName);
   }
 
   async stopProfile(profileName: string): Promise<void> {
@@ -208,7 +215,7 @@ export class BrowserService {
 
     // No current tab - create one
     if (conn.electron) {
-      const cdpTargetId = task.windowTargetId;
+      const cdpTargetId = conn.windowId;
       if (!cdpTargetId) {
         throw new Error('No existing tab to navigate in Electron app');
       }
@@ -745,36 +752,36 @@ export class BrowserService {
     await cdp.send('Target.setDiscoverTargets', { discover: true });
   }
 
-  private async createTaskWindow(
-    conn: ProfileConnection,
-    _taskId: string
-  ): Promise<{ windowTargetId?: string }> {
-    if (conn.electron) {
+  private async getOrCreateWindow(conn: ProfileConnection): Promise<string> {
+    // Already have a window for this profile?
+    if (conn.windowId) {
+      // Verify it still exists via CDP
       const { targetInfos } = (await conn.cdp.send('Target.getTargets')) as {
         targetInfos: Array<{ targetId: string; type: string; url: string }>;
       };
-      const pageTarget = targetInfos.find((t) => t.type === 'page');
-      if (pageTarget) {
-        return { windowTargetId: pageTarget.targetId };
+      if (targetInfos.some((t) => t.targetId === conn.windowId && t.type === 'page')) {
+        return conn.windowId;
       }
-      // No existing page - try to create one (works on some Electron apps)
-      try {
-        const result = (await conn.cdp.send('Target.createTarget', {
-          url: 'about:blank',
-          newWindow: true,
-        })) as { targetId: string };
-        return { windowTargetId: result.targetId };
-      } catch {
-        throw new Error('No page targets found and unable to create new window');
-      }
+      // Window was closed, fall through to find/create new
     }
 
+    // Check if browser already has a page target we can use
+    const { targetInfos } = (await conn.cdp.send('Target.getTargets')) as {
+      targetInfos: Array<{ targetId: string; type: string; url: string }>;
+    };
+    const existing = targetInfos.find((t) => t.type === 'page');
+    if (existing) {
+      conn.windowId = existing.targetId;
+      return existing.targetId;
+    }
+
+    // First ever use - create window
     const result = (await conn.cdp.send('Target.createTarget', {
       url: 'about:blank',
       newWindow: true,
     })) as { targetId: string };
-
-    return { windowTargetId: result.targetId };
+    conn.windowId = result.targetId;
+    return result.targetId;
   }
 
   private async findTask(
@@ -922,7 +929,6 @@ export class BrowserService {
           id: task.id as string,
           name: task.name as string || key,
           profile: task.profile as string,
-          windowTargetId: task.windowTargetId as string | undefined,
           tabs,
           currentTabId: tabIds.length > 0 ? tabIds[tabIds.length - 1] : undefined,
           createdAt: task.createdAt as number,

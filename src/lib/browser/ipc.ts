@@ -79,11 +79,11 @@ export class BrowserIPCServer {
 
   private async handleRequest(request: IPCRequest): Promise<IPCResponse> {
     switch (request.action) {
-      case 'open': {
+      case 'start': {
         if (!request.profile) {
           return { ok: false, error: 'Profile required' };
         }
-        const result = await this.service.open(request.profile, {
+        const result = await this.service.start(request.profile, {
           taskName: request.taskName,
           url: request.url,
         });
@@ -91,8 +91,16 @@ export class BrowserIPCServer {
           ok: true,
           task: result.name,
           tabId: result.tabId,
-          windowTargetId: result.windowTargetId,
+          windowTargetId: result.windowId,
         };
+      }
+
+      case 'done': {
+        if (!request.task) {
+          return { ok: false, error: 'Task required' };
+        }
+        const result = await this.service.done(request.task);
+        return { ok: result.ok, error: result.ok ? undefined : 'Task not found' };
       }
 
       case 'stop': {
