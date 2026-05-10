@@ -25,7 +25,14 @@ const CACHE_DIR = path.join(USER_DIR, '.cache');
 function migrateAgentsYaml(): void {
   const src = path.join(SYSTEM_DIR, 'agents.yaml');
   const dest = path.join(USER_DIR, 'agents.yaml');
-  if (fs.existsSync(dest) || !fs.existsSync(src)) return;
+  if (!fs.existsSync(src)) return;
+  if (fs.existsSync(dest)) {
+    // User copy is authoritative — drop the stale system leftover. The system
+    // repo (npm-shipped) does not track agents.yaml; any copy here is residue
+    // from the pre-split layout.
+    try { fs.unlinkSync(src); } catch { /* best-effort */ }
+    return;
+  }
   try {
     fs.mkdirSync(USER_DIR, { recursive: true, mode: 0o700 });
     fs.renameSync(src, dest);
