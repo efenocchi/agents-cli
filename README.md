@@ -294,9 +294,9 @@ agents browser profiles create bank --browser chrome --secrets bank-creds
 Control Electron apps (Slack, Discord, VS Code, your own app) with custom binaries:
 
 ```bash
-agents browser profiles create rush \
+agents browser profiles create slack \
   --browser custom \
-  --binary "/Applications/Rush.app/Contents/MacOS/Rush" \
+  --binary "/Applications/Slack.app/Contents/MacOS/Slack" \
   --electron
 ```
 
