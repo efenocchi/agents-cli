@@ -24,6 +24,8 @@ import {
   getInstalledSubagent,
   listSubagentsForAgent,
   SUBAGENT_CAPABLE_AGENTS,
+  iterSubagentsCapableVersions,
+  removeSubagentFromVersion,
 } from '../lib/subagents.js';
 import {
   listInstalledVersions,
@@ -37,6 +39,8 @@ import {
   isPromptCancelled,
   requireInteractiveSelection,
   requireDestructiveArg,
+  promptRemovalTargets,
+  type RemovalTarget,
 } from './utils.js';
 import {
   showResourceList,
@@ -286,23 +290,52 @@ Examples:
         process.exit(1);
       }
 
-      const spinner = ora({ text: `Removing ${name}...`, isSilent: !process.stdout.isTTY }).start();
-
-      const result = removeSubagent(name);
-      if (!result.success) {
-        spinner.fail(`Failed to remove: ${result.error}`);
-        process.exit(1);
-      }
-
-      // Re-sync all installed versions to remove from agent homes
-      for (const agentId of SUBAGENT_CAPABLE_AGENTS) {
-        const versions = listInstalledVersions(agentId);
-        for (const version of versions) {
-          syncResourcesToVersion(agentId, version);
+      // Build list of targets that have this subagent synced
+      const availableTargets: Array<{ agent: AgentId; version: string }> = [];
+      for (const { agent, version } of iterSubagentsCapableVersions()) {
+        const home = getVersionHomePath(agent, version);
+        const installed = listSubagentsForAgent(agent, home).some((s) => s.name === name);
+        if (installed) {
+          availableTargets.push({ agent, version });
         }
       }
 
-      spinner.succeed(`Removed subagent '${name}'`);
+      if (availableTargets.length === 0) {
+        console.log(chalk.yellow(`Subagent '${name}' not synced to any version.`));
+        return;
+      }
+
+      // Show multi-select picker for targets
+      const removalTargets: RemovalTarget[] = availableTargets.map((t) => ({
+        agent: t.agent,
+        version: t.version,
+        label: `${agentLabel(t.agent)}@${t.version}`,
+      }));
+
+      const selectedTargets = await promptRemovalTargets(name, removalTargets);
+
+      if (selectedTargets.length === 0) {
+        console.log(chalk.gray('Cancelled.'));
+        return;
+      }
+
+      let removed = 0;
+      for (const target of selectedTargets) {
+        const result = removeSubagentFromVersion(target.agent as AgentId, target.version, name);
+        if (result.success) {
+          console.log(`  ${chalk.red('-')} ${target.label}: ${name}`);
+          removed++;
+        } else if (result.error) {
+          console.log(`  ${chalk.yellow('!')} ${target.label}: ${result.error}`);
+        }
+      }
+
+      if (removed === 0) {
+        console.log(chalk.yellow('No subagents removed.'));
+      } else {
+        console.log(chalk.green(`\nRemoved ${removed} subagent(s) from version homes.`));
+        console.log(chalk.gray('Central source unchanged. Subagents will re-sync on next agent launch.'));
+      }
     });
 }
 
