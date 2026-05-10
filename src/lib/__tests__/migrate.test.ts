@@ -70,31 +70,44 @@ describe('runMigration', () => {
     expect(fs.readFileSync(path.join(systemDir, 'config.json'), 'utf-8')).toBe('{"new":true}');
   });
 
-  it('moves ~/.agents/versions/<agent>/<ver>/ into ~/.agents-system/versions/', () => {
-    // Pre-split layout: legacy versions live under the user repo.
-    const legacy = path.join(userDir, 'versions', 'claude', '2.0.99', 'home', '.claude');
-    fs.mkdirSync(legacy, { recursive: true });
-    fs.writeFileSync(path.join(legacy, '.credentials.json'), '{"oauth":{"email":"test@example.com"}}');
+  it('moves ~/.agents-system/versions/<agent>/<ver>/ into ~/.agents/versions/ and merges overlap', () => {
+    // System-side version with no user-side equivalent: must move outright.
+    const orphanSys = path.join(systemDir, 'versions', 'claude', '2.0.99', 'home', '.claude');
+    fs.mkdirSync(orphanSys, { recursive: true });
+    fs.writeFileSync(path.join(orphanSys, '.credentials.json'), '{"oauth":{"email":"test@example.com"}}');
 
-    // Also a version where the system already has a same-named install — must NOT clobber it.
-    const conflicting = path.join(userDir, 'versions', 'claude', '2.0.50', 'home');
-    fs.mkdirSync(conflicting, { recursive: true });
-    fs.writeFileSync(path.join(conflicting, 'marker-legacy'), '');
-    const sysExisting = path.join(systemDir, 'versions', 'claude', '2.0.50', 'home');
-    fs.mkdirSync(sysExisting, { recursive: true });
-    fs.writeFileSync(path.join(sysExisting, 'marker-system'), '');
+    // Overlap version: both paths have a home dir. Sync-managed file (skills) lives in user;
+    // operational state (history.jsonl) lives only in system. Merge step must preserve user file
+    // and copy missing system files into user.
+    const userOverlap = path.join(userDir, 'versions', 'claude', '2.0.50', 'home', '.claude');
+    fs.mkdirSync(path.join(userOverlap, 'skills', 'mq'), { recursive: true });
+    fs.writeFileSync(path.join(userOverlap, 'skills', 'mq', 'SKILL.md'), 'fresh-from-sync');
+    const sysOverlap = path.join(systemDir, 'versions', 'claude', '2.0.50', 'home', '.claude');
+    fs.mkdirSync(sysOverlap, { recursive: true });
+    fs.writeFileSync(path.join(sysOverlap, 'history.jsonl'), 'legacy-history');
+    fs.writeFileSync(path.join(sysOverlap, 'skills', 'mq', 'SKILL.md').replace('skills/mq/SKILL.md', 'skills-stale.md'), 'stale');
+
+    // Pre-create the symlink that the migrator should re-point. Use the legacy system target.
+    fs.writeFileSync(path.join(userDir, 'agents.yaml'), 'agents:\n  claude: 2.0.50\n');
+    const symlinkPath = path.join(testHome, '.claude');
+    fs.symlinkSync(sysOverlap, symlinkPath);
 
     runRealMigration();
 
-    // Migrated.
-    expect(
-      fs.existsSync(path.join(systemDir, 'versions', 'claude', '2.0.99', 'home', '.claude', '.credentials.json'))
-    ).toBe(true);
-    expect(fs.existsSync(path.join(userDir, 'versions', 'claude', '2.0.99'))).toBe(false);
+    // Orphan system-side version moved to user.
+    expect(fs.existsSync(path.join(userDir, 'versions', 'claude', '2.0.99', 'home', '.claude', '.credentials.json'))).toBe(true);
+    expect(fs.existsSync(path.join(systemDir, 'versions', 'claude', '2.0.99'))).toBe(false);
 
-    // Conflict: legacy left in place, system copy untouched.
-    expect(fs.existsSync(path.join(userDir, 'versions', 'claude', '2.0.50', 'home', 'marker-legacy'))).toBe(true);
-    expect(fs.existsSync(path.join(systemDir, 'versions', 'claude', '2.0.50', 'home', 'marker-system'))).toBe(true);
-    expect(fs.existsSync(path.join(systemDir, 'versions', 'claude', '2.0.50', 'home', 'marker-legacy'))).toBe(false);
+    // Overlap merged into user: fresh skill preserved, history copied in.
+    expect(fs.readFileSync(path.join(userOverlap, 'skills', 'mq', 'SKILL.md'), 'utf-8')).toBe('fresh-from-sync');
+    expect(fs.readFileSync(path.join(userOverlap, 'history.jsonl'), 'utf-8')).toBe('legacy-history');
+
+    // Legacy system overlap moved into trash.
+    const trashRoot = path.join(userDir, '.trash', 'versions', 'claude', '2.0.50');
+    expect(fs.existsSync(trashRoot)).toBe(true);
+
+    // Symlink re-pointed to user-side target.
+    const newTarget = fs.readlinkSync(symlinkPath);
+    expect(path.resolve(path.dirname(symlinkPath), newTarget)).toBe(path.resolve(userOverlap));
   });
 });
