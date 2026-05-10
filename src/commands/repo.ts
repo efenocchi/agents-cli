@@ -289,7 +289,7 @@ Examples:
       const systemStatus = !systemOnDisk
         ? chalk.red('missing')
         : !systemIsGit
-          ? chalk.yellow('not a git repo — run: agents init')
+          ? chalk.yellow('not a git repo — run: agents setup')
           : chalk.green('cloned');
       const systemCommitLabel = systemCommit ? chalk.gray(`(${systemCommit})`) : '';
       console.log(chalk.bold('System  (~/.agents-system/)'));
