@@ -59,6 +59,7 @@ import { getAgentResources, listResources } from '../lib/resources.js';
 import { getAgentsDir, getUserAgentsDir, getEffectivePromptcutsPath, readMergedPromptcuts } from '../lib/state.js';
 import { isGitRepo, getGitSyncStatus } from '../lib/git.js';
 import { getCentralRulesFileName } from '../lib/rules/rules.js';
+import { composeRulesFromState, type ComposedSubrule } from '../lib/rules/compose.js';
 import { getConfiguredRunStrategy } from '../lib/rotate.js';
 import { confirm } from '@inquirer/prompts';
 import { formatPath, isInteractiveTerminal, isPromptCancelled } from './utils.js';
@@ -666,7 +667,60 @@ async function showAgentResources(agentId: AgentId, requestedVersion: string): P
   }
 
   renderSection('MCP Servers', agentData.mcp);
-  renderSection('Rules', agentData.memory);
+
+  // Rules section with subrules breakdown
+  function renderRulesSection(): void {
+    console.log(chalk.bold('\nRules\n'));
+    const items = agentData.memory;
+
+    if (items.length === 0) {
+      console.log(`  ${chalk.gray('none')}`);
+      return;
+    }
+
+    const versionStr = agentData.version ? ` (${agentData.version})` : '';
+    console.log(`  ${chalk.bold(agentData.agentName)}${chalk.gray(versionStr)}:`);
+
+    // Get composed subrules for the user scope
+    let composedSubrules: ComposedSubrule[] = [];
+    try {
+      const composed = composeRulesFromState({ cwd });
+      composedSubrules = composed.subrules;
+    } catch {
+      // No preset configured or rules.yaml missing — show rules without subrule breakdown
+    }
+
+    for (const r of items) {
+      let nameColor = chalk.cyan;
+      if (r.syncState === 'synced') nameColor = chalk.green;
+      else if (r.syncState === 'new') nameColor = chalk.blue;
+      else if (r.syncState === 'modified') nameColor = chalk.yellow;
+      else if (r.syncState === 'deleted') nameColor = chalk.red;
+
+      let display = nameColor(r.name);
+      if (r.ruleCount !== undefined) display += chalk.gray(` (${r.ruleCount} rules)`);
+      const sourceTag = r.scope === 'project' ? chalk.blue('[project]')
+        : r.scope === 'user' ? chalk.cyan('[user]')
+        : chalk.gray('[system]');
+      display += ` ${sourceTag}`;
+      const pathStr = r.path ? chalk.gray(formatPath(r.path, cwd)) : '';
+      const syncStr = r.syncState ? chalk.gray(` [${r.syncState}]`) : '';
+      console.log(`    ${display.padEnd(38)} ${pathStr}${syncStr}`);
+
+      // Show subrules for user-scope rules (the compiled CLAUDE.md)
+      if (r.scope === 'user' && composedSubrules.length > 0) {
+        for (const sub of composedSubrules) {
+          const scopeLabel = sub.layerScope === 'project' ? chalk.blue('[project]')
+            : sub.layerScope === 'user' ? chalk.cyan('[user]')
+            : sub.layerScope === 'extra' ? chalk.magenta(`[${sub.layerAlias || 'extra'}]`)
+            : chalk.gray('[system]');
+          console.log(`      ${chalk.gray('-')} ${sub.name} ${scopeLabel}`);
+        }
+      }
+    }
+  }
+  renderRulesSection();
+
   renderSection('Hooks', agentData.hooks);
   renderPromptcuts();
 

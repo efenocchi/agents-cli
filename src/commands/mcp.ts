@@ -39,7 +39,7 @@ import {
   resolveVersionAlias,
 } from '../lib/versions.js';
 import { getUserAgentsDir } from '../lib/state.js';
-import { isPromptCancelled, isInteractiveTerminal, requireInteractiveSelection } from './utils.js';
+import { isPromptCancelled, isInteractiveTerminal, requireInteractiveSelection, promptRemovalTargets, type RemovalTarget } from './utils.js';
 import {
   showResourceList,
   buildTargetsSection,
@@ -291,25 +291,35 @@ Examples:
       const cwd = process.cwd();
       const cliStates = await getAllCliStates();
 
+      // Build map of MCP -> targets for all installed agents
+      type McpTargetInfo = { name: string; targets: Array<{ agentId: AgentId; version: string; home: string }> };
+      const mcpTargetMap = new Map<string, McpTargetInfo>();
+
+      for (const agentId of MCP_CAPABLE_AGENTS) {
+        if (!cliStates[agentId]?.installed && listInstalledVersions(agentId).length === 0) continue;
+        for (const version of listInstalledVersions(agentId)) {
+          const home = getVersionHomePath(agentId, version);
+          const configPath = getMcpConfigPathForHome(agentId, home);
+          const mcps = parseMcpConfig(agentId, configPath);
+          for (const mcpName of Object.keys(mcps)) {
+            const existing = mcpTargetMap.get(mcpName);
+            if (existing) {
+              existing.targets.push({ agentId, version, home });
+            } else {
+              mcpTargetMap.set(mcpName, { name: mcpName, targets: [{ agentId, version, home }] });
+            }
+          }
+        }
+      }
+
       let mcpsToRemove: string[];
-      let targets:
-        | ReturnType<typeof resolveInstalledAgentTargets>
-        | ReturnType<typeof resolveConfiguredAgentTargets>;
 
       if (name) {
         mcpsToRemove = [name];
-        const installedAgents = MCP_CAPABLE_AGENTS.filter(
-          (agentId) => cliStates[agentId]?.installed || listInstalledVersions(agentId).length > 0
-        );
-        targets = options?.agents
-          ? resolveInstalledAgentTargets(options.agents, MCP_CAPABLE_AGENTS)
-          : resolveConfiguredAgentTargets(installedAgents, undefined, MCP_CAPABLE_AGENTS);
       } else {
-        // Interactive picker: collect all MCPs across all installed agents
-        const installedAgents = MCP_CAPABLE_AGENTS.filter((agentId) => cliStates[agentId]?.installed);
-
-        if (installedAgents.length === 0) {
-          console.log(chalk.yellow('No MCP-capable agents installed.'));
+        // Interactive picker for MCP selection
+        if (mcpTargetMap.size === 0) {
+          console.log(chalk.yellow('No MCP servers configured.'));
           return;
         }
 
@@ -320,36 +330,16 @@ Examples:
           ]);
         }
 
-        // Gather all unique MCPs across agents (with agent info for display)
-        const mcpMap = new Map<string, { name: string; agents: string[]; command?: string }>();
-        for (const agentId of installedAgents) {
-          const mcps = listInstalledMcpsWithScope(agentId, cwd, { home: getEffectiveHome(agentId) });
-          for (const mcp of mcps) {
-            const existing = mcpMap.get(mcp.name);
-            if (existing) {
-              existing.agents.push(AGENTS[agentId].name);
-            } else {
-              mcpMap.set(mcp.name, {
-                name: mcp.name,
-                agents: [AGENTS[agentId].name],
-                command: mcp.command,
-              });
-            }
-          }
-        }
-
-        if (mcpMap.size === 0) {
-          console.log(chalk.yellow('No MCP servers configured.'));
-          return;
-        }
-
         try {
           const selected = await checkbox({
             message: 'Select MCP servers to remove',
-            choices: Array.from(mcpMap.values()).map((mcp) => ({
-              value: mcp.name,
-              name: `${mcp.name} (${mcp.agents.join(', ')})`,
-            })),
+            choices: Array.from(mcpTargetMap.values()).map((mcp) => {
+              const agents = [...new Set(mcp.targets.map((t) => AGENTS[t.agentId].name))];
+              return {
+                value: mcp.name,
+                name: `${mcp.name} (${agents.join(', ')})`,
+              };
+            }),
           });
 
           if (selected.length === 0) {
@@ -358,7 +348,6 @@ Examples:
           }
 
           mcpsToRemove = selected;
-          targets = resolveConfiguredAgentTargets(installedAgents, undefined, MCP_CAPABLE_AGENTS);
         } catch (err) {
           if (isPromptCancelled(err)) {
             console.log(chalk.gray('Cancelled'));
@@ -368,10 +357,66 @@ Examples:
         }
       }
 
-      // Execute removals - try each MCP on each target agent
+      // Execute removals with target selection
       let removed = 0;
       for (const mcpName of mcpsToRemove) {
-        const results = await unregisterMcpFromTargets(targets, mcpName);
+        const mcpInfo = mcpTargetMap.get(mcpName);
+        if (!mcpInfo || mcpInfo.targets.length === 0) {
+          console.log(chalk.yellow(`  MCP '${mcpName}' not found in any agent.`));
+          continue;
+        }
+
+        // If --agents was specified, filter targets
+        let availableTargets = mcpInfo.targets;
+        if (options?.agents) {
+          const requestedTargets = resolveInstalledAgentTargets(options.agents, MCP_CAPABLE_AGENTS);
+          const requested = new Set<string>();
+          for (const aid of requestedTargets.directAgents) {
+            for (const ver of listInstalledVersions(aid)) {
+              requested.add(`${aid}@${ver}`);
+            }
+          }
+          for (const [aid, versions] of requestedTargets.versionSelections) {
+            for (const ver of versions) {
+              requested.add(`${aid}@${ver}`);
+            }
+          }
+          availableTargets = availableTargets.filter((t) => requested.has(`${t.agentId}@${t.version}`));
+        }
+
+        if (availableTargets.length === 0) {
+          console.log(chalk.yellow(`  MCP '${mcpName}' not found in specified agents.`));
+          continue;
+        }
+
+        // Show target picker if multiple targets and no --agents flag
+        const removalTargets: RemovalTarget[] = availableTargets.map((t) => ({
+          agent: t.agentId,
+          version: t.version,
+          label: formatTargetLabel(t.agentId as AgentId, t.version),
+        }));
+
+        const selectedTargets = await promptRemovalTargets(mcpName, removalTargets, {
+          skipPrompt: !!options?.agents,
+        });
+
+        if (selectedTargets.length === 0) {
+          console.log(chalk.gray(`  Skipped '${mcpName}'.`));
+          continue;
+        }
+
+        // Build targets structure for unregister
+        const versionSelections = new Map<AgentId, string[]>();
+        for (const t of selectedTargets) {
+          const versions = versionSelections.get(t.agent as AgentId) || [];
+          if (!versions.includes(t.version)) {
+            versions.push(t.version);
+            versionSelections.set(t.agent as AgentId, versions);
+          }
+        }
+
+        const targetsToRemove = { directAgents: [] as AgentId[], versionSelections };
+        const results = await unregisterMcpFromTargets(targetsToRemove, mcpName);
         for (const result of results) {
           if (result.success) {
             console.log(`  ${chalk.red('-')} ${formatTargetLabel(result.agentId, result.version)}: ${mcpName}`);

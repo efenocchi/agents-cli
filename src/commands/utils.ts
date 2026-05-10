@@ -108,6 +108,52 @@ export function parseCommaSeparatedList(value: string | undefined): string[] {
 }
 
 /**
+ * A target for resource removal: agent + version.
+ */
+export interface RemovalTarget {
+  agent: string;
+  version: string;
+  label: string;
+}
+
+/**
+ * Prompt user to select which agent/version targets to remove a resource from.
+ * If only one target, returns it without prompting. If multiple, shows checkbox.
+ * Returns empty array if user cancels or selects nothing.
+ */
+export async function promptRemovalTargets(
+  resourceName: string,
+  targets: RemovalTarget[],
+  options?: { skipPrompt?: boolean }
+): Promise<RemovalTarget[]> {
+  if (targets.length === 0) return [];
+  if (targets.length === 1 || options?.skipPrompt) return targets;
+
+  if (!isInteractiveTerminal()) {
+    return targets;
+  }
+
+  const { checkbox } = await import('@inquirer/prompts');
+
+  try {
+    const selected = await checkbox({
+      message: `Select targets to remove '${resourceName}' from`,
+      choices: targets.map((t) => ({
+        value: t,
+        name: t.label,
+        checked: true,
+      })),
+    });
+    return selected;
+  } catch (err) {
+    if (isPromptCancelled(err)) {
+      return [];
+    }
+    throw err;
+  }
+}
+
+/**
  * Format a path for display, using ~ for home directory
  */
 export function formatPath(fullPath: string, cwd?: string): string {
