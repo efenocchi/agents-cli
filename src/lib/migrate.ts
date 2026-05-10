@@ -313,6 +313,24 @@ function copyDirSkipExisting(src: string, dest: string): void {
 }
 
 /**
+ * Rename ~/.agents/permissions/sets/ -> ~/.agents/permissions/presets/.
+ * Also handles ~/.agents-system/permissions/sets/ for system repo.
+ * Idempotent: skips if dest already exists or src absent.
+ */
+function migratePermissionSetsToPresets(): void {
+  for (const root of [USER_DIR, SYSTEM_DIR]) {
+    const src = path.join(root, 'permissions', 'sets');
+    const dest = path.join(root, 'permissions', 'presets');
+    if (!fs.existsSync(src) || fs.existsSync(dest)) continue;
+    try {
+      fs.renameSync(src, dest);
+      const label = root === USER_DIR ? '~/.agents' : '~/.agents-system';
+      console.log(`Migrated ${label}/permissions/sets/ to ${label}/permissions/presets/`);
+    } catch { /* best-effort */ }
+  }
+}
+
+/**
  * After versions are migrated to ~/.agents/versions/, rewrite the per-agent
  * config symlinks (~/.claude, ~/.codex, …) to point at the user-side
  * version-home so the agent CLIs read fresh resources.
@@ -381,4 +399,5 @@ export function runMigration(): void {
   migrateTrashToHidden();
   migrateBackupsToHidden();
   migrateAliasesToUser();
+  migratePermissionSetsToPresets();
 }

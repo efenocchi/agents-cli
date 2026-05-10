@@ -110,4 +110,71 @@ describe('runMigration', () => {
     const newTarget = fs.readlinkSync(symlinkPath);
     expect(path.resolve(path.dirname(symlinkPath), newTarget)).toBe(path.resolve(userOverlap));
   });
+
+  describe('migratePermissionSetsToPresets', () => {
+    it('renames permissions/sets/ to permissions/presets/ in user dir', () => {
+      const setsDir = path.join(userDir, 'permissions', 'sets');
+      fs.mkdirSync(setsDir, { recursive: true });
+      fs.writeFileSync(path.join(setsDir, 'sandbox.yaml'), 'name: sandbox\nincludes: [base]');
+
+      runRealMigration();
+
+      const presetsDir = path.join(userDir, 'permissions', 'presets');
+      expect(fs.existsSync(presetsDir)).toBe(true);
+      expect(fs.existsSync(setsDir)).toBe(false);
+      expect(fs.readFileSync(path.join(presetsDir, 'sandbox.yaml'), 'utf-8')).toBe('name: sandbox\nincludes: [base]');
+    });
+
+    it('renames permissions/sets/ to permissions/presets/ in system dir', () => {
+      const setsDir = path.join(systemDir, 'permissions', 'sets');
+      fs.mkdirSync(setsDir, { recursive: true });
+      fs.writeFileSync(path.join(setsDir, 'minimal.yaml'), 'name: minimal\nincludes: []');
+
+      runRealMigration();
+
+      const presetsDir = path.join(systemDir, 'permissions', 'presets');
+      expect(fs.existsSync(presetsDir)).toBe(true);
+      expect(fs.existsSync(setsDir)).toBe(false);
+      expect(fs.readFileSync(path.join(presetsDir, 'minimal.yaml'), 'utf-8')).toBe('name: minimal\nincludes: []');
+    });
+
+    it('skips if presets/ already exists (idempotent)', () => {
+      const setsDir = path.join(userDir, 'permissions', 'sets');
+      const presetsDir = path.join(userDir, 'permissions', 'presets');
+      fs.mkdirSync(setsDir, { recursive: true });
+      fs.mkdirSync(presetsDir, { recursive: true });
+      fs.writeFileSync(path.join(setsDir, 'old.yaml'), 'old');
+      fs.writeFileSync(path.join(presetsDir, 'new.yaml'), 'new');
+
+      runRealMigration();
+      runRealMigration();
+
+      expect(fs.existsSync(setsDir)).toBe(true);
+      expect(fs.readFileSync(path.join(setsDir, 'old.yaml'), 'utf-8')).toBe('old');
+      expect(fs.readFileSync(path.join(presetsDir, 'new.yaml'), 'utf-8')).toBe('new');
+    });
+
+    it('handles both user and system dirs together', () => {
+      const userSets = path.join(userDir, 'permissions', 'sets');
+      const sysSets = path.join(systemDir, 'permissions', 'sets');
+      fs.mkdirSync(userSets, { recursive: true });
+      fs.mkdirSync(sysSets, { recursive: true });
+      fs.writeFileSync(path.join(userSets, 'user.yaml'), 'user preset');
+      fs.writeFileSync(path.join(sysSets, 'system.yaml'), 'system preset');
+
+      runRealMigration();
+
+      expect(fs.existsSync(path.join(userDir, 'permissions', 'presets', 'user.yaml'))).toBe(true);
+      expect(fs.existsSync(path.join(systemDir, 'permissions', 'presets', 'system.yaml'))).toBe(true);
+      expect(fs.existsSync(userSets)).toBe(false);
+      expect(fs.existsSync(sysSets)).toBe(false);
+    });
+
+    it('no-op when sets/ does not exist', () => {
+      runRealMigration();
+
+      expect(fs.existsSync(path.join(userDir, 'permissions', 'presets'))).toBe(false);
+      expect(fs.existsSync(path.join(systemDir, 'permissions', 'presets'))).toBe(false);
+    });
+  });
 });
