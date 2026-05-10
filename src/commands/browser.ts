@@ -7,6 +7,8 @@ import {
   type BrowserProfile,
 } from '../lib/browser/profiles.js';
 import { sendIPCRequest } from '../lib/browser/ipc.js';
+import { browserTaskPicker, type BrowserTask } from './browser-picker.js';
+import { isInteractiveTerminal } from './utils.js';
 
 export function registerBrowserCommand(program: Command): void {
   const browser = program
@@ -364,30 +366,83 @@ function registerTaskCommands(browser: Command): void {
         return;
       }
 
-      if (!response.profiles || response.profiles.length === 0) {
-        console.log('No browser profiles running');
+      // Build flat list of tasks with profile context
+      const allTasks: BrowserTask[] = [];
+      for (const profile of response.profiles || []) {
+        for (const task of profile.tasks) {
+          allTasks.push({ task, profile });
+        }
+      }
+
+      if (allTasks.length === 0) {
+        // Show recent history instead
+        const historyResponse = await sendIPCRequest({ action: 'history', limit: 5 });
+        if (historyResponse.ok && historyResponse.history && historyResponse.history.length > 0) {
+          console.log('No active tasks. Recent history:\n');
+          console.log('PROFILE'.padEnd(15) + 'TASK'.padEnd(18) + 'DOMAINS'.padEnd(22) + 'DURATION'.padEnd(10) + 'ENDED');
+          console.log('-'.repeat(75));
+          for (const h of historyResponse.history) {
+            const domains = h.domains?.slice(0, 2).join(', ') || '-';
+            const duration = formatDuration(h.endedAt - h.createdAt);
+            const ended = formatAge(h.endedAt);
+            console.log(
+              h.profile.padEnd(15) +
+                h.name.padEnd(18) +
+                domains.slice(0, 20).padEnd(22) +
+                duration.padEnd(10) +
+                ended
+            );
+          }
+          console.log('\nRun `browser history` for more.');
+        } else {
+          console.log('No browser tasks running');
+        }
         return;
       }
 
-      for (const profile of response.profiles) {
-        const portLabel =
-          profile.configuredPort && profile.configuredPort !== profile.port
-            ? `port ${profile.port} (configured ${profile.configuredPort})`
-            : `port ${profile.port}`;
-        console.log(`\n${profile.name} (${portLabel}, pid ${profile.pid})`);
-        if (profile.tasks.length === 0) {
-          console.log('  No active tasks');
-        } else {
-          console.log('  TASK'.padEnd(25) + 'TABS'.padEnd(8) + 'CREATED');
-          for (const task of profile.tasks) {
-            const age = formatAge(task.createdAt);
-            const name = (task as { name?: string }).name || task.id;
-            console.log(
-              '  ' +
-                name.padEnd(23) +
-                String(task.tabCount).padEnd(8) +
-                age
-            );
+      // Interactive picker for TTY, plain output otherwise
+      if (isInteractiveTerminal()) {
+        const picked = await browserTaskPicker({
+          message: 'Browser tasks:',
+          tasks: allTasks,
+        });
+        if (picked) {
+          // Show tab list for the selected task
+          const tabResponse = await sendIPCRequest({
+            action: 'tab-list',
+            task: picked.task.task.name,
+          });
+          if (tabResponse.ok && tabResponse.tabs) {
+            console.log(`\nTabs for ${picked.task.task.name}:`);
+            for (const tab of tabResponse.tabs) {
+              console.log(`  ${tab.id}  ${tab.url}`);
+            }
+          }
+        }
+      } else {
+        // Non-interactive: simple table output
+        for (const profile of response.profiles || []) {
+          const portLabel =
+            profile.configuredPort && profile.configuredPort !== profile.port
+              ? `port ${profile.port} (configured ${profile.configuredPort})`
+              : `port ${profile.port}`;
+          console.log(`\n${profile.name} (${portLabel}, pid ${profile.pid})`);
+          if (profile.tasks.length === 0) {
+            console.log('  No active tasks');
+          } else {
+            console.log('  TASK'.padEnd(20) + 'TABS'.padEnd(6) + 'DOMAINS'.padEnd(25) + 'CREATED');
+            for (const task of profile.tasks) {
+              const age = formatAge(task.createdAt);
+              const name = task.name || task.id;
+              const domains = task.domains?.slice(0, 2).join(', ') || '-';
+              console.log(
+                '  ' +
+                  name.padEnd(18) +
+                  String(task.tabCount).padEnd(6) +
+                  domains.slice(0, 23).padEnd(25) +
+                  age
+              );
+            }
           }
         }
       }
@@ -413,13 +468,14 @@ function registerTaskCommands(browser: Command): void {
         process.exit(1);
       }
 
-      const allTasks: Array<{ profile: string; id: string; tabs: number; created: number }> = [];
+      const allTasks: Array<{ profile: string; name: string; tabs: number; domains: string[]; created: number }> = [];
       for (const profile of response.profiles || []) {
         for (const task of profile.tasks) {
           allTasks.push({
             profile: profile.name,
-            id: task.id,
+            name: task.name || task.id,
             tabs: task.tabCount,
+            domains: task.domains || [],
             created: task.createdAt,
           });
         }
@@ -431,18 +487,86 @@ function registerTaskCommands(browser: Command): void {
       }
 
       if (allTasks.length === 0) {
-        console.log('No active tasks');
+        // Show recent history instead
+        const historyResponse = await sendIPCRequest({ action: 'history', limit: 5 });
+        if (historyResponse.ok && historyResponse.history && historyResponse.history.length > 0) {
+          console.log('No active tasks. Recent history:\n');
+          console.log('PROFILE'.padEnd(15) + 'TASK'.padEnd(18) + 'DOMAINS'.padEnd(22) + 'DURATION'.padEnd(10) + 'ENDED');
+          console.log('-'.repeat(75));
+          for (const h of historyResponse.history) {
+            const domains = h.domains?.slice(0, 2).join(', ') || '-';
+            const duration = formatDuration(h.endedAt - h.createdAt);
+            const ended = formatAge(h.endedAt);
+            console.log(
+              h.profile.padEnd(15) +
+                h.name.padEnd(18) +
+                domains.slice(0, 20).padEnd(22) +
+                duration.padEnd(10) +
+                ended
+            );
+          }
+        } else {
+          console.log('No active tasks');
+        }
         return;
       }
 
-      console.log('PROFILE'.padEnd(18) + 'TASK'.padEnd(15) + 'TABS'.padEnd(8) + 'CREATED');
-      console.log('-'.repeat(55));
+      console.log('PROFILE'.padEnd(15) + 'TASK'.padEnd(18) + 'TABS'.padEnd(6) + 'DOMAINS'.padEnd(22) + 'CREATED');
+      console.log('-'.repeat(70));
       for (const t of allTasks) {
+        const domains = t.domains.slice(0, 2).join(', ') || '-';
         console.log(
-          t.profile.padEnd(18) +
-            t.id.padEnd(15) +
-            String(t.tabs).padEnd(8) +
+          t.profile.padEnd(15) +
+            t.name.padEnd(18) +
+            String(t.tabs).padEnd(6) +
+            domains.slice(0, 20).padEnd(22) +
             formatAge(t.created)
+        );
+      }
+    });
+
+  browser
+    .command('history')
+    .description('Show recent browser task history')
+    .option('-l, --limit <n>', 'Number of entries (default 10)', '10')
+    .option('--json', 'Output machine-readable JSON')
+    .action(async (opts) => {
+      const response = await sendIPCRequest({
+        action: 'history',
+        limit: parseInt(opts.limit, 10),
+      });
+
+      if (!response.ok) {
+        if (opts.json) {
+          console.log(JSON.stringify({ ok: false, error: response.error }));
+        } else {
+          console.error(response.error);
+        }
+        process.exit(1);
+      }
+
+      if (opts.json) {
+        console.log(JSON.stringify(response.history ?? [], null, 2));
+        return;
+      }
+
+      if (!response.history || response.history.length === 0) {
+        console.log('No browser task history');
+        return;
+      }
+
+      console.log('PROFILE'.padEnd(15) + 'TASK'.padEnd(18) + 'DOMAINS'.padEnd(22) + 'DURATION'.padEnd(10) + 'ENDED');
+      console.log('-'.repeat(75));
+      for (const h of response.history) {
+        const domains = h.domains?.slice(0, 2).join(', ') || '-';
+        const duration = formatDuration(h.endedAt - h.createdAt);
+        const ended = formatAge(h.endedAt);
+        console.log(
+          h.profile.padEnd(15) +
+            h.name.padEnd(18) +
+            domains.slice(0, 20).padEnd(22) +
+            duration.padEnd(10) +
+            ended
         );
       }
     });
@@ -564,4 +688,14 @@ function formatAge(timestamp: number): string {
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
   return `${hours}h ago`;
+}
+
+function formatDuration(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const mm = minutes % 60;
+  return mm ? `${hours}h ${mm}m` : `${hours}h`;
 }

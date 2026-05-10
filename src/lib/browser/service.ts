@@ -21,6 +21,7 @@ import {
   type ProfileStatus,
   type TaskStatus,
   type BrowserProfile,
+  type HistoricalTask,
 } from './types.js';
 import { getRefs, resolveRefToCoords, type RefOpts, type RefNode } from './refs.js';
 import { clickAtCoords, hoverAtCoords, typeText, pressKey, focusNode } from './input.js';
@@ -139,6 +140,30 @@ export class BrowserService {
     for (const [profileName, conn] of this.connections) {
       const task = conn.tasks.get(taskName);
       if (task) {
+        // Get domains from tabs before closing (for history)
+        const domains = new Set<string>();
+        try {
+          const { targetInfos } = (await conn.cdp.send('Target.getTargets')) as {
+            targetInfos: Array<{ targetId: string; url: string }>;
+          };
+          for (const cdpId of Object.values(task.tabs)) {
+            const target = targetInfos.find((t) => t.targetId === cdpId);
+            if (target?.url) {
+              try {
+                const domain = new URL(target.url).hostname.replace(/^www\./, '');
+                if (domain && domain !== 'blank') domains.add(domain);
+              } catch {
+                // invalid URL
+              }
+            }
+          }
+        } catch {
+          // CDP not responding
+        }
+
+        // Save to history before closing
+        await this.saveToHistory(task, Array.from(domains));
+
         // Close task's tabs (not the window - it's shared)
         await Promise.all(
           Object.values(task.tabs).map((cdpId) =>
@@ -834,14 +859,48 @@ export class BrowserService {
     const conn = this.connections.get(profileName);
     if (!conn) return null;
 
+    // Fetch all targets once for efficiency
+    let targets: Array<{ targetId: string; url: string; title: string }> = [];
+    try {
+      const result = (await conn.cdp.send('Target.getTargets')) as {
+        targetInfos: Array<{ targetId: string; url: string; title: string }>;
+      };
+      targets = result.targetInfos;
+    } catch {
+      // CDP not responding, fall back to metadata only
+    }
+
     const tasks: TaskStatus[] = [];
     for (const [, task] of conn.tasks) {
+      const tabs: Array<{ id: string; url: string; title?: string; current?: boolean }> = [];
+      const domainSet = new Set<string>();
+
+      for (const [shortId, cdpId] of Object.entries(task.tabs)) {
+        const target = targets.find((t) => t.targetId === cdpId);
+        if (target) {
+          tabs.push({
+            id: shortId,
+            url: target.url,
+            title: target.title,
+            current: shortId === task.currentTabId,
+          });
+          try {
+            const domain = new URL(target.url).hostname.replace(/^www\./, '');
+            if (domain && domain !== 'blank') domainSet.add(domain);
+          } catch {
+            // invalid URL
+          }
+        }
+      }
+
       tasks.push({
         id: task.id,
         name: task.name,
         tabCount: Object.keys(task.tabs).length,
         currentTabId: task.currentTabId,
         createdAt: task.createdAt,
+        tabs: tabs.length > 0 ? tabs : undefined,
+        domains: domainSet.size > 0 ? Array.from(domainSet) : undefined,
       });
     }
 
@@ -946,5 +1005,46 @@ export class BrowserService {
     }
 
     return tasks;
+  }
+
+  private async saveToHistory(task: Task, domains: string[]): Promise<void> {
+    const historyDir = getBrowserRuntimeDir();
+    await fs.promises.mkdir(historyDir, { recursive: true });
+    const historyFile = path.join(historyDir, 'history.json');
+
+    let history: HistoricalTask[] = [];
+    if (fs.existsSync(historyFile)) {
+      try {
+        history = JSON.parse(fs.readFileSync(historyFile, 'utf-8'));
+      } catch {
+        // Corrupted file, start fresh
+      }
+    }
+
+    history.unshift({
+      id: task.id,
+      name: task.name,
+      profile: task.profile,
+      createdAt: task.createdAt,
+      endedAt: Date.now(),
+      domains,
+      tabCount: Object.keys(task.tabs).length,
+    });
+
+    // Keep only last 50 entries
+    history = history.slice(0, 50);
+    await fs.promises.writeFile(historyFile, JSON.stringify(history, null, 2));
+  }
+
+  async getHistory(limit = 10): Promise<HistoricalTask[]> {
+    const historyFile = path.join(getBrowserRuntimeDir(), 'history.json');
+    if (!fs.existsSync(historyFile)) return [];
+
+    try {
+      const history: HistoricalTask[] = JSON.parse(fs.readFileSync(historyFile, 'utf-8'));
+      return history.slice(0, limit);
+    } catch {
+      return [];
+    }
   }
 }

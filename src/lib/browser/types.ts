@@ -50,6 +50,19 @@ export interface TaskStatus {
   tabCount: number;
   currentTabId?: string;
   createdAt: number;
+  endedAt?: number;
+  domains?: string[];
+  tabs?: Array<{ id: string; url: string; title?: string; current?: boolean }>;
+}
+
+export interface HistoricalTask {
+  id: string;
+  name: string;
+  profile: string;
+  createdAt: number;
+  endedAt: number;
+  domains: string[];
+  tabCount: number;
 }
 
 export type IPCAction =
@@ -57,6 +70,7 @@ export type IPCAction =
   | 'done'
   | 'stop'
   | 'status'
+  | 'history'
   | 'navigate'
   | 'tab-add'
   | 'tab-focus'
@@ -94,6 +108,7 @@ export interface IPCResponse {
   windowTargetId?: string;
   tabs?: TabInfo[];
   profiles?: ProfileStatus[];
+  history?: HistoricalTask[];
   result?: unknown;
   path?: string;
   refs?: string;
