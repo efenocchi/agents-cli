@@ -66,7 +66,6 @@ const CACHE_DIR = path.join(USER_AGENTS_DIR, '.cache');
 // Top-level user dirs (config/definitions only — runtime moves into .history/.cache).
 const ROUTINES_DIR = path.join(USER_AGENTS_DIR, 'routines');
 const TEAMS_DIR = path.join(USER_AGENTS_DIR, 'teams');
-const BROWSER_PROFILES_DIR = path.join(USER_AGENTS_DIR, 'browser', 'profiles');
 
 // History bucket (durable).
 const SESSIONS_DIR = path.join(HISTORY_DIR, 'sessions');
@@ -347,9 +346,6 @@ export function getRuntimeStateDir(): string { return RUNTIME_STATE_DIR; }
 
 /** Path to swarmify-extension scratch (~/.agents/.cache/swarmify/). */
 export function getSwarmifyDir(): string { return SWARMIFY_DIR; }
-
-/** Path to browser profile YAMLs (~/.agents/browser/profiles/). */
-export function getBrowserProfilesDir(): string { return BROWSER_PROFILES_DIR; }
 
 /** Path to browser runtime data — chrome-data, pids (~/.agents/.cache/browser/). */
 export function getBrowserRuntimeDir(): string { return BROWSER_RUNTIME_DIR; }
