@@ -102,6 +102,26 @@ See `docs/`:
 - Don't add fallback logic for the legacy single-root model — the migrator handles it once at install.
 - `agents repo push`/`pull` operates on `~/.agents/` only; system updates ride `npm update -g agents-cli`.
 
+## Remote Test Execution (Crabbox)
+
+**NEVER run tests locally** — they freeze the machine. Always use Crabbox:
+
+```bash
+# Setup (once per session)
+eval "$(agents secrets export hetzner.com)" && export HCLOUD_TOKEN=$API_TOKEN
+
+# Check for existing box
+crabbox list
+
+# Warm up if needed (~60s)
+crabbox warmup --class beast
+
+# Run tests remotely
+crabbox run --id <slug> -- bun test
+```
+
+The box auto-stops after 30 minutes of idleness. Cost: ~$0.14/hour.
+
 ## Security
 
 **No sensitive data in any DotAgents repo.** All three repos (project, user, system) are designed to be safely version-controlled:
