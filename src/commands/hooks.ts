@@ -34,6 +34,7 @@ import {
   parseHookManifest,
   diffVersionHooks,
   iterHooksCapableVersions,
+  removeHookFromVersion,
 } from '../lib/hooks.js';
 import {
   listInstalledVersions,
@@ -51,6 +52,8 @@ import {
   parseCommaSeparatedList,
   printWithPager,
   requireInteractiveSelection,
+  promptRemovalTargets,
+  type RemovalTarget,
 } from './utils.js';
 
 /** Register the `agents hooks` command tree (list, add, remove, sync, prune, view). */
@@ -479,15 +482,31 @@ Examples:
   agents hooks remove
 `)
     .action(async (name?: string, options?: { agents?: string }) => {
+      // Build map of hook -> targets for all installed versions
+      type HookTargetInfo = { name: string; targets: Array<{ agent: AgentId; version: string }> };
+      const hookTargetMap = new Map<string, HookTargetInfo>();
+
+      for (const { agent, version } of iterHooksCapableVersions()) {
+        const home = getVersionHomePath(agent, version);
+        const hooks = listInstalledHooksWithScope(agent, process.cwd(), { home });
+        for (const hook of hooks) {
+          if (hook.scope !== 'user') continue;
+          const existing = hookTargetMap.get(hook.name);
+          if (existing) {
+            existing.targets.push({ agent, version });
+          } else {
+            hookTargetMap.set(hook.name, { name: hook.name, targets: [{ agent, version }] });
+          }
+        }
+      }
+
       let hooksToRemove: string[];
 
       if (name) {
         hooksToRemove = [name];
       } else {
-        // Interactive picker
-        const centralHooks = listCentralHooks();
-        if (centralHooks.length === 0) {
-          console.log(chalk.yellow('No hooks installed.'));
+        if (hookTargetMap.size === 0) {
+          console.log(chalk.yellow('No hooks installed in any version.'));
           return;
         }
 
@@ -498,12 +517,17 @@ Examples:
         }
 
         try {
+          const choices = Array.from(hookTargetMap.values()).map((hook) => {
+            const agents = [...new Set(hook.targets.map((t) => AGENTS[t.agent].name))];
+            return {
+              value: hook.name,
+              name: `${hook.name} (${agents.join(', ')})`,
+            };
+          });
+
           const selected = await checkbox({
             message: 'Select hooks to remove',
-            choices: centralHooks.map((hook) => ({
-              value: hook.name,
-              name: hook.name,
-            })),
+            choices,
           });
 
           if (selected.length === 0) {
@@ -521,28 +545,57 @@ Examples:
         }
       }
 
-      const agents = options?.agents
-        ? (options.agents.split(',') as AgentId[])
-        : (Array.from(HOOKS_CAPABLE_AGENTS) as AgentId[]);
-
+      let removed = 0;
       for (const hookName of hooksToRemove) {
-        const result = await removeHook(hookName, agents);
-        let removed = 0;
-        for (const item of result.removed) {
-          const [, agentId] = item.split(':') as [string, AgentId];
-          console.log(`  ${chalk.red('-')} ${agentLabel(agentId)}: ${hookName}`);
-          removed++;
+        const hookInfo = hookTargetMap.get(hookName);
+        if (!hookInfo || hookInfo.targets.length === 0) {
+          console.log(chalk.yellow(`  Hook '${hookName}' not found in any version.`));
+          continue;
         }
 
-        if (result.errors.length > 0) {
-          for (const error of result.errors) {
-            console.log(chalk.red(`  ${error}`));
+        // Filter by --agents if specified
+        let availableTargets = hookInfo.targets;
+        if (options?.agents) {
+          const requestedAgents = new Set(options.agents.split(','));
+          availableTargets = availableTargets.filter((t) => requestedAgents.has(t.agent));
+        }
+
+        if (availableTargets.length === 0) {
+          console.log(chalk.yellow(`  Hook '${hookName}' not found in specified agents.`));
+          continue;
+        }
+
+        const removalTargets: RemovalTarget[] = availableTargets.map((t) => ({
+          agent: t.agent,
+          version: t.version,
+          label: `${agentLabel(t.agent)}@${t.version}`,
+        }));
+
+        const selectedTargets = await promptRemovalTargets(hookName, removalTargets, {
+          skipPrompt: !!options?.agents,
+        });
+
+        if (selectedTargets.length === 0) {
+          console.log(chalk.gray(`  Skipped '${hookName}'.`));
+          continue;
+        }
+
+        for (const target of selectedTargets) {
+          const result = removeHookFromVersion(target.agent as AgentId, target.version, hookName);
+          if (result.success) {
+            console.log(`  ${chalk.red('-')} ${target.label}: ${hookName}`);
+            removed++;
+          } else if (result.error) {
+            console.log(`  ${chalk.yellow('!')} ${target.label}: ${result.error}`);
           }
         }
+      }
 
-        if (removed === 0) {
-          console.log(chalk.yellow(`Hook '${hookName}' not found for any agent`));
-        }
+      if (removed === 0) {
+        console.log(chalk.yellow('No hooks removed.'));
+      } else {
+        console.log(chalk.green(`\nRemoved ${removed} hook(s) from version homes.`));
+        console.log(chalk.gray('Central source unchanged. Hooks will re-sync on next agent launch.'));
       }
     });
 
