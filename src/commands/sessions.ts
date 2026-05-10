@@ -231,6 +231,23 @@ function formatStartedAt(startedAtMs?: number): string {
   return formatRelativeTime(new Date(startedAtMs).toISOString());
 }
 
+/** Build a display-friendly description for an active session (label or topic). */
+function buildSessionDescription(s: ActiveSession): string {
+  if (s.context === 'cloud') {
+    return `${s.cloudProvider ?? ''}${s.cloudTaskId ? ` · ${s.cloudTaskId.slice(0, 12)}` : ''}`;
+  }
+  if (s.context === 'teams') {
+    const parts = [s.teamName];
+    if (s.label) parts.push(s.label);
+    else if (s.topic) parts.push(s.topic);
+    return parts.filter(Boolean).join(' · ');
+  }
+  // Terminal or headless: prefer label, then topic
+  if (s.label) return s.label;
+  if (s.topic) return s.topic;
+  return '';
+}
+
 /** Render the unified active-session view. */
 async function renderActiveSessions(asJson: boolean): Promise<void> {
   const sessions = await getActiveSessions();
@@ -245,29 +262,54 @@ async function renderActiveSessions(asJson: boolean): Promise<void> {
     return;
   }
 
+  // Group sessions by workspace (cwd), with cloud/undefined grouped separately
+  const byWorkspace = new Map<string, ActiveSession[]>();
   for (const s of sessions) {
-    const kindCol = colorAgent(s.kind as any)(padRight(truncate(s.kind, 8), 9));
-    const ctxCol = contextColor(s.context)(padRight(truncate(s.context, 8), 9));
-    const hostCol = chalk.gray(padRight(truncate(s.host ?? '-', 8), 9));
-    const statusCol = statusColor(s.status)(padRight(truncate(s.status, 8), 9));
-    const pidCol = chalk.yellow(padRight(s.pid ? String(s.pid) : '-', 7));
-    const idCol = chalk.white(padRight(s.sessionId ? s.sessionId.slice(0, 8) : '-', 10));
-    const detail = s.context === 'cloud'
-      ? `${s.cloudProvider ?? ''}${s.cloudTaskId ? ` · ${s.cloudTaskId.slice(0, 12)}` : ''}`
-      : s.context === 'teams'
-        ? `${s.teamName ?? ''}${s.label ? ` · ${s.label}` : ''}`
-        : s.label ?? shortCwd(s.cwd);
+    const key = s.cwd ?? (s.context === 'cloud' ? '__cloud__' : '__unknown__');
+    const list = byWorkspace.get(key) || [];
+    list.push(s);
+    byWorkspace.set(key, list);
+  }
 
-    console.log(
-      pidCol +
-      kindCol +
-      ctxCol +
-      hostCol +
-      statusCol +
-      idCol +
-      chalk.cyan(padRight(truncate(detail || '-', 30), 32)) +
-      chalk.gray(formatStartedAt(s.startedAtMs))
-    );
+  // Sort workspaces: most sessions first, then alphabetically
+  const sortedKeys = Array.from(byWorkspace.keys()).sort((a, b) => {
+    const aCount = byWorkspace.get(a)!.length;
+    const bCount = byWorkspace.get(b)!.length;
+    if (aCount !== bCount) return bCount - aCount;
+    return a.localeCompare(b);
+  });
+
+  let first = true;
+  for (const key of sortedKeys) {
+    const group = byWorkspace.get(key)!;
+    if (!first) console.log();
+    first = false;
+
+    // Print workspace header
+    const header = key === '__cloud__'
+      ? chalk.magenta.bold('cloud')
+      : key === '__unknown__'
+        ? chalk.gray.bold('unknown')
+        : chalk.cyan.bold(shortCwd(key));
+    console.log(`${header} ${chalk.gray(`(${group.length})`)}`);
+
+    // Print each session in this workspace
+    for (const s of group) {
+      const kindCol = colorAgent(s.kind as any)(padRight(truncate(s.kind, 8), 9));
+      const hostCol = chalk.gray(padRight(truncate(s.host ?? '-', 8), 9));
+      const statusCol = statusColor(s.status)(padRight(truncate(s.status, 7), 8));
+      const pidCol = chalk.yellow(padRight(s.pid ? String(s.pid) : '-', 7));
+      const desc = buildSessionDescription(s);
+
+      console.log(
+        '  ' +
+        pidCol +
+        kindCol +
+        hostCol +
+        statusCol +
+        chalk.white(truncate(desc || '-', 50))
+      );
+    }
   }
 
   const runningCount = sessions.filter(s => s.status === 'running').length;
