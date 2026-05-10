@@ -24,7 +24,7 @@ function runRealMigration(): void {
   const modulePath = path.resolve(process.cwd(), 'src/lib/migrate.ts');
   execFileSync(
     'bun',
-    ['-e', `import { runMigration } from ${JSON.stringify(modulePath)}; runMigration();`],
+    ['-e', `import { runMigration } from ${JSON.stringify(modulePath)}; await runMigration();`],
     {
       cwd: process.cwd(),
       env: { ...process.env, HOME: testHome },
@@ -294,6 +294,139 @@ describe('runMigration', () => {
 
       const meta = fs.readFileSync(path.join(userDir, 'agents.yaml'), 'utf-8');
       expect(meta).toContain('claude: 2.1.0');
+    });
+  });
+
+  describe('system-repo sweep', () => {
+    it('moves system sessions/ filesystem entries into ~/.agents/.history/sessions/', () => {
+      const sysSessions = path.join(systemDir, 'sessions');
+      fs.mkdirSync(path.join(sysSessions, 'claude'), { recursive: true });
+      fs.writeFileSync(path.join(sysSessions, 'claude', 's1.jsonl'), 'evt1\n');
+      fs.writeFileSync(path.join(sysSessions, 'index.jsonl'), 'ix1\n');
+      fs.writeFileSync(path.join(sysSessions, 'content_index.jsonl'), 'cix1\n');
+      fs.writeFileSync(path.join(sysSessions, 'error-handling-anecdote.txt'), 'anecdote');
+
+      runRealMigration();
+
+      const dest = path.join(userDir, '.history', 'sessions');
+      expect(fs.readFileSync(path.join(dest, 'claude', 's1.jsonl'), 'utf-8')).toBe('evt1\n');
+      expect(fs.readFileSync(path.join(dest, 'index.jsonl'), 'utf-8')).toBe('ix1\n');
+      expect(fs.readFileSync(path.join(dest, 'content_index.jsonl'), 'utf-8')).toBe('cix1\n');
+      expect(fs.readFileSync(path.join(dest, 'error-handling-anecdote.txt'), 'utf-8')).toBe('anecdote');
+      expect(fs.existsSync(sysSessions)).toBe(false);
+    });
+
+    it('moves system teams/ live state to ~/.agents/teams/ and per-run dirs to .history/teams/', () => {
+      const sysTeams = path.join(systemDir, 'teams');
+      fs.mkdirSync(sysTeams, { recursive: true });
+      fs.writeFileSync(path.join(sysTeams, 'config.json'), '{"v":1}');
+      fs.writeFileSync(path.join(sysTeams, 'registry.json'), '{"teams":[]}');
+      fs.mkdirSync(path.join(sysTeams, 'agents', 'abc123'), { recursive: true });
+      fs.writeFileSync(path.join(sysTeams, 'agents', 'abc123', 'meta.json'), '{"id":"abc123"}');
+      fs.mkdirSync(path.join(sysTeams, 'ralph-smoke-1'), { recursive: true });
+      fs.writeFileSync(path.join(sysTeams, 'ralph-smoke-1', 'log.txt'), 'ralph log');
+
+      runRealMigration();
+
+      expect(fs.readFileSync(path.join(userDir, 'teams', 'config.json'), 'utf-8')).toBe('{"v":1}');
+      expect(fs.readFileSync(path.join(userDir, 'teams', 'registry.json'), 'utf-8')).toBe('{"teams":[]}');
+      expect(fs.readFileSync(path.join(userDir, '.history', 'teams', 'agents', 'abc123', 'meta.json'), 'utf-8'))
+        .toBe('{"id":"abc123"}');
+      expect(fs.readFileSync(path.join(userDir, '.history', 'teams', 'ralph-smoke-1', 'log.txt'), 'utf-8'))
+        .toBe('ralph log');
+      expect(fs.existsSync(sysTeams)).toBe(false);
+    });
+
+    it('moves system trash/ into ~/.agents/.history/trash/', () => {
+      const sysTrash = path.join(systemDir, 'trash', 'versions', 'claude', '1.0');
+      fs.mkdirSync(sysTrash, { recursive: true });
+      fs.writeFileSync(path.join(sysTrash, 'note.txt'), 'discarded');
+
+      runRealMigration();
+
+      expect(fs.readFileSync(path.join(userDir, '.history', 'trash', 'versions', 'claude', '1.0', 'note.txt'), 'utf-8'))
+        .toBe('discarded');
+      expect(fs.existsSync(path.join(systemDir, 'trash'))).toBe(false);
+    });
+
+    it('moves system repos/<alias>/ to ~/.agents-<alias>/ peer dirs', () => {
+      const sysRepo = path.join(systemDir, 'repos', 'default');
+      fs.mkdirSync(sysRepo, { recursive: true });
+      fs.writeFileSync(path.join(sysRepo, 'AGENTS.md'), '# default repo');
+
+      runRealMigration();
+
+      expect(fs.readFileSync(path.join(testHome, '.agents-default', 'AGENTS.md'), 'utf-8')).toBe('# default repo');
+      expect(fs.existsSync(path.join(systemDir, 'repos'))).toBe(false);
+    });
+
+    it('drops legacy swarm/ bookkeeping JSONs and folds swarm/agents/ into .history/teams/agents/', () => {
+      const sysSwarm = path.join(systemDir, 'swarm');
+      fs.mkdirSync(path.join(sysSwarm, 'agents', 'sw1'), { recursive: true });
+      fs.writeFileSync(path.join(sysSwarm, 'agents', 'sw1', 'state.json'), '{"id":"sw1"}');
+      fs.writeFileSync(path.join(sysSwarm, 'cache.json'), '{}');
+      fs.writeFileSync(path.join(sysSwarm, 'config.json'), '{}');
+      fs.writeFileSync(path.join(sysSwarm, 'teams.json'), '{}');
+
+      runRealMigration();
+
+      expect(fs.readFileSync(path.join(userDir, '.history', 'teams', 'agents', 'sw1', 'state.json'), 'utf-8'))
+        .toBe('{"id":"sw1"}');
+      expect(fs.existsSync(sysSwarm)).toBe(false);
+    });
+
+    it('drops dead bin/agents-keychain-* and empty shims/', () => {
+      const binDir = path.join(systemDir, 'bin');
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.writeFileSync(path.join(binDir, 'agents-keychain-abc123'), '#!/bin/sh\n');
+      fs.mkdirSync(path.join(systemDir, 'shims'), { recursive: true });
+
+      runRealMigration();
+
+      expect(fs.existsSync(binDir)).toBe(false);
+      expect(fs.existsSync(path.join(systemDir, 'shims'))).toBe(false);
+    });
+
+    it('moves system cache/ contents into ~/.agents/.cache/ and drops claude-usage.json', () => {
+      const sysCache = path.join(systemDir, 'cache');
+      fs.mkdirSync(sysCache, { recursive: true });
+      fs.writeFileSync(path.join(sysCache, 'claude-usage.json'), '{"usage":1}');
+      fs.mkdirSync(path.join(sysCache, 'cloud-runs', 'r1'), { recursive: true });
+      fs.writeFileSync(path.join(sysCache, 'cloud-runs', 'r1', 'out.txt'), 'run-1');
+
+      runRealMigration();
+
+      expect(fs.existsSync(path.join(sysCache))).toBe(false);
+      expect(fs.readFileSync(path.join(userDir, '.cache', 'cloud-runs', 'r1', 'out.txt'), 'utf-8')).toBe('run-1');
+    });
+
+    it('moves system cloud/tasks.db wholesale when user-side dest is missing', () => {
+      const sysCloud = path.join(systemDir, 'cloud');
+      fs.mkdirSync(sysCloud, { recursive: true });
+      // Non-zero contents simulate a real DB. mergeSqliteDb falls back to rename when dest is missing.
+      fs.writeFileSync(path.join(sysCloud, 'tasks.db'), 'fake-sqlite-bytes');
+
+      runRealMigration();
+
+      expect(fs.existsSync(path.join(sysCloud, 'tasks.db'))).toBe(false);
+      expect(fs.readFileSync(path.join(userDir, '.cache', 'cloud', 'tasks.db'), 'utf-8')).toBe('fake-sqlite-bytes');
+    });
+
+    it('warns about unexpected leftover dirs in system repo', () => {
+      // Create an unrecognized subdirectory that the orphan detector should call out.
+      fs.mkdirSync(path.join(systemDir, 'mystery-leftover'), { recursive: true });
+      fs.writeFileSync(path.join(systemDir, 'mystery-leftover', 'data.txt'), 'unknown');
+
+      const modulePath = path.resolve(process.cwd(), 'src/lib/migrate.ts');
+      // Migration diagnostics go to stderr; capture it via spawnSync.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { spawnSync } = require('child_process') as typeof import('child_process');
+      const proc = spawnSync(
+        'bun',
+        ['-e', `import { runMigration } from ${JSON.stringify(modulePath)}; await runMigration();`],
+        { cwd: process.cwd(), env: { ...process.env, HOME: testHome } },
+      );
+      expect(proc.stderr.toString('utf-8')).toContain('mystery-leftover');
     });
   });
 });
