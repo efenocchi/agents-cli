@@ -28,6 +28,37 @@ command -v crabbox >/dev/null || die "crabbox not installed"
 eval "$(agents secrets export hetzner.com 2>/dev/null)" || die "Failed to load hetzner.com secrets"
 export HCLOUD_TOKEN
 
+# Generate GitHub App token for private repo access
+generate_github_token() {
+  # Load GitHub App credentials (APP_PRIVATE_KEY is the actual key content)
+  eval "$(agents secrets export github.com 2>/dev/null)" || return 1
+
+  [[ -n "${APP_ID:-}" && -n "${APP_PRIVATE_KEY:-}" && -n "${APP_INSTALLATION_ID:-}" ]] || return 1
+
+  # Generate JWT (valid 10 min) - key content passed via env var
+  local jwt token
+  jwt=$(APP_PRIVATE_KEY="$APP_PRIVATE_KEY" python3 -c "
+import jwt, time, os
+key = os.environ['APP_PRIVATE_KEY']
+print(jwt.encode({'iat': int(time.time())-60, 'exp': int(time.time())+600, 'iss': '$APP_ID'}, key, 'RS256'))
+" 2>/dev/null) || return 1
+
+  # Exchange JWT for installation token (valid 1 hour)
+  token=$(curl -s -X POST \
+    -H "Authorization: Bearer $jwt" \
+    -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/app/installations/$APP_INSTALLATION_ID/access_tokens" | \
+    python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
+
+  [[ -n "$token" ]] && echo "$token"
+}
+
+GITHUB_TOKEN=$(generate_github_token || true)
+
+# Load Claude token for running agents on sandbox
+eval "$(agents secrets export anthropic.com 2>/dev/null)" || true
+CLAUDE_CODE_OAUTH_TOKEN="${CLAUDE_CODE_OAUTH_TOKEN:-}"
+
 # Find or create a crabbox
 get_or_create_box() {
   local box_id
@@ -65,10 +96,26 @@ fi
 git config --global user.email 2>/dev/null || git config --global user.email "ci@crabbox.local"
 git config --global user.name 2>/dev/null || git config --global user.name "Crabbox CI"
 
-# agents-cli (optional, for running agents in sandbox)
+# GitHub token for private repos (passed from local via env)
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+  git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
+  git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+  echo "GitHub App token configured for private repos"
+fi
+
+# agents-cli + coding agents (for running agents in sandbox)
 if ! command -v agents &>/dev/null; then
   echo "Installing agents-cli..."
   npm install -g @phnx-labs/agents-cli 2>/dev/null || true
+fi
+if ! command -v claude &>/dev/null && command -v agents &>/dev/null; then
+  echo "Installing Claude Code via agents-cli..."
+  agents add claude 2>/dev/null || true
+fi
+
+# Claude Code auth (passed from local via env)
+if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+  echo "Claude Code OAuth token configured"
 fi
 
 echo "Bootstrap complete."
@@ -94,7 +141,10 @@ main() {
   workspace_dir="workspaces/${REPO_NAME}-${TASK_ID}"
 
   # Sync local repo to remote, then copy to isolated workspace
+  # Pass tokens to remote for private repo and Claude access
   crabbox run --id "$box_id" -- bash -c "
+export GITHUB_TOKEN='${GITHUB_TOKEN:-}'
+export CLAUDE_CODE_OAUTH_TOKEN='${CLAUDE_CODE_OAUTH_TOKEN:-}'
 $(bootstrap_remote)
 
 REPO_DIR=\"\$(pwd)\"
