@@ -13,7 +13,7 @@ import * as os from 'os';
 import * as yaml from 'yaml';
 import type { AgentId, SkillMetadata, InstalledSkill } from './types.js';
 import { AGENTS, SKILLS_CAPABLE_AGENTS, ensureSkillsDir } from './agents.js';
-import { getAgentsDir, getUserSkillsDir, getSkillsDir as getSystemSkillsDir, getProjectAgentsDir, getEnabledExtraRepos } from './state.js';
+import { getAgentsDir, getUserSkillsDir, getSkillsDir as getSystemSkillsDir, getProjectAgentsDir, getEnabledExtraRepos, getTrashSkillsDir } from './state.js';
 import { getEffectiveHome, getVersionHomePath, listInstalledVersions } from './versions.js';
 import { emit } from './events.js';
 
@@ -659,7 +659,11 @@ export function removeSkillFromVersion(
     return { success: true };
   }
   try {
-    fs.rmSync(target, { recursive: true, force: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const trashDir = path.join(getTrashSkillsDir(), agent, version, skillName);
+    const trashDest = path.join(trashDir, stamp);
+    fs.mkdirSync(trashDir, { recursive: true, mode: 0o700 });
+    fs.renameSync(target, trashDest);
   } catch (err) {
     return { success: false, error: (err as Error).message };
   }

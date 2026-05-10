@@ -15,7 +15,7 @@ import * as TOML from 'smol-toml';
 import { AGENTS, ALL_AGENT_IDS, HOOKS_CAPABLE_AGENTS } from './agents.js';
 import { supports, explainSkip } from './capabilities.js';
 import { setGeminiAutoUpdateDisabled, updateGeminiSettings } from './gemini-settings.js';
-import { getAgentsDir, getHooksDir as getSystemHooksDir, getUserHooksDir, getUserAgentsDir, getSystemAgentsDir, getProjectAgentsDir } from './state.js';
+import { getAgentsDir, getHooksDir as getSystemHooksDir, getUserHooksDir, getUserAgentsDir, getSystemAgentsDir, getProjectAgentsDir, getTrashHooksDir } from './state.js';
 
 function getCentralHooksDir(): string { return getUserHooksDir(); }
 
@@ -478,6 +478,7 @@ export function installHookToVersion(
 
 /**
  * Remove a single hook (script + data file) from a specific version home.
+ * Soft-deletes to ~/.agents/.trash/hooks/.
  */
 export function removeHookFromVersion(
   agent: AgentId,
@@ -485,7 +486,29 @@ export function removeHookFromVersion(
   hookName: string
 ): { success: boolean; error?: string } {
   try {
-    removeHookFiles(getVersionHooksDir(agent, version), hookName);
+    const hooksDir = getVersionHooksDir(agent, version);
+    if (!fs.existsSync(hooksDir)) return { success: true };
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const trashDir = path.join(getTrashHooksDir(), agent, version, hookName, stamp);
+    let moved = false;
+
+    const files = fs.readdirSync(hooksDir);
+    for (const file of files) {
+      const ext = path.extname(file);
+      const base = path.basename(file, ext);
+      if (base === hookName) {
+        const fullPath = path.join(hooksDir, file);
+        const stat = fs.statSync(fullPath);
+        if (stat.isFile()) {
+          if (!moved) {
+            fs.mkdirSync(trashDir, { recursive: true, mode: 0o700 });
+            moved = true;
+          }
+          fs.renameSync(fullPath, path.join(trashDir, file));
+        }
+      }
+    }
   } catch (err) {
     return { success: false, error: (err as Error).message };
   }
