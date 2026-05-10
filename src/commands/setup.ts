@@ -65,7 +65,7 @@ async function importAgent(agentId: AgentId, version: string): Promise<{ success
 }
 
 /** First-run setup. Clones ~/.agents-system/ from the system repo if needed. */
-export async function runSetup(program: Command, options: { force?: boolean } = {}): Promise<void> {
+export async function runSetup(program: Command, options: { force?: boolean; suppressFooter?: boolean } = {}): Promise<void> {
   const agentsDir = getAgentsDir();
   const alreadyConfigured = isGitRepo(agentsDir);
 
@@ -179,6 +179,8 @@ export async function runSetup(program: Command, options: { force?: boolean } = 
     }
   }
 
+  if (options.suppressFooter) return;
+
   console.log(chalk.bold('\nSetup complete. Try:'));
   console.log(chalk.cyan('  agents view                 ') + chalk.gray(' # see what\'s installed'));
   console.log(chalk.cyan('  agents run <agent> "hello"  ') + chalk.gray(' # run an agent'));
@@ -212,7 +214,7 @@ export async function ensureInitialized(program: Command): Promise<void> {
     process.exit(0);
   }
 
-  await runSetup(program);
+  await runSetup(program, { suppressFooter: true });
 }
 
 /** Register the `agents setup` command. */
