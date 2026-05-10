@@ -32,11 +32,12 @@ export async function connectLocal(
       throw err;
     }
     const newPort = allocatePort();
+    const chromeOpts = { ...profile.chrome, viewport: profile.viewport };
     const { pid, wsUrl } = await launchBrowser(
       profile.name,
       profile.browser,
       newPort,
-      profile.chrome,
+      chromeOpts,
       profile.secrets,
       profile.binary
     );
