@@ -674,6 +674,285 @@ function registerTaskCommands(browser: Command): void {
 
       console.log('Hovered');
     });
+
+  // ─── Viewport & Device ───────────────────────────────────────────────────────
+
+  const setCmd = browser.command('set').description('Set browser emulation options');
+
+  setCmd
+    .command('viewport <task> <width> <height>')
+    .description('Set viewport size')
+    .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
+    .option('-m, --mobile', 'Enable mobile emulation')
+    .option('-s, --scale <factor>', 'Device scale factor', parseFloat)
+    .action(async (task: string, width: string, height: string, opts) => {
+      const response = await sendIPCRequest({
+        action: 'set-viewport',
+        task,
+        tabId: opts.tab,
+        width: parseInt(width, 10),
+        height: parseInt(height, 10),
+        mobile: opts.mobile,
+        deviceScaleFactor: opts.scale,
+      });
+
+      if (!response.ok) {
+        console.error(response.error);
+        process.exit(1);
+      }
+
+      console.log(`Viewport set to ${width}x${height}${opts.mobile ? ' (mobile)' : ''}`);
+    });
+
+  setCmd
+    .command('device <task> <device-name>')
+    .description('Emulate a device (iPhone 14, iPad, MacBook Pro)')
+    .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
+    .action(async (task: string, deviceName: string, opts) => {
+      const response = await sendIPCRequest({
+        action: 'set-device',
+        task,
+        tabId: opts.tab,
+        deviceName,
+      });
+
+      if (!response.ok) {
+        console.error(response.error);
+        process.exit(1);
+      }
+
+      console.log(`Device set to ${deviceName}`);
+    });
+
+  browser
+    .command('devices')
+    .description('List available device presets')
+    .action(async () => {
+      const { DEVICES } = await import('../lib/browser/devices.js');
+      console.log('Available devices:');
+      for (const [name, desc] of Object.entries(DEVICES)) {
+        console.log(`  ${name.padEnd(16)} ${desc.width}x${desc.height} @${desc.deviceScaleFactor}x${desc.mobile ? ' (mobile)' : ''}`);
+      }
+    });
+
+  // ─── Console & Errors ────────────────────────────────────────────────────────
+
+  browser
+    .command('console <task>')
+    .description('Read console logs from a tab')
+    .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
+    .option('-l, --level <level>', 'Filter by level (log, info, warn, error)')
+    .option('--clear', 'Clear logs after reading')
+    .action(async (task: string, opts) => {
+      const response = await sendIPCRequest({
+        action: 'console',
+        task,
+        tabId: opts.tab,
+        level: opts.level,
+        clear: opts.clear,
+      });
+
+      if (!response.ok) {
+        console.error(response.error);
+        process.exit(1);
+      }
+
+      if (!response.logs || response.logs.length === 0) {
+        console.log('No console logs');
+        return;
+      }
+
+      for (const log of response.logs) {
+        const prefix = `[${log.level.toUpperCase()}]`.padEnd(8);
+        const loc = log.url ? ` (${log.url}${log.line ? `:${log.line}` : ''})` : '';
+        console.log(`${prefix} ${log.text}${loc}`);
+      }
+    });
+
+  browser
+    .command('errors <task>')
+    .description('Read page errors from a tab')
+    .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
+    .option('--clear', 'Clear errors after reading')
+    .action(async (task: string, opts) => {
+      const response = await sendIPCRequest({
+        action: 'errors',
+        task,
+        tabId: opts.tab,
+        clear: opts.clear,
+      });
+
+      if (!response.ok) {
+        console.error(response.error);
+        process.exit(1);
+      }
+
+      if (!response.errors || response.errors.length === 0) {
+        console.log('No errors');
+        return;
+      }
+
+      for (const err of response.errors) {
+        console.log(`[ERROR] ${err.message}`);
+        if (err.stack) console.log(err.stack);
+        if (err.url) console.log(`  at ${err.url}${err.line ? `:${err.line}` : ''}`);
+        console.log();
+      }
+    });
+
+  // ─── Network ─────────────────────────────────────────────────────────────────
+
+  browser
+    .command('requests <task>')
+    .description('Read captured network requests')
+    .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
+    .option('-f, --filter <text>', 'Filter URLs containing text')
+    .option('--clear', 'Clear requests after reading')
+    .action(async (task: string, opts) => {
+      const response = await sendIPCRequest({
+        action: 'requests',
+        task,
+        tabId: opts.tab,
+        filter: opts.filter,
+        clear: opts.clear,
+      });
+
+      if (!response.ok) {
+        console.error(response.error);
+        process.exit(1);
+      }
+
+      if (!response.requests || response.requests.length === 0) {
+        console.log('No requests captured');
+        return;
+      }
+
+      console.log('METHOD'.padEnd(8) + 'STATUS'.padEnd(8) + 'URL');
+      console.log('-'.repeat(72));
+      for (const req of response.requests) {
+        const status = req.status ? String(req.status) : '...';
+        console.log(`${req.method.padEnd(8)}${status.padEnd(8)}${req.url.slice(0, 100)}`);
+      }
+    });
+
+  browser
+    .command('responsebody <task> <url-pattern>')
+    .description('Wait for and read a response body by URL pattern')
+    .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
+    .option('--timeout <ms>', 'Timeout in milliseconds', parseInt)
+    .option('--max-chars <n>', 'Max characters to return', parseInt)
+    .action(async (task: string, urlPattern: string, opts) => {
+      const response = await sendIPCRequest({
+        action: 'response-body',
+        task,
+        tabId: opts.tab,
+        urlPattern,
+        timeout: opts.timeout,
+        maxChars: opts.maxChars,
+      });
+
+      if (!response.ok) {
+        console.error(response.error);
+        process.exit(1);
+      }
+
+      console.log(response.body);
+    });
+
+  // ─── Wait ────────────────────────────────────────────────────────────────────
+
+  browser
+    .command('wait <task>')
+    .description('Wait for a condition')
+    .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
+    .option('--time <ms>', 'Wait for milliseconds')
+    .option('--selector <css>', 'Wait for CSS selector to appear')
+    .option('--url <pattern>', 'Wait for URL to match pattern')
+    .option('--fn <js>', 'Wait for JS expression to return truthy')
+    .option('--state <state>', 'Wait for load state (domcontentloaded, load, networkidle)')
+    .option('--timeout <ms>', 'Timeout in milliseconds', parseInt)
+    .action(async (task: string, opts) => {
+      let waitType: 'time' | 'selector' | 'url' | 'function' | 'load';
+      let waitValue: string | number;
+
+      if (opts.time) {
+        waitType = 'time';
+        waitValue = parseInt(opts.time, 10);
+      } else if (opts.selector) {
+        waitType = 'selector';
+        waitValue = opts.selector;
+      } else if (opts.url) {
+        waitType = 'url';
+        waitValue = opts.url;
+      } else if (opts.fn) {
+        waitType = 'function';
+        waitValue = opts.fn;
+      } else if (opts.state) {
+        waitType = 'load';
+        waitValue = opts.state;
+      } else {
+        console.error('One of --time, --selector, --url, --fn, or --state required');
+        process.exit(1);
+      }
+
+      const response = await sendIPCRequest({
+        action: 'wait',
+        task,
+        tabId: opts.tab,
+        waitType,
+        waitValue,
+        timeout: opts.timeout,
+      });
+
+      if (!response.ok) {
+        console.error(response.error);
+        process.exit(1);
+      }
+
+      console.log('Wait condition met');
+    });
+
+  // ─── Downloads ───────────────────────────────────────────────────────────────
+
+  browser
+    .command('download <task>')
+    .description('Set download directory for a task')
+    .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
+    .requiredOption('-p, --path <dir>', 'Download directory path')
+    .action(async (task: string, opts) => {
+      const response = await sendIPCRequest({
+        action: 'set-download-path',
+        task,
+        tabId: opts.tab,
+        downloadPath: opts.path,
+      });
+
+      if (!response.ok) {
+        console.error(response.error);
+        process.exit(1);
+      }
+
+      console.log(`Download path set to ${opts.path}`);
+    });
+
+  browser
+    .command('waitdownload <task>')
+    .description('Wait for a download to complete')
+    .option('--timeout <ms>', 'Timeout in milliseconds', parseInt)
+    .action(async (task: string, opts) => {
+      const response = await sendIPCRequest({
+        action: 'wait-download',
+        task,
+        timeout: opts.timeout,
+      });
+
+      if (!response.ok) {
+        console.error(response.error);
+        process.exit(1);
+      }
+
+      console.log(`Downloaded: ${response.downloadPath}`);
+    });
 }
 
 function collect(val: string, memo: string[]): string[] {

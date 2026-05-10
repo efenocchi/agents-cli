@@ -15,6 +15,7 @@ export interface BrowserProfile {
 export interface ChromeOptions {
   headless?: boolean;
   args?: string[];
+  viewport?: { width: number; height: number };
 }
 
 export interface Task {
