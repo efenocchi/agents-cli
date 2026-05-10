@@ -188,6 +188,21 @@ function migrateBackupsToHidden(): void {
   } catch { /* best-effort */ }
 }
 
+/**
+ * Move ~/.agents-system/aliases.json -> ~/.agents/aliases.json.
+ * Aliases are per-user state and were previously written to the system root
+ * by mistake. Idempotent: skips if dest already exists or src absent.
+ */
+function migrateAliasesToUser(): void {
+  const src = path.join(SYSTEM_DIR, 'aliases.json');
+  const dest = path.join(USER_DIR, 'aliases.json');
+  if (fs.existsSync(dest) || !fs.existsSync(src)) return;
+  try {
+    fs.mkdirSync(USER_DIR, { recursive: true, mode: 0o700 });
+    fs.renameSync(src, dest);
+  } catch { /* best-effort */ }
+}
+
 /** Run all idempotent migrations. Safe to call multiple times. */
 export function runMigration(): void {
   migrateAgentsYaml();
@@ -198,4 +213,5 @@ export function runMigration(): void {
   migrateRunsIntoRoutines();
   migrateTrashToHidden();
   migrateBackupsToHidden();
+  migrateAliasesToUser();
 }

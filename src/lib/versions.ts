@@ -24,7 +24,7 @@ import chalk from 'chalk';
 import * as TOML from 'smol-toml';
 import { checkbox, select, confirm } from '@inquirer/prompts';
 import type { AgentId, VersionResources } from './types.js';
-import { getVersionsDir, getShimsDir, ensureAgentsDir, readMeta, writeMeta, getCommandsDir, getSkillsDir, getHooksDir, getResolvedRulesDir, getUserRulesDir, getPermissionsDir, getSubagentsDir, clearVersionResources, getVersionResources, recordVersionResources, getMcpDir, getProjectAgentsDir, getPromptcutsPath, getEnabledExtraRepos, getAgentsDir, getOptionalUserAgentsDir, getUserAgentsDir, getTrashVersionsDir, getActiveRulesPreset } from './state.js';
+import { getVersionsDir, getShimsDir, ensureAgentsDir, readMeta, writeMeta, getCommandsDir, getSkillsDir, getHooksDir, getResolvedRulesDir, getUserRulesDir, getPermissionsDir, getSubagentsDir, clearVersionResources, getVersionResources, recordVersionResources, getMcpDir, getProjectAgentsDir, getPromptcutsPath, getUserPromptcutsPath, getEnabledExtraRepos, getAgentsDir, getOptionalUserAgentsDir, getUserAgentsDir, getTrashVersionsDir, getActiveRulesPreset } from './state.js';
 import { resolveResource } from './resources.js';
 import { AGENTS, getAccountEmail, MCP_CAPABLE_AGENTS, COMMANDS_CAPABLE_AGENTS, getMcpConfigPathForHome, parseMcpConfig, resolveAgentName, formatAgentError } from './agents.js';
 import { getDefaultPermissionSet, applyPermissionsToVersion as applyPermsToVersion, PERMISSIONS_CAPABLE_AGENTS, discoverPermissionGroups, getTotalPermissionRuleCount, buildPermissionsFromGroups, CODEX_RULES_FILENAME, getActivePermissionSetName, readPermissionSetRecipe, PERMISSION_SET_ENV_VAR } from './permissions.js';
@@ -234,10 +234,9 @@ export function getAvailableResources(cwd: string = process.cwd()): AvailableRes
   const allPlugins = discoverPlugins();
   result.plugins = allPlugins.map(p => p.name);
 
-  // Promptcuts — single file at ~/.agents/promptcuts.yaml, not per-agent.
-  // Project-scoped .agents/promptcuts.yaml is intentionally not supported
-  // (user-global shortcuts only — they follow the user, not the repo).
-  result.promptcuts = fs.existsSync(getPromptcutsPath());
+  // Promptcuts — present if either layer exists. Reads merge user + system
+  // with user precedence (see readMergedPromptcuts); writes always go to user.
+  result.promptcuts = fs.existsSync(getUserPromptcutsPath()) || fs.existsSync(getPromptcutsPath());
 
   return result;
 }

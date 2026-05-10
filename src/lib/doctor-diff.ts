@@ -32,6 +32,7 @@ import {
   getResolvedRulesDir,
   getUserRulesDir,
   getPromptcutsPath,
+  getEffectivePromptcutsPath,
 } from './state.js';
 import {
   getAvailableResources,
@@ -473,9 +474,9 @@ function diffPresenceOnly(
 }
 
 function diffPromptcuts(): ResourceDiff[] {
-  const exists = fs.existsSync(getPromptcutsPath());
-  if (!exists) return [];
-  return [{ kind: 'promptcuts', name: 'promptcuts.yaml', status: 'ok', sourcePath: getPromptcutsPath() }];
+  const sourcePath = getEffectivePromptcutsPath();
+  if (!fs.existsSync(sourcePath)) return [];
+  return [{ kind: 'promptcuts', name: 'promptcuts.yaml', status: 'ok', sourcePath }];
 }
 
 // ─── public API ───────────────────────────────────────────────────────────────
