@@ -1,6 +1,6 @@
 ---
 name: browser
-description: "Browser automation via CDP. Uses your existing residential browser (undetectable), supports profile isolation for multi-agent work, and connects to local, SSH, or cloud browsers (BrowserBase, Steel)."
+description: "Browser automation via CDP. Control Chrome, Brave, Edge, Chromium, or Electron apps (Slack, VS Code, etc). Uses your existing residential browser (undetectable), supports profile isolation for multi-agent work, and connects to local, SSH, or cloud browsers."
 author: phnx-labs
 version: 1.0.0
 license: MIT
