@@ -19,9 +19,11 @@ export interface ChromeOptions {
 
 export interface Task {
   id: string;
+  name: string;
   profile: string;
   windowTargetId?: string;
-  tabIds: string[];
+  tabs: Record<string, string>; // shortId (8 chars) -> CDP targetId
+  currentTabId?: string; // shortId of current tab
   createdAt: number;
   pid: number;
 }
@@ -45,17 +47,21 @@ export interface ProfileStatus {
 
 export interface TaskStatus {
   id: string;
+  name: string;
   tabCount: number;
+  currentTabId?: string;
   createdAt: number;
 }
 
 export type IPCAction =
-  | 'start'
+  | 'open'
   | 'stop'
   | 'status'
   | 'navigate'
-  | 'tabs'
-  | 'close'
+  | 'tab-add'
+  | 'tab-focus'
+  | 'tab-close'
+  | 'tab-list'
   | 'evaluate'
   | 'screenshot'
   | 'refs'
@@ -67,6 +73,7 @@ export type IPCAction =
 export interface IPCRequest {
   action: IPCAction;
   task?: string;
+  taskName?: string; // human-readable task name for 'open'
   profile?: string;
   url?: string;
   tabId?: string;
@@ -100,4 +107,24 @@ export function isValidTaskId(id: string): boolean {
 
 export function generateTaskId(): string {
   return crypto.randomUUID().slice(0, 8);
+}
+
+export function generateShortId(): string {
+  return crypto.randomUUID().split('-')[0]; // 8 chars
+}
+
+const ADJECTIVES = [
+  'swift', 'cosmic', 'jolly', 'quiet', 'bold', 'bright', 'calm', 'eager',
+  'golden', 'happy', 'keen', 'lucky', 'noble', 'proud', 'quick', 'royal',
+];
+
+const NOUNS = [
+  'falcon', 'comet', 'tiger', 'nebula', 'phoenix', 'river', 'summit', 'wave',
+  'aurora', 'breeze', 'crystal', 'dragon', 'ember', 'forest', 'glacier', 'harbor',
+];
+
+export function generateFunName(): string {
+  const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
+  const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
+  return `${adj}-${noun}`;
 }

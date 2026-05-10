@@ -13,6 +13,8 @@ import { connectLocal } from './drivers/local.js';
 import { connectSSH } from './drivers/ssh.js';
 import {
   generateTaskId,
+  generateShortId,
+  generateFunName,
   isValidTaskId,
   type Task,
   type TabInfo,
@@ -45,21 +47,17 @@ export class BrowserService {
   private connections = new Map<string, ProfileConnection>();
   private forkingProfiles = new Set<string>();
 
-  async start(
+  async open(
     profileName: string,
-    taskId?: string
-  ): Promise<{ task: string; windowTargetId?: string }> {
+    opts: { taskName?: string; url?: string } = {}
+  ): Promise<{ task: string; name: string; tabId?: string; windowTargetId?: string }> {
     const profile = await getProfile(profileName);
     if (!profile) {
       throw new Error(`Profile "${profileName}" not found`);
     }
 
-    const finalTaskId = taskId || generateTaskId();
-    if (!isValidTaskId(finalTaskId)) {
-      throw new Error(
-        `Invalid task ID "${finalTaskId}". Must be lowercase alphanumeric with hyphens.`
-      );
-    }
+    const taskName = opts.taskName || generateFunName();
+    const taskId = generateTaskId();
 
     let conn = this.connections.get(profileName);
     let effectiveProfileName = profileName;
@@ -91,42 +89,55 @@ export class BrowserService {
       this.connections.set(profileName, conn);
     }
 
-    if (conn.tasks.has(finalTaskId)) {
-      const task = conn.tasks.get(finalTaskId)!;
-      return { task: finalTaskId, windowTargetId: task.windowTargetId };
-    }
-
-    const { windowTargetId } = await this.createTaskWindow(conn, finalTaskId);
+    const { windowTargetId } = await this.createTaskWindow(conn, taskId);
 
     const task: Task = {
-      id: finalTaskId,
+      id: taskId,
+      name: taskName,
       profile: effectiveProfileName,
       windowTargetId,
-      tabIds: conn.electron && windowTargetId ? [windowTargetId] : [],
+      tabs: {},
+      currentTabId: undefined,
       createdAt: Date.now(),
       pid: conn.pid,
     };
-    conn.tasks.set(finalTaskId, task);
 
+    // For Electron, track the window as a tab
+    if (conn.electron && windowTargetId) {
+      const shortId = generateShortId();
+      task.tabs[shortId] = windowTargetId;
+      task.currentTabId = shortId;
+    }
+
+    conn.tasks.set(taskName, task);
     await this.saveTaskState(effectiveProfileName, conn.tasks);
 
-    emit('browser.launch', { profile: effectiveProfileName, task: finalTaskId, pid: conn.pid });
-    return { task: finalTaskId, windowTargetId };
+    emit('browser.launch', { profile: effectiveProfileName, task: taskName, pid: conn.pid });
+
+    // If URL provided, open first tab
+    let tabId: string | undefined;
+    if (opts.url) {
+      const result = await this.navigate(taskName, opts.url, effectiveProfileName);
+      tabId = result.tabId;
+    }
+
+    return { task: taskId, name: taskName, tabId, windowTargetId };
   }
 
-  async stop(taskId: string): Promise<{ ok: boolean; profile?: string }> {
+  async stop(taskName: string): Promise<{ ok: boolean; profile?: string }> {
     for (const [profileName, conn] of this.connections) {
-      const task = conn.tasks.get(taskId);
+      const task = conn.tasks.get(taskName);
       if (task) {
+        // Close all tabs
         await Promise.all(
-          task.tabIds.map((tabId) =>
-            conn.cdp.send('Target.closeTarget', { targetId: tabId }).catch(() => {
+          Object.values(task.tabs).map((cdpId) =>
+            conn.cdp.send('Target.closeTarget', { targetId: cdpId }).catch(() => {
               // Tab already closed
             })
           )
         );
-        for (const tabId of task.tabIds) {
-          conn.sessionCache.delete(tabId);
+        for (const cdpId of Object.values(task.tabs)) {
+          conn.sessionCache.delete(cdpId);
         }
         this.invalidateTargetCache(conn);
 
@@ -138,10 +149,10 @@ export class BrowserService {
           }
         }
 
-        conn.tasks.delete(taskId);
+        conn.tasks.delete(taskName);
         await this.saveTaskState(profileName, conn.tasks);
 
-        emit('browser.close', { profile: profileName, task: taskId });
+        emit('browser.close', { profile: profileName, task: taskName });
 
         if (conn.forkedFrom && conn.tasks.size === 0) {
           conn.cdp.close();
@@ -182,33 +193,142 @@ export class BrowserService {
     taskId: string,
     url: string,
     profileName?: string
+  ): Promise<{ tabId: string; url: string; created: boolean }> {
+    const { conn, task } = await this.findTask(taskId, profileName);
+
+    // If we have a current tab, navigate in it (reuse)
+    const currentShortId = task.currentTabId;
+    if (currentShortId && task.tabs[currentShortId]) {
+      const cdpTargetId = task.tabs[currentShortId];
+      const sessionId = await this.getSessionId(conn, cdpTargetId);
+      await conn.cdp.send('Page.navigate', { url }, sessionId);
+      await this.saveTaskState(task.profile, conn.tasks);
+      return { tabId: currentShortId, url, created: false };
+    }
+
+    // No current tab - create one
+    if (conn.electron) {
+      const cdpTargetId = task.windowTargetId;
+      if (!cdpTargetId) {
+        throw new Error('No existing tab to navigate in Electron app');
+      }
+      const shortId = generateShortId();
+      const sessionId = await this.getSessionId(conn, cdpTargetId);
+      await conn.cdp.send('Page.navigate', { url }, sessionId);
+      task.tabs[shortId] = cdpTargetId;
+      task.currentTabId = shortId;
+      await this.saveTaskState(task.profile, conn.tasks);
+      return { tabId: shortId, url, created: true };
+    }
+
+    // Chrome: create new tab
+    const result = (await conn.cdp.send('Target.createTarget', {
+      url,
+    })) as { targetId: string };
+
+    const shortId = generateShortId();
+    task.tabs[shortId] = result.targetId;
+    task.currentTabId = shortId;
+    this.invalidateTargetCache(conn);
+    await this.saveTaskState(task.profile, conn.tasks);
+
+    return { tabId: shortId, url, created: true };
+  }
+
+  async tabAdd(
+    taskId: string,
+    url: string,
+    profileName?: string
   ): Promise<{ tabId: string; url: string }> {
     const { conn, task } = await this.findTask(taskId, profileName);
 
     if (conn.electron) {
-      const tabId = task.windowTargetId || task.tabIds[0];
-      if (!tabId) {
-        throw new Error('No existing tab to navigate in Electron app');
-      }
-      const sessionId = await this.getSessionId(conn, tabId);
-      await conn.cdp.send('Page.navigate', { url }, sessionId);
-      if (!task.tabIds.includes(tabId)) {
-        task.tabIds.push(tabId);
-      }
-      await this.saveTaskState(task.profile, conn.tasks);
-      return { tabId, url };
+      throw new Error('Electron apps do not support opening additional tabs');
     }
 
     const result = (await conn.cdp.send('Target.createTarget', {
       url,
     })) as { targetId: string };
 
-    const tabId = result.targetId;
-    task.tabIds.push(tabId);
+    const shortId = generateShortId();
+    task.tabs[shortId] = result.targetId;
+    task.currentTabId = shortId; // new tab becomes current
     this.invalidateTargetCache(conn);
     await this.saveTaskState(task.profile, conn.tasks);
 
-    return { tabId, url };
+    return { tabId: shortId, url };
+  }
+
+  async tabFocus(taskId: string, tabHint: string): Promise<{ tabId: string }> {
+    const { conn, task } = await this.findTask(taskId);
+    const resolvedTabId = await this.resolveTabHint(conn, task, tabHint);
+    task.currentTabId = resolvedTabId;
+    await this.saveTaskState(task.profile, conn.tasks);
+    return { tabId: resolvedTabId };
+  }
+
+  async tabList(taskId: string): Promise<Array<{ id: string; url: string; title: string; current: boolean }>> {
+    const { conn, task } = await this.findTask(taskId);
+    const targets = (await conn.cdp.send('Target.getTargets')) as {
+      targetInfos: Array<{ targetId: string; url: string; title: string }>;
+    };
+
+    const tabs: Array<{ id: string; url: string; title: string; current: boolean }> = [];
+    for (const [shortId, cdpId] of Object.entries(task.tabs)) {
+      const target = targets.targetInfos.find((t) => t.targetId === cdpId);
+      if (target) {
+        tabs.push({
+          id: shortId,
+          url: target.url,
+          title: target.title,
+          current: shortId === task.currentTabId,
+        });
+      }
+    }
+    return tabs;
+  }
+
+  private async resolveTabHint(conn: ProfileConnection, task: Task, hint: string): Promise<string> {
+    // Exact match
+    if (task.tabs[hint]) return hint;
+
+    // Prefix match
+    const byPrefix = Object.keys(task.tabs).filter((id) => id.startsWith(hint));
+    if (byPrefix.length === 1) return byPrefix[0];
+    if (byPrefix.length > 1) {
+      throw new Error(`Ambiguous tab hint "${hint}" — matches ${byPrefix.length} tabs`);
+    }
+
+    // URL substring match
+    const targets = (await conn.cdp.send('Target.getTargets')) as {
+      targetInfos: Array<{ targetId: string; url: string }>;
+    };
+    const matches: string[] = [];
+    for (const [shortId, cdpId] of Object.entries(task.tabs)) {
+      const target = targets.targetInfos.find((t) => t.targetId === cdpId);
+      if (target && target.url.includes(hint)) {
+        matches.push(shortId);
+      }
+    }
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1) {
+      throw new Error(`Ambiguous tab hint "${hint}" — matches ${matches.length} tabs by URL`);
+    }
+
+    throw new Error(`Tab "${hint}" not found`);
+  }
+
+  private resolveCurrentTab(task: Task): string {
+    const tabIds = Object.keys(task.tabs);
+    const id = task.currentTabId ?? tabIds[tabIds.length - 1];
+    if (!id) throw new Error('No tabs open for this task');
+    return id;
+  }
+
+  private getCdpTargetId(task: Task, shortId: string): string {
+    const cdpId = task.tabs[shortId];
+    if (!cdpId) throw new Error(`Tab ${shortId} not found`);
+    return cdpId;
   }
 
   async tabs(taskId?: string, profileName?: string): Promise<TabInfo[]> {
@@ -227,23 +347,34 @@ export class BrowserService {
     return allTabs;
   }
 
-  async close(taskId: string, tabId?: string): Promise<void> {
+  async tabClose(taskId: string, tabHint?: string): Promise<void> {
     const { conn, task } = await this.findTask(taskId);
 
-    if (tabId !== undefined) {
-      await conn.cdp.send('Target.closeTarget', { targetId: tabId });
-      task.tabIds = task.tabIds.filter((id) => id !== tabId);
-      conn.sessionCache.delete(tabId);
+    if (tabHint !== undefined) {
+      const shortId = await this.resolveTabHint(conn, task, tabHint);
+      const cdpId = task.tabs[shortId];
+      if (cdpId) {
+        await conn.cdp.send('Target.closeTarget', { targetId: cdpId });
+        conn.sessionCache.delete(cdpId);
+        delete task.tabs[shortId];
+        // Update currentTabId if we closed the current tab
+        if (task.currentTabId === shortId) {
+          const remaining = Object.keys(task.tabs);
+          task.currentTabId = remaining.length > 0 ? remaining[remaining.length - 1] : undefined;
+        }
+      }
     } else {
+      // Close all tabs
       await Promise.all(
-        task.tabIds.map((id) =>
-          conn.cdp.send('Target.closeTarget', { targetId: id }).catch(() => {})
+        Object.values(task.tabs).map((cdpId) =>
+          conn.cdp.send('Target.closeTarget', { targetId: cdpId }).catch(() => {})
         )
       );
-      for (const id of task.tabIds) {
-        conn.sessionCache.delete(id);
+      for (const cdpId of Object.values(task.tabs)) {
+        conn.sessionCache.delete(cdpId);
       }
-      task.tabIds = [];
+      task.tabs = {};
+      task.currentTabId = undefined;
     }
 
     this.invalidateTargetCache(conn);
@@ -252,14 +383,16 @@ export class BrowserService {
 
   async evaluate(
     taskId: string,
-    tabId: string,
+    tabHint: string | undefined,
     expression: string
   ): Promise<unknown> {
-    const { conn } = await this.findTask(taskId);
-    const target = await this.getTarget(conn, tabId);
+    const { conn, task } = await this.findTask(taskId);
+    const shortId = tabHint ? await this.resolveTabHint(conn, task, tabHint) : this.resolveCurrentTab(task);
+    const cdpTargetId = this.getCdpTargetId(task, shortId);
+    const target = await this.getTarget(conn, cdpTargetId);
 
     if (!target) {
-      throw new Error(`Tab ${tabId} not found`);
+      throw new Error(`Tab ${shortId} not found`);
     }
 
     const sessionId = await this.getSessionId(conn, target.targetId);
@@ -275,20 +408,18 @@ export class BrowserService {
 
   async screenshot(
     taskId: string,
-    tabId?: string,
+    tabHint?: string,
     outputPath?: string
   ): Promise<string> {
     const { conn, task } = await this.findTask(taskId);
 
-    const targetTabId = tabId ?? task.tabIds[task.tabIds.length - 1];
-    if (targetTabId === undefined) {
-      throw new Error('No tabs open for this task');
-    }
+    const shortId = tabHint ? await this.resolveTabHint(conn, task, tabHint) : this.resolveCurrentTab(task);
+    const cdpTargetId = this.getCdpTargetId(task, shortId);
 
-    const target = await this.getTarget(conn, targetTabId);
+    const target = await this.getTarget(conn, cdpTargetId);
 
     if (!target) {
-      throw new Error(`Tab ${targetTabId} not found`);
+      throw new Error(`Tab ${shortId} not found`);
     }
 
     const sessionId = await this.getSessionId(conn, target.targetId);
@@ -315,7 +446,7 @@ export class BrowserService {
       }
     }
 
-    const sessionsDir = path.join(getBrowserRuntimeDir(), 'sessions', taskId);
+    const sessionsDir = path.join(getBrowserRuntimeDir(), 'sessions', task.name);
     const finalPath = outputPath || path.join(sessionsDir, `${Date.now()}.jpg`);
     await fs.promises.mkdir(path.dirname(finalPath), { recursive: true });
     await fs.promises.writeFile(finalPath, buffer);
@@ -327,24 +458,26 @@ export class BrowserService {
 
   async refs(
     taskId: string,
-    tabId?: string,
+    tabHint?: string,
     opts: RefOpts = {}
   ): Promise<{ refs: string; nodeMap: Map<number, RefNode> }> {
     const { conn, task } = await this.findTask(taskId);
-    const targetTabId = tabId || task.tabIds[task.tabIds.length - 1];
-    if (!targetTabId) throw new Error('No tabs open for this task');
+    const shortId = tabHint ? await this.resolveTabHint(conn, task, tabHint) : this.resolveCurrentTab(task);
+    const cdpTargetId = this.getCdpTargetId(task, shortId);
 
-    const target = await this.getTarget(conn, targetTabId);
-    if (!target) throw new Error(`Tab ${targetTabId} not found`);
+    const target = await this.getTarget(conn, cdpTargetId);
+    if (!target) throw new Error(`Tab ${shortId} not found`);
 
     const sessionId = await this.getSessionId(conn, target.targetId);
     return getRefs(conn.cdp, sessionId, opts);
   }
 
-  async click(taskId: string, tabId: string, ref: number): Promise<void> {
-    const { conn } = await this.findTask(taskId);
-    const target = await this.getTarget(conn, tabId);
-    if (!target) throw new Error(`Tab ${tabId} not found`);
+  async click(taskId: string, ref: number, tabHint?: string): Promise<void> {
+    const { conn, task } = await this.findTask(taskId);
+    const shortId = tabHint ? await this.resolveTabHint(conn, task, tabHint) : this.resolveCurrentTab(task);
+    const cdpTargetId = this.getCdpTargetId(task, shortId);
+    const target = await this.getTarget(conn, cdpTargetId);
+    if (!target) throw new Error(`Tab ${shortId} not found`);
 
     const sessionId = await this.getSessionId(conn, target.targetId);
     const { nodeMap } = await getRefs(conn.cdp, sessionId, { interactive: false, limit: 1000 });
@@ -352,10 +485,12 @@ export class BrowserService {
     await clickAtCoords(conn.cdp, sessionId, x, y);
   }
 
-  async type(taskId: string, tabId: string, ref: number, text: string): Promise<void> {
-    const { conn } = await this.findTask(taskId);
-    const target = await this.getTarget(conn, tabId);
-    if (!target) throw new Error(`Tab ${tabId} not found`);
+  async type(taskId: string, ref: number, text: string, tabHint?: string): Promise<void> {
+    const { conn, task } = await this.findTask(taskId);
+    const shortId = tabHint ? await this.resolveTabHint(conn, task, tabHint) : this.resolveCurrentTab(task);
+    const cdpTargetId = this.getCdpTargetId(task, shortId);
+    const target = await this.getTarget(conn, cdpTargetId);
+    if (!target) throw new Error(`Tab ${shortId} not found`);
 
     const sessionId = await this.getSessionId(conn, target.targetId);
     const { nodeMap } = await getRefs(conn.cdp, sessionId, { interactive: false, limit: 1000 });
@@ -367,19 +502,23 @@ export class BrowserService {
     await typeText(conn.cdp, sessionId, text);
   }
 
-  async press(taskId: string, tabId: string, key: string): Promise<void> {
-    const { conn } = await this.findTask(taskId);
-    const target = await this.getTarget(conn, tabId);
-    if (!target) throw new Error(`Tab ${tabId} not found`);
+  async press(taskId: string, key: string, tabHint?: string): Promise<void> {
+    const { conn, task } = await this.findTask(taskId);
+    const shortId = tabHint ? await this.resolveTabHint(conn, task, tabHint) : this.resolveCurrentTab(task);
+    const cdpTargetId = this.getCdpTargetId(task, shortId);
+    const target = await this.getTarget(conn, cdpTargetId);
+    if (!target) throw new Error(`Tab ${shortId} not found`);
 
     const sessionId = await this.getSessionId(conn, target.targetId);
     await pressKey(conn.cdp, sessionId, key);
   }
 
-  async hover(taskId: string, tabId: string, ref: number): Promise<void> {
-    const { conn } = await this.findTask(taskId);
-    const target = await this.getTarget(conn, tabId);
-    if (!target) throw new Error(`Tab ${tabId} not found`);
+  async hover(taskId: string, ref: number, tabHint?: string): Promise<void> {
+    const { conn, task } = await this.findTask(taskId);
+    const shortId = tabHint ? await this.resolveTabHint(conn, task, tabHint) : this.resolveCurrentTab(task);
+    const cdpTargetId = this.getCdpTargetId(task, shortId);
+    const target = await this.getTarget(conn, cdpTargetId);
+    if (!target) throw new Error(`Tab ${shortId} not found`);
 
     const sessionId = await this.getSessionId(conn, target.targetId);
     const { nodeMap } = await getRefs(conn.cdp, sessionId, { interactive: false, limit: 1000 });
@@ -425,7 +564,9 @@ export class BrowserService {
     for (const [, task] of tasks) {
       taskStatuses.push({
         id: task.id,
-        tabCount: task.tabIds.length,
+        name: task.name,
+        tabCount: Object.keys(task.tabs).length,
+        currentTabId: task.currentTabId,
         createdAt: task.createdAt,
       });
     }
@@ -667,18 +808,19 @@ export class BrowserService {
       targetInfos: Array<{ targetId: string; url: string; title: string }>;
     };
 
-    return task.tabIds
-      .map((id) => {
-        const target = targets.targetInfos.find((t) => t.targetId === id);
-        if (!target) return null;
-        return {
-          id,
+    const tabs: TabInfo[] = [];
+    for (const [shortId, cdpId] of Object.entries(task.tabs)) {
+      const target = targets.targetInfos.find((t) => t.targetId === cdpId);
+      if (target) {
+        tabs.push({
+          id: shortId,
           url: target.url,
           title: target.title,
-          task: task.id,
-        };
-      })
-      .filter((t): t is TabInfo => t !== null);
+          task: task.name,
+        });
+      }
+    }
+    return tabs;
   }
 
   private async getProfileStatus(profileName: string): Promise<ProfileStatus | null> {
@@ -689,7 +831,9 @@ export class BrowserService {
     for (const [, task] of conn.tasks) {
       tasks.push({
         id: task.id,
-        tabCount: task.tabIds.length,
+        name: task.name,
+        tabCount: Object.keys(task.tabs).length,
+        currentTabId: task.currentTabId,
         createdAt: task.createdAt,
       });
     }
@@ -760,6 +904,41 @@ export class BrowserService {
     }
 
     const state = JSON.parse(fs.readFileSync(tasksFile, 'utf-8'));
-    return new Map(Object.entries(state));
+    const tasks = new Map<string, Task>();
+    let needsMigration = false;
+
+    for (const [key, raw] of Object.entries(state)) {
+      const task = raw as Record<string, unknown>;
+      // Migrate old format (tabIds array) to new format (tabs object)
+      if (Array.isArray(task.tabIds) && !task.tabs) {
+        needsMigration = true;
+        const tabs: Record<string, string> = {};
+        for (const cdpId of task.tabIds as string[]) {
+          const shortId = generateShortId();
+          tabs[shortId] = cdpId;
+        }
+        const tabIds = Object.keys(tabs);
+        tasks.set(key, {
+          id: task.id as string,
+          name: task.name as string || key,
+          profile: task.profile as string,
+          windowTargetId: task.windowTargetId as string | undefined,
+          tabs,
+          currentTabId: tabIds.length > 0 ? tabIds[tabIds.length - 1] : undefined,
+          createdAt: task.createdAt as number,
+          pid: task.pid as number,
+        });
+      } else {
+        tasks.set(key, task as unknown as Task);
+      }
+    }
+
+    // Save migrated data back to disk
+    if (needsMigration) {
+      const migratedState = Object.fromEntries(tasks);
+      fs.writeFileSync(tasksFile, JSON.stringify(migratedState, null, 2));
+    }
+
+    return tasks;
   }
 }
