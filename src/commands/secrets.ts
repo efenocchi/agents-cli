@@ -306,6 +306,10 @@ Examples:
   # Eval the bundle into your current shell
   eval "$(agents secrets export prod --plaintext)"
 
+  # Run a command with secrets injected
+  agents secrets exec prod -- ./deploy.sh
+  agents secrets exec hetzner.com -- crabbox list
+
   # Remove one key (purges the keychain item by default)
   agents secrets remove prod STRIPE_API_KEY
 
@@ -324,7 +328,7 @@ Examples:
   registerCommandGroups(cmd, [
     { title: 'Bundle commands', names: ['list', 'view', 'create', 'delete'] },
     { title: 'Secret commands', names: ['add', 'rotate', 'remove', 'import', 'export'] },
-    { title: 'Utilities', names: ['generate'] },
+    { title: 'Utilities', names: ['exec', 'generate'] },
   ]);
 
   cmd
@@ -727,6 +731,37 @@ Examples:
           const output = needsQuotes ? `'${v.replace(/'/g, `'\\''`)}'` : v;
           process.stdout.write(`export ${exportKey}=${output}\n`);
         }
+      } catch (err) {
+        if (isPromptCancelled(err)) return;
+        console.error(chalk.red((err as Error).message));
+        process.exit(1);
+      }
+    });
+
+  cmd
+    .command('exec <bundle> [command...]')
+    .description('Run a command with the bundle\'s secrets injected into the environment')
+    .allowUnknownOption()
+    .action(async (bundleName: string, commandParts: string[]) => {
+      try {
+        if (commandParts.length === 0) {
+          console.error(chalk.red('Usage: agents secrets exec <bundle> -- <command...>'));
+          process.exit(1);
+        }
+        const { resolveBundleEnv } = await import('../lib/secrets/bundles.js');
+        const bundle = readBundle(bundleName);
+        const secretEnv = resolveBundleEnv(bundle);
+        const { spawn } = await import('child_process');
+        const [cmd, ...args] = commandParts;
+        const proc = spawn(cmd, args, {
+          stdio: 'inherit',
+          env: { ...process.env, ...secretEnv },
+        });
+        proc.on('close', (code) => process.exit(code ?? 0));
+        proc.on('error', (err) => {
+          console.error(chalk.red(`Failed to run '${cmd}': ${err.message}`));
+          process.exit(1);
+        });
       } catch (err) {
         if (isPromptCancelled(err)) return;
         console.error(chalk.red((err as Error).message));
