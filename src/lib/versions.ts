@@ -743,7 +743,7 @@ export async function promptResourceSelection(agent: AgentId): Promise<ResourceS
   const availableCategories = categories.filter(c => c.available);
 
   if (availableCategories.length === 0) {
-    console.log(chalk.gray('No resources available in ~/.agents/'));
+    console.log(chalk.gray('No resources available to sync.'));
     return {};
   }
 
@@ -751,7 +751,7 @@ export async function promptResourceSelection(agent: AgentId): Promise<ResourceS
   console.log();
   const SELECT_ALL_KEY = '__select_all__' as CategoryKey;
   const selectedCategories = await checkbox<CategoryKey>({
-    message: 'Which resources from ~/.agents/ would you like to sync?',
+    message: 'Which resources would you like to sync?',
     choices: [
       { name: chalk.bold('Select All (sync everything)'), value: SELECT_ALL_KEY, checked: false },
       ...availableCategories.map(c => ({

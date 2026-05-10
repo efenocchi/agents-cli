@@ -4,7 +4,7 @@
  * CLI entry point for agents-cli.
  *
  * Registers all commands, handles update checks, auto-corrects typos,
- * and launches the first-run interactive init when appropriate.
+ * and launches the first-run interactive setup when appropriate.
  */
 
 import { Command } from 'commander';
@@ -32,7 +32,7 @@ const VERSION = packageJson.version;
 // Import command registrations
 import { registerPullCommand } from './commands/pull.js';
 import { registerRepoCommands } from './commands/repo.js';
-import { registerInitCommand, runInit } from './commands/init.js';
+import { registerSetupCommand, runSetup } from './commands/setup.js';
 import { registerStatusCommand } from './commands/status.js';
 import { registerViewCommand } from './commands/view.js';
 import { registerCommandsCommands } from './commands/commands.js';
@@ -98,7 +98,7 @@ Install, configure, run, and dispatch AI coding agents from one place.
 Works with Claude, Codex, Gemini, Cursor, OpenCode, OpenClaw, and Droid.
 
 Quick start:
-  agents init                     First-time setup (interactive)
+  agents setup                    First-time setup (interactive)
   agents view                     See what's installed
   agents run <agent> ["prompt"]   Run an agent (interactive without prompt, headless with)
   agents sessions                 Browse past sessions across all agents
@@ -568,7 +568,7 @@ program
 
 registerPullCommand(program);
 registerRepoCommands(program);
-registerInitCommand(program);
+registerSetupCommand(program);
 
 applyGlobalHelpConventions(program);
 
@@ -631,7 +631,7 @@ await checkForUpdates();
 const { spawnDetachedSync } = await import('./lib/auto-pull.js');
 spawnDetachedSync();
 
-// First-run experience: no args + no config yet + TTY -> launch interactive init.
+// First-run experience: no args + no config yet + TTY -> launch interactive setup.
 // Skipped when stdin/stdout isn't a terminal (CI, pipes) or when user passes any args.
 const passedArgs = process.argv.slice(2);
 const requestedCommand = passedArgs.find((arg) => !arg.startsWith('-'));
@@ -673,7 +673,7 @@ const firstRun =
 
 if (firstRun) {
   try {
-    await runInit(program);
+    await runSetup(program);
   } catch (err) {
     if (!(err instanceof Error && err.name === 'ExitPromptError')) {
       throw err;
@@ -682,15 +682,12 @@ if (firstRun) {
   process.exit(0);
 }
 
-// Commands that require the system repo to be cloned first.
-const SYSTEM_REPO_COMMANDS = new Set([
-  'view', 'status', 'skills', 'rules', 'commands', 'hooks',
-  'mcp', 'permissions', 'versions', 'packages', 'sync',
-  'subagents', 'repo', 'plugins', 'doctor',
-]);
+// Every command requires the system repo to be cloned first. `setup` is the
+// only exemption — it's the command that does the cloning.
+const SETUP_EXEMPT_COMMANDS = new Set(['setup', 'help']);
 
-if (!firstRun && requestedCommand && SYSTEM_REPO_COMMANDS.has(requestedCommand)) {
-  const { ensureInitialized } = await import('./commands/init.js');
+if (!firstRun && requestedCommand && !SETUP_EXEMPT_COMMANDS.has(requestedCommand)) {
+  const { ensureInitialized } = await import('./commands/setup.js');
   await ensureInitialized(program);
 }
 
