@@ -27,14 +27,14 @@ import { isPromptCancelled } from './utils.js';
 export function registerForkCommand(program: Command): void {
   program
     .command('fork')
-    .description('Copy the default config repo to your own GitHub so you can push changes. Runs once after init.')
+    .description('Copy the default config repo to your own GitHub so you can push changes. Runs once after setup.')
     .addHelpText('after', `
 Examples:
   # Fork the default repo to your GitHub account
   agents fork
 
 When to use:
-  - You initialized with 'agents init' using the default config
+  - You set up with 'agents setup' using the default config
   - You've customized commands, skills, or settings
   - You want to save your changes to your own GitHub repo
 

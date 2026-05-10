@@ -20,7 +20,7 @@ if (!isGlobalInstall) {
   fs.mkdirSync(USER_DIR, { recursive: true, mode: 0o700 });
   console.log(`
 agents-cli installed locally.
-To complete setup, run: npx agents init
+To complete setup, run: npx agents setup
 `);
   process.exit(0);
 }

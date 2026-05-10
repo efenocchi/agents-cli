@@ -1,7 +1,7 @@
 /**
- * First-run initialization command.
+ * First-run setup command.
  *
- * Registers the `agents init` command which clones the system repo into
+ * Registers the `agents setup` command which clones the system repo into
  * ~/.agents-system/ and installs agent CLIs with resource syncing.
  */
 
@@ -65,14 +65,14 @@ async function importAgent(agentId: AgentId, version: string): Promise<{ success
 }
 
 /** First-run setup. Clones ~/.agents-system/ from the system repo if needed. */
-export async function runInit(program: Command, options: { force?: boolean } = {}): Promise<void> {
+export async function runSetup(program: Command, options: { force?: boolean } = {}): Promise<void> {
   const agentsDir = getAgentsDir();
   const alreadyConfigured = isGitRepo(agentsDir);
 
   if (alreadyConfigured && !options.force) {
     console.log(chalk.gray('~/.agents-system/ is already set up.'));
     console.log(chalk.gray('\nTo sync updates:      agents repo pull system'));
-    console.log(chalk.gray('To re-initialize:     agents init --force'));
+    console.log(chalk.gray('To re-run setup:      agents setup --force'));
     return;
   }
 
@@ -95,7 +95,7 @@ export async function runInit(program: Command, options: { force?: boolean } = {
     const result = await pullRepo(agentsDir);
     if (!result.success) {
       spinner.fail(`Pull failed: ${result.error}`);
-      console.log(chalk.gray('Fix the issue and re-run: agents init --force'));
+      console.log(chalk.gray('Fix the issue and re-run: agents setup --force'));
       process.exit(1);
     }
     spinner.succeed(`Updated to ${result.commit}`);
@@ -113,7 +113,7 @@ export async function runInit(program: Command, options: { force?: boolean } = {
     const result = await cloneIntoExisting(DEFAULT_SYSTEM_REPO, agentsDir);
     if (!result.success) {
       spinner.fail(`Clone failed: ${result.error}`);
-      console.log(chalk.gray('Fix the issue and re-run: agents init --force'));
+      console.log(chalk.gray('Fix the issue and re-run: agents setup --force'));
       process.exit(1);
     }
     spinner.succeed(`Cloned ${systemRepoSlug(DEFAULT_SYSTEM_REPO)} (${result.commit})`);
@@ -189,7 +189,7 @@ export async function runInit(program: Command, options: { force?: boolean } = {
 /**
  * Ensure the system repo exists before running a command that needs it.
  * If ~/.agents-system/ is not a git repo AND we're in an interactive TTY,
- * prompt the user to run init now. In non-interactive mode, print a clear
+ * prompt the user to run setup now. In non-interactive mode, print a clear
  * error and exit.
  */
 export async function ensureInitialized(program: Command): Promise<void> {
@@ -197,38 +197,37 @@ export async function ensureInitialized(program: Command): Promise<void> {
   if (isGitRepo(agentsDir)) return;
 
   if (!isInteractiveTerminal()) {
-    console.error(chalk.red('agents-cli is not initialized. Run: agents init'));
+    console.error(chalk.red('agents-cli is not set up. Run: agents setup'));
     process.exit(1);
   }
 
   console.log(chalk.yellow('\nagents-cli has not been set up yet.'));
   const proceed = await confirm({
-    message: 'Run `agents init` now?',
+    message: 'Run `agents setup` now?',
     default: true,
   }).catch(() => false);
 
   if (!proceed) {
-    console.log(chalk.gray('Skipped. Run `agents init` when ready.'));
+    console.log(chalk.gray('Skipped. Run `agents setup` when ready.'));
     process.exit(0);
   }
 
-  await runInit(program);
-  process.exit(0);
+  await runSetup(program);
 }
 
-/** Register the `agents init` command. */
-export function registerInitCommand(program: Command): void {
+/** Register the `agents setup` command. */
+export function registerSetupCommand(program: Command): void {
   program
-    .command('init')
+    .command('setup')
     .description('Set up agents-cli for the first time. Clones a config repo and installs agent CLIs.')
-    .option('-f, --force', 'Reinitialize even if ~/.agents-system/ already exists (use with caution)')
+    .option('-f, --force', 'Re-run setup even if ~/.agents-system/ already exists (use with caution)')
     .addHelpText('after', `
 Examples:
   # First-time setup (clones the system repo into ~/.agents-system/)
-  agents init
+  agents setup
 
-  # Re-initialize after corruption
-  agents init --force
+  # Re-run setup after corruption
+  agents setup --force
 
 When to use:
   - First time running agents-cli: this is your starting point
@@ -241,12 +240,12 @@ What it does:
   3. Syncs commands, skills, hooks, and MCP servers to each version
 
 Non-interactive alternative:
-  Skip 'init' and run:
+  Skip 'setup' and run:
     agents pull
 `)
     .action(async (options) => {
       try {
-        await runInit(program, options);
+        await runSetup(program, options);
       } catch (err) {
         if (isPromptCancelled(err)) {
           console.log(chalk.yellow('\nCancelled'));
