@@ -100,13 +100,61 @@ export class CDPClient {
   }
 }
 
-export async function discoverBrowserWsUrl(port: number, host = 'localhost'): Promise<string> {
+export interface BrowserDiscovery {
+  wsUrl: string;
+  browser: string;
+}
+
+export async function discoverBrowserWsUrl(
+  port: number,
+  host = 'localhost'
+): Promise<BrowserDiscovery> {
   const response = await fetch(`http://${host}:${port}/json/version`);
   if (!response.ok) {
     throw new Error(`Failed to discover browser: ${response.status}`);
   }
-  const data = (await response.json()) as { webSocketDebuggerUrl: string };
-  return data.webSocketDebuggerUrl;
+  const data = (await response.json()) as {
+    webSocketDebuggerUrl: string;
+    Browser?: string;
+    Product?: string;
+  };
+  const browserField = data.Browser || data.Product || '';
+  return {
+    wsUrl: data.webSocketDebuggerUrl,
+    browser: normalizeBrowserName(browserField),
+  };
+}
+
+export function normalizeBrowserName(s: string): string {
+  if (!s) return 'unknown';
+  return s.split('/')[0].trim().toLowerCase().replace(/\s+/g, '-');
+}
+
+export function verifyBrowserIdentity(
+  reported: string,
+  expected: string,
+  port: number,
+  host = 'localhost'
+): void {
+  if (expected === 'custom') return;
+  if (reported === 'unknown') return;
+
+  const matches: Record<string, string[]> = {
+    chrome: ['chrome', 'google-chrome', 'headlesschrome'],
+    chromium: ['chromium', 'headlesschrome'],
+    comet: ['comet'],
+    brave: ['brave', 'brave-browser'],
+    edge: ['edge', 'microsoft-edge', 'msedge'],
+  };
+
+  const accepted = matches[expected] || [expected];
+  if (accepted.includes(reported)) return;
+
+  const target = host === 'localhost' || host === '127.0.0.1' ? `port ${port}` : `${host}:${port}`;
+  throw new Error(
+    `Browser identity mismatch: profile expects "${expected}" but ${target} is serving "${reported}". ` +
+      `Stop the running browser (e.g. \`pkill -f ${reported}\`) or update the profile to browser=${reported}, then retry.`
+  );
 }
 
 export async function listTargets(

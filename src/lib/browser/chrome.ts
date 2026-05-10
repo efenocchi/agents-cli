@@ -132,7 +132,8 @@ export async function launchBrowser(
   for (let i = 0; i < 30; i++) {
     await sleep(200);
     try {
-      wsUrl = await discoverBrowserWsUrl(port);
+      const result = await discoverBrowserWsUrl(port);
+      wsUrl = result.wsUrl;
       break;
     } catch {
       // Chrome still starting
@@ -147,7 +148,8 @@ export async function launchBrowser(
 }
 
 export async function attachToChrome(port: number): Promise<string> {
-  return discoverBrowserWsUrl(port);
+  const { wsUrl } = await discoverBrowserWsUrl(port);
+  return wsUrl;
 }
 
 export function killChrome(pid: number): void {
