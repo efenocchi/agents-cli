@@ -1,103 +1,234 @@
 ---
 name: browser
-description: "Browser automation via CDP. Control Chrome, Brave, Edge, Chromium, or Electron apps (Slack, VS Code, etc). Uses your existing residential browser (undetectable), supports profile isolation for multi-agent work, and connects to local, SSH, or cloud browsers."
+description: "Drive a browser via CDP - navigate, click, type, screenshot. Profiles persist login state across sessions."
 author: phnx-labs
-version: 1.0.0
+version: 1.1.0
 license: MIT
 ---
 
 # Browser
 
-Control a real browser via CDP. Profiles persist login state, so agents log in once and stay authenticated. Screenshots auto-resize to save tokens.
+Control Chrome, Brave, Edge, Chromium, or Electron apps via Chrome DevTools Protocol. Profiles persist cookies and login state, so you authenticate once and stay logged in.
 
-`browser` ships with `agents-cli` — `browser` is shorthand for `agents browser`, both invoke the same command. Use the short form; the `agents` prefix is redundant.
+`browser` is shorthand for `agents browser` — use the short form.
 
-## Why not Browser Use, BrowserBase, or agent-browser?
+## Quick Reference
 
-**Browser Use**: Great Python library, but you manage your own browser infrastructure. For production, they push you to their cloud service.
+| Task | Command |
+|------|---------|
+| Create a profile | `browser profiles create <name> --browser chrome` |
+| Start a task | `browser start --profile <name> --task <task> --url <url>` |
+| Navigate | `browser navigate <task> <url>` |
+| Open new tab | `browser tab add <task> <url>` |
+| Take screenshot | `browser screenshot <task>` |
+| Get clickable elements | `browser refs <task>` |
+| Click element | `browser click <task> <ref>` |
+| Type text | `browser type <task> <ref> "text"` |
+| Press key | `browser press <task> Enter` |
+| Complete task | `browser done <task>` |
+| Check status | `browser status` |
 
-**BrowserBase**: Cloud browsers with anti-detection — but per-session pricing, and your data flows through their servers. Great for scraping at scale, less ideal for personal accounts.
+## Profile Setup
 
-**agent-browser**: Solid standalone CLI with profile persistence. Good choice if you just need browser automation.
+Profiles are browser identities with isolated cookies, storage, and login state.
 
-**browser**: 
-- **Free and fast** — runs locally, no per-session pricing. Lower latency than cloud round-trips.
-- **SSH for remote power** — run the browser on your always-on home desktop, control it from your laptop anywhere
-- **Token-efficient screenshots** — auto-resizes to <100KB by progressively lowering JPEG quality, so agents don't burn tokens on oversized images
-- **Ecosystem integration** — profiles work with `agents secrets` for credential injection, `agents teams` for multi-agent orchestration, `agents sessions` for audit trails, `agents routines` for scheduled browser tasks
-- **Task isolation** — multiple concurrent tasks per profile, each with its own tabs and state
-
-## "I need to automate a site that blocks bots"
-
-Use your real browser. Same fingerprint, same IP, nothing to detect:
+### Create a profile
 
 ```bash
 browser profiles create work --browser chrome
-browser start task --profile work
-browser navigate task https://linkedin.com
 ```
 
-## "I don't want to log in every time"
+Valid browsers: `chrome`, `comet`, `chromium`, `brave`, `edge`
 
-Log in once to a profile — the session persists. Every future task is already authenticated:
+### With credentials
+
+Attach a secrets bundle for automated login:
 
 ```bash
-browser profiles create social --browser chrome
-browser start setup --profile social
-# Log in manually or via automation, then stop
-
-# Next time — already logged in
-browser start post --profile social
+browser profiles create bank --browser chrome --secrets bank-creds
 ```
 
-## "I have multiple accounts and want to keep them separate"
-
-Profiles are identities. Create one per account group:
-
-```bash
-browser profiles create social --browser chrome    # Twitter, LinkedIn
-browser profiles create email --browser chrome     # Gmail, work email
-browser profiles create finance --browser chrome   # Banking, trading
-```
-
-An agent using `social` can't see your `finance` cookies.
-
-## "I'm running multiple agents and they keep interfering"
-
-Each agent gets its own profile. No shared state:
-
-```bash
-browser start agent1-work --profile social
-browser start agent2-work --profile email
-```
-
-## "I need to give an agent login credentials safely"
-
-Attach a secrets bundle. Credentials stay in Keychain, and every access is logged:
-
-```bash
-browser profiles create bank --browser chrome --secrets bank-login
-```
-
-## "I want to use a cloud browser instead of local"
-
-Connect to BrowserBase, Steel, or any CDP service:
-
-```bash
-browser profiles create cloud --browser chrome \
-  --endpoint "wss://connect.browserbase.com?apiKey=..."
-```
-
-## "I need to automate an Electron app"
-
-Point to the binary:
+### For Electron apps
 
 ```bash
 browser profiles create slack --browser custom \
-  --binary "/Applications/Slack.app/Contents/MacOS/Slack" \
-  --electron
+  --binary "/Applications/Slack.app/Contents/MacOS/Slack"
 ```
 
-## "What else can I do?"
+### List profiles
 
-Run `browser --help` — there's more: screenshots, element refs, clicking, typing, evaluating JavaScript, SSH tunnels to remote machines.
+```bash
+browser profiles list
+```
+
+## Task Workflow
+
+Tasks are units of work within a profile. Multiple tasks share one browser window, each managing its own tabs.
+
+### Step 1: Start a task
+
+```bash
+browser start --profile work --task research --url https://google.com
+```
+
+Options:
+- `--profile <name>` — required, which browser identity to use
+- `--task <name>` — optional, auto-generates fun name if omitted
+- `--url <url>` — optional, opens URL in first tab
+
+### Step 2: Navigate and interact
+
+```bash
+# Navigate current tab
+browser navigate research https://example.com
+
+# Open additional tabs
+browser tab add research https://github.com
+browser tab add research https://stackoverflow.com
+
+# Switch between tabs
+browser tab focus research github    # by URL substring
+browser tab focus research a1b2     # by tab ID prefix
+
+# List tabs
+browser tab list research
+```
+
+### Step 3: Interact with elements
+
+```bash
+# Get refs for clickable elements
+browser refs research
+
+# Output:
+# [1] button "Sign In"
+# [2] input[type=text] placeholder="Search"
+# [3] a "Documentation"
+
+# Click by ref number
+browser click research 1
+
+# Type into input
+browser type research 2 "search query"
+
+# Press keys
+browser press research Enter
+browser press research Tab
+browser press research Escape
+```
+
+### Step 4: Screenshot
+
+```bash
+browser screenshot research
+# Output: /path/to/screenshot.png
+
+# Specific tab
+browser screenshot research a1b2
+
+# Custom path
+browser screenshot research --output ./my-screenshot.png
+```
+
+### Step 5: Complete the task
+
+```bash
+browser done research
+```
+
+This closes all tabs owned by the task. The browser window stays open for other tasks.
+
+## Multi-Task Example
+
+Multiple agents can work on the same profile simultaneously:
+
+```bash
+# Agent 1 starts research task
+browser start --profile work --task agent1-research --url https://arxiv.org
+
+# Agent 2 starts monitoring task (same profile, same window)
+browser start --profile work --task agent2-monitor --url https://grafana.internal
+
+# Each agent manages only its own tabs
+browser navigate agent1-research https://papers.nips.cc
+browser navigate agent2-monitor https://prometheus.internal
+
+# Tasks complete independently
+browser done agent1-research  # agent2's tabs remain
+```
+
+## Evaluate JavaScript
+
+Run JavaScript in the page context:
+
+```bash
+browser evaluate research "document.title"
+browser evaluate research "document.querySelectorAll('a').length"
+browser evaluate research "localStorage.getItem('token')"
+```
+
+## Status and Debugging
+
+```bash
+# Show all running profiles and tasks
+browser status
+
+# Output:
+# work (port 9200, pid 12345)
+#   TASK          TABS    CREATED
+#   research      3       5m ago
+#   monitoring    1       2m ago
+
+# JSON output for scripting
+browser status --json
+```
+
+## Command Reference
+
+### Profiles
+
+```
+browser profiles list              List all profiles
+browser profiles create <name>     Create profile (--browser, --secrets, --binary)
+browser profiles show <name>       Show profile details
+browser profiles delete <name>     Delete profile
+```
+
+### Tasks
+
+```
+browser start                      Start task (--profile, --task, --url)
+browser done <task>                Complete task, close its tabs
+browser stop <task>                Alias for done
+browser status                     Show running tasks
+browser tasks                      List all tasks
+```
+
+### Navigation
+
+```
+browser navigate <task> <url>      Navigate current tab
+browser tab add <task> <url>       Open new tab
+browser tab focus <task> <hint>    Switch to tab (ID prefix or URL substring)
+browser tab close <task> [id]      Close tab(s)
+browser tab list <task>            List tabs
+```
+
+### Interaction
+
+```
+browser refs <task>                Get interactive element refs
+browser click <task> <ref>         Click element
+browser type <task> <ref> <text>   Type into element
+browser press <task> <key>         Press key (Enter, Tab, Escape, etc)
+browser hover <task> <ref>         Hover over element
+browser screenshot <task>          Take screenshot
+browser evaluate <task> <expr>     Run JavaScript
+```
+
+## Tips
+
+- **Tab hints are fuzzy** — `browser tab focus task git` matches `https://github.com`
+- **Refs reset on navigation** — call `browser refs` again after page changes
+- **Screenshots auto-compress** — JPEG quality reduces until under 100KB for token efficiency
+- **Login state persists** — authenticate once per profile, all future tasks are logged in
