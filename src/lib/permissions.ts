@@ -192,26 +192,26 @@ export function getTotalPermissionRuleCount(): number {
 }
 
 /**
- * A permission set recipe — names a set and lists which groups it composes.
- * Lives at ~/.agents/permissions/sets/<name>.yaml.
+ * A permission preset recipe — names a preset and lists which groups it composes.
+ * Lives at ~/.agents/permissions/presets/<name>.yaml.
  */
-export interface PermissionSetRecipe {
+export interface PermissionPresetRecipe {
   name: string;
   description?: string;
   includes: string[];
 }
 
 /** Env var that selects which set recipe to apply at sync time. */
-export const PERMISSION_SET_ENV_VAR = 'AGENTS_PERMISSION_SET';
+export const PERMISSION_PRESET_ENV_VAR = 'AGENTS_PERMISSION_PRESET';
 
 /**
- * Read a permission set recipe by name from ~/.agents/permissions/sets/.
+ * Read a permission preset recipe by name from ~/.agents/permissions/presets/.
  * Returns null if the recipe file is missing or malformed.
  */
-export function readPermissionSetRecipe(name: string): PermissionSetRecipe | null {
-  const setsDir = path.join(getPermissionsDir(), 'sets');
+export function readPermissionPresetRecipe(name: string): PermissionPresetRecipe | null {
+  const presetsDir = path.join(getPermissionsDir(), 'presets');
   for (const ext of ['.yaml', '.yml']) {
-    const filePath = safeJoin(setsDir, name + ext);
+    const filePath = safeJoin(presetsDir, name + ext);
     if (!fs.existsSync(filePath)) continue;
     try {
       const content = fs.readFileSync(filePath, 'utf-8');
@@ -231,11 +231,11 @@ export function readPermissionSetRecipe(name: string): PermissionSetRecipe | nul
 }
 
 /**
- * Return the active permission set name from AGENTS_PERMISSION_SET env var,
+ * Return the active permission preset name from AGENTS_PERMISSION_PRESET env var,
  * or null if unset. Caller decides the default behavior when null.
  */
-export function getActivePermissionSetName(): string | null {
-  const v = process.env[PERMISSION_SET_ENV_VAR];
+export function getActivePermissionPresetName(): string | null {
+  const v = process.env[PERMISSION_PRESET_ENV_VAR];
   return v && v.trim() ? v.trim() : null;
 }
 
