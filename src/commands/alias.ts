@@ -12,11 +12,11 @@ import chalk from 'chalk';
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { getAgentsDir } from '../lib/state.js';
+import { getUserAgentsDir } from '../lib/state.js';
 import { getShimsDir } from '../lib/shims.js';
 import { ALL_AGENT_IDS, AGENTS } from '../lib/agents.js';
 
-const ALIASES_FILE = path.join(getAgentsDir(), 'aliases.json');
+const ALIASES_FILE = path.join(getUserAgentsDir(), 'aliases.json');
 
 interface AliasMap { [name: string]: string }
 

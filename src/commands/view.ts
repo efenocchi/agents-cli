@@ -56,7 +56,7 @@ import {
   removeShim,
 } from '../lib/shims.js';
 import { getAgentResources, listResources } from '../lib/resources.js';
-import { getAgentsDir, getUserAgentsDir, getPromptcutsPath } from '../lib/state.js';
+import { getAgentsDir, getUserAgentsDir, getEffectivePromptcutsPath, readMergedPromptcuts } from '../lib/state.js';
 import { isGitRepo, getGitSyncStatus } from '../lib/git.js';
 import { getCentralRulesFileName } from '../lib/rules/rules.js';
 import { getConfiguredRunStrategy } from '../lib/rotate.js';
@@ -614,24 +614,19 @@ async function showAgentResources(agentId: AgentId, requestedVersion: string): P
     }
   }
 
-  // Render the single ~/.agents/promptcuts.yaml (cross-agent, not per-version).
-  // Reads the file to surface the shortcut count — cheap (<1KB typical).
+  // Render promptcuts (cross-agent, not per-version). Shortcuts are layered
+  // across system + user files with user precedence; the displayed file path
+  // is whichever is "live" — user if it exists, else system.
   function renderPromptcuts(): void {
     console.log(chalk.bold(`\nPromptcuts\n`));
-    const promptcutsPath = getPromptcutsPath();
-    if (!fs.existsSync(promptcutsPath)) {
+    const merged = readMergedPromptcuts();
+    const count = Object.keys(merged).length;
+    if (count === 0) {
       console.log(`  ${chalk.gray('none')}`);
       return;
     }
-    let count = 0;
-    try {
-      const parsed = yaml.parse(fs.readFileSync(promptcutsPath, 'utf-8')) as { shortcuts?: Record<string, unknown> } | null;
-      count = parsed?.shortcuts ? Object.keys(parsed.shortcuts).length : 0;
-    } catch {
-      count = 0;
-    }
     const label = `${count} shortcut${count === 1 ? '' : 's'}`;
-    console.log(`  ${chalk.green(label).padEnd(24)} ${chalk.gray(formatPath(promptcutsPath, cwd))}`);
+    console.log(`  ${chalk.green(label).padEnd(24)} ${chalk.gray(formatPath(getEffectivePromptcutsPath(), cwd))}`);
   }
 
   // 1. Agent CLI info

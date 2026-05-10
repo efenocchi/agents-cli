@@ -15,9 +15,44 @@ import * as TOML from 'smol-toml';
 import { AGENTS, ALL_AGENT_IDS, HOOKS_CAPABLE_AGENTS } from './agents.js';
 import { supports, explainSkip } from './capabilities.js';
 import { setGeminiAutoUpdateDisabled, updateGeminiSettings } from './gemini-settings.js';
-import { getAgentsDir, getHooksDir as getSystemHooksDir, getUserHooksDir, getUserAgentsDir, getProjectAgentsDir } from './state.js';
+import { getAgentsDir, getHooksDir as getSystemHooksDir, getUserHooksDir, getUserAgentsDir, getSystemAgentsDir, getProjectAgentsDir } from './state.js';
 
 function getCentralHooksDir(): string { return getUserHooksDir(); }
+
+/**
+ * Resolve a hook script's absolute path by checking the user dir first
+ * (where `installHooksCentrally` lands new files) and falling back to the
+ * system dir (where npm-shipped defaults live). Returns null if neither
+ * exists. Mirrors the precedence used by `listCentralHooks`.
+ */
+function resolveHookScriptPath(script: string): string | null {
+  for (const root of [getUserAgentsDir(), getSystemAgentsDir()]) {
+    const candidate = path.join(root, 'hooks', script);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Prefixes used for stale-entry cleanup in agent settings files. A registered
+ * hook command is considered "managed by us" if it lives under either
+ * `~/.agents/hooks/` (user) or `~/.agents-system/hooks/` (system). Cleanup
+ * filters use this list so leftover entries from either dir get garbage
+ * collected on rewrite.
+ */
+function getManagedHookPrefixes(): string[] {
+  return [
+    path.join(getUserAgentsDir(), 'hooks') + path.sep,
+    path.join(getSystemAgentsDir(), 'hooks') + path.sep,
+  ];
+}
+
+function isManagedHookCommand(command: string, prefixes: string[]): boolean {
+  for (const prefix of prefixes) {
+    if (command.startsWith(prefix)) return true;
+  }
+  return false;
+}
 import { getEffectiveHome, getVersionHomePath, listInstalledVersions } from './versions.js';
 import type { AgentId, InstalledHook, ManifestHook } from './types.js';
 
@@ -654,10 +689,12 @@ type CodexHooksFile = {
 /**
  * Register hooks as lifecycle events in an agent's config.
  * Reads hooks.yaml manifest, merges into the agent's config file(s).
- * Only manages hooks whose command paths are under ~/.agents/hooks/.
- * Does not remove user-added hooks.
+ * Only manages hooks whose command paths are under ~/.agents/hooks/ or
+ * ~/.agents-system/hooks/. Does not remove user-added hooks.
  *
- * @param agentsDirOverride - Override the agents dir (used in tests to inject a temp path).
+ * @param agentsDirOverride - When provided, treats this single dir as the
+ *   only managed hook root. Used by tests to inject a temp path. In normal
+ *   operation, both user and system roots are consulted with user precedence.
  */
 export function registerHooksToSettings(
   agentId: AgentId,
@@ -670,16 +707,26 @@ export function registerHooksToSettings(
     return { registered: [], errors: [] };
   }
 
-  const agentsDir = agentsDirOverride ?? getAgentsDir();
+  const overrideRoots = agentsDirOverride ? [agentsDirOverride] : null;
+  const resolveScript = (script: string): string | null => {
+    if (overrideRoots) {
+      const candidate = path.join(overrideRoots[0], 'hooks', script);
+      return fs.existsSync(candidate) ? candidate : null;
+    }
+    return resolveHookScriptPath(script);
+  };
+  const managedPrefixes = overrideRoots
+    ? [path.join(overrideRoots[0], 'hooks') + path.sep]
+    : getManagedHookPrefixes();
 
   if (agentId === 'claude') {
-    return registerHooksForClaude(versionHome, manifest, agentsDir);
+    return registerHooksForClaude(versionHome, manifest, resolveScript, managedPrefixes);
   }
   if (agentId === 'codex') {
-    return registerHooksForCodex(versionHome, manifest, agentsDir);
+    return registerHooksForCodex(versionHome, manifest, resolveScript, managedPrefixes);
   }
   if (agentId === 'gemini') {
-    return registerHooksForGemini(versionHome, manifest, agentsDir);
+    return registerHooksForGemini(versionHome, manifest, resolveScript, managedPrefixes);
   }
   return { registered: [], errors: [] };
 }
@@ -698,7 +745,8 @@ const GEMINI_EVENT_MAP: Record<string, string> = {
 function registerHooksForClaude(
   versionHome: string,
   manifest: Record<string, ManifestHook>,
-  agentsDir: string
+  resolveScript: (script: string) => string | null,
+  managedPrefixes: string[]
 ): { registered: string[]; errors: string[] } {
   const registered: string[] = [];
   const errors: string[] = [];
@@ -723,14 +771,14 @@ function registerHooksForClaude(
 
   // Build set of all command paths the current manifest will register.
   // Used to garbage-collect stale entries left behind after hook renames.
-  const managedHooksPrefix = path.join(agentsDir, 'hooks') + path.sep;
   const currentManifestPaths = new Set<string>();
   for (const hookDef of Object.values(manifest)) {
     if (!hookDef.events || hookDef.events.length === 0) continue;
-    currentManifestPaths.add(path.join(agentsDir, 'hooks', hookDef.script));
+    const resolved = resolveScript(hookDef.script);
+    if (resolved) currentManifestPaths.add(resolved);
   }
 
-  // Remove stale entries: any hook command under ~/.agents/hooks/ that isn't
+  // Remove stale entries: any hook command under a managed root that isn't
   // in the current manifest is a leftover from a renamed/deleted hook script.
   for (const eventEntries of Object.values(hooks)) {
     if (!Array.isArray(eventEntries)) continue;
@@ -740,7 +788,7 @@ function registerHooksForClaude(
     }>) {
       if (!group.hooks) continue;
       group.hooks = group.hooks.filter(
-        (h) => !h.command.startsWith(managedHooksPrefix) || currentManifestPaths.has(h.command)
+        (h) => !isManagedHookCommand(h.command, managedPrefixes) || currentManifestPaths.has(h.command)
       );
     }
   }
@@ -756,9 +804,9 @@ function registerHooksForClaude(
   for (const [name, hookDef] of Object.entries(manifest)) {
     if (!hookDef.events || hookDef.events.length === 0) continue;
 
-    const commandPath = path.join(agentsDir, 'hooks', hookDef.script);
-    if (!fs.existsSync(commandPath)) {
-      errors.push(`${name}: script not found at ${commandPath}`);
+    const commandPath = resolveScript(hookDef.script);
+    if (!commandPath) {
+      errors.push(`${name}: script not found in user or system hooks dir`);
       continue;
     }
 
@@ -811,7 +859,8 @@ function registerHooksForClaude(
 function registerHooksForCodex(
   versionHome: string,
   manifest: Record<string, ManifestHook>,
-  agentsDir: string
+  resolveScript: (script: string) => string | null,
+  managedPrefixes: string[]
 ): { registered: string[]; errors: string[] } {
   const registered: string[] = [];
   const errors: string[] = [];
@@ -841,11 +890,11 @@ function registerHooksForCodex(
   }
 
   // Build set of current manifest command paths for codex to GC stale entries
-  const managedHooksPrefix = path.join(agentsDir, 'hooks') + path.sep;
   const currentManifestPaths = new Set<string>();
   for (const hookDef of Object.values(manifest)) {
     if (!hookDef.events || hookDef.events.length === 0) continue;
-    currentManifestPaths.add(path.join(agentsDir, 'hooks', hookDef.script));
+    const resolved = resolveScript(hookDef.script);
+    if (resolved) currentManifestPaths.add(resolved);
   }
 
   // Remove stale entries from all event groups
@@ -853,7 +902,7 @@ function registerHooksForCodex(
     for (const group of eventGroups) {
       if (!group.hooks) continue;
       group.hooks = group.hooks.filter(
-        (h) => !h.command.startsWith(managedHooksPrefix) || currentManifestPaths.has(h.command)
+        (h) => !isManagedHookCommand(h.command, managedPrefixes) || currentManifestPaths.has(h.command)
       );
     }
   }
@@ -864,9 +913,9 @@ function registerHooksForCodex(
   for (const [name, hookDef] of Object.entries(manifest)) {
     if (!hookDef.events || hookDef.events.length === 0) continue;
 
-    const commandPath = path.join(agentsDir, 'hooks', hookDef.script);
-    if (!fs.existsSync(commandPath)) {
-      errors.push(`${name}: script not found at ${commandPath}`);
+    const commandPath = resolveScript(hookDef.script);
+    if (!commandPath) {
+      errors.push(`${name}: script not found in user or system hooks dir`);
       continue;
     }
 
@@ -954,7 +1003,8 @@ function registerHooksForCodex(
 function registerHooksForGemini(
   versionHome: string,
   manifest: Record<string, ManifestHook>,
-  agentsDir: string
+  resolveScript: (script: string) => string | null,
+  managedPrefixes: string[]
 ): { registered: string[]; errors: string[] } {
   const registered: string[] = [];
   const errors: string[] = [];
@@ -969,11 +1019,11 @@ function registerHooksForGemini(
       }
       const hooks = config.hooks as Record<string, unknown[]>;
 
-      const managedHooksPrefix = path.join(agentsDir, 'hooks') + path.sep;
       const currentManifestPaths = new Set<string>();
       for (const hookDef of Object.values(manifest)) {
         if (!hookDef.events || hookDef.events.length === 0) continue;
-        currentManifestPaths.add(path.join(agentsDir, 'hooks', hookDef.script));
+        const resolved = resolveScript(hookDef.script);
+        if (resolved) currentManifestPaths.add(resolved);
       }
 
       for (const eventEntries of Object.values(hooks)) {
@@ -983,7 +1033,7 @@ function registerHooksForGemini(
         }>) {
           if (!group.hooks) continue;
           group.hooks = group.hooks.filter(
-            (h) => !h.command.startsWith(managedHooksPrefix) || currentManifestPaths.has(h.command)
+            (h) => !isManagedHookCommand(h.command, managedPrefixes) || currentManifestPaths.has(h.command)
           );
         }
       }
@@ -997,9 +1047,9 @@ function registerHooksForGemini(
       for (const [name, hookDef] of Object.entries(manifest)) {
         if (!hookDef.events || hookDef.events.length === 0) continue;
 
-        const commandPath = path.join(agentsDir, 'hooks', hookDef.script);
-        if (!fs.existsSync(commandPath)) {
-          errors.push(`${name}: script not found at ${commandPath}`);
+        const commandPath = resolveScript(hookDef.script);
+        if (!commandPath) {
+          errors.push(`${name}: script not found in user or system hooks dir`);
           continue;
         }
 
