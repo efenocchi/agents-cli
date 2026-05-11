@@ -1,5 +1,5 @@
 import { CDPClient, discoverBrowserWsUrl, verifyBrowserIdentity } from '../cdp.js';
-import { launchBrowser, allocatePort, getPortOccupant } from '../chrome.js';
+import { launchBrowser, getPortOccupant } from '../chrome.js';
 import type { BrowserProfile } from '../types.js';
 
 export interface LocalConnection {
@@ -46,7 +46,7 @@ export async function connectLocal(
       );
     }
 
-    const newPort = allocatePort();
+    const newPort = port;
     const chromeOpts = { ...profile.chrome, viewport: profile.viewport };
     const { pid, wsUrl } = await launchBrowser(
       profile.name,

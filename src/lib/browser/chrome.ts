@@ -95,7 +95,7 @@ export async function launchBrowser(
   const userDataDir = path.join(runtimeDir, 'chrome-data');
   fs.mkdirSync(userDataDir, { recursive: true });
 
-  const viewport = options.viewport ?? { width: 1440, height: 900 };
+  const viewport = options.viewport ?? { width: 1512, height: 982 };
   const args = [
     `--remote-debugging-port=${port}`,
     `--user-data-dir=${userDataDir}`,

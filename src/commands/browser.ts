@@ -8,6 +8,7 @@ import {
   deleteProfile,
   getProfileRuntimeDir,
   extractConfiguredPort,
+  findFreeProfilePort,
   type BrowserProfile,
 } from '../lib/browser/profiles.js';
 import { findBrowserPath, getPortOccupant } from '../lib/browser/chrome.js';
@@ -72,11 +73,11 @@ function registerProfilesCommands(browser: Command): void {
     .command('create <name>')
     .description('Create a new browser profile')
     .requiredOption('-b, --browser <type>', `Browser type: ${VALID_BROWSERS.join(', ')}`)
-    .requiredOption('-e, --endpoint <url>', 'CDP endpoint URL (repeatable)', collect, [])
+    .option('-e, --endpoint <url>', 'CDP endpoint URL (repeatable; auto-assigned if omitted)', collect, [])
     .option('-s, --secrets <bundle>', 'Secrets bundle to inject')
     .option('-d, --description <text>', 'Profile description')
     .option('--headless', 'Run in headless mode')
-    .option('--window <WxH>', 'Window size, e.g. 1600x1000')
+    .option('--window <WxH>', 'Window size, e.g. 1512x982')
     .option('--position <X,Y>', 'Window position on screen, e.g. 80,80')
     .action(async (name: string, opts) => {
       if (!/^[a-z][a-z0-9-]*$/.test(name)) {
@@ -89,14 +90,22 @@ function registerProfilesCommands(browser: Command): void {
         process.exit(1);
       }
 
+      // Auto-assign a free port if no endpoint was provided
+      let endpoints: string[] = opts.endpoint;
+      if (endpoints.length === 0) {
+        const freePort = await findFreeProfilePort();
+        endpoints = [`cdp://127.0.0.1:${freePort}`];
+      }
+
+      // Viewport is mandatory — default to 1512x982 if --window is not provided
       let viewport: { width: number; height: number; x?: number; y?: number } = {
-        width: 1440,
-        height: 900,
+        width: 1512,
+        height: 982,
       };
       if (opts.window) {
         const m = String(opts.window).match(/^(\d+)x(\d+)$/);
         if (!m) {
-          console.error('--window must be WxH, e.g. 1600x1000');
+          console.error('--window must be WxH, e.g. 1512x982');
           process.exit(1);
         }
         viewport.width = parseInt(m[1], 10);
@@ -116,7 +125,7 @@ function registerProfilesCommands(browser: Command): void {
         name,
         description: opts.description,
         browser: opts.browser,
-        endpoints: opts.endpoint,
+        endpoints,
         secrets: opts.secrets,
         chrome: opts.headless ? { headless: true } : undefined,
         viewport,

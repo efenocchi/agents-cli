@@ -1,4 +1,5 @@
 import * as path from 'path';
+import { execSync } from 'child_process';
 import {
   getBrowserRuntimeDir as getBrowserRuntimeDirRoot,
   readMeta,
@@ -62,10 +63,51 @@ export async function getProfile(name: string): Promise<BrowserProfile | null> {
   return configToProfile(name, config);
 }
 
+/**
+ * Find a port in 9222–9399 that is not already claimed by another profile
+ * and is not currently in use by any OS process.
+ */
+export async function findFreeProfilePort(): Promise<number> {
+  const profiles = await listProfiles();
+  const usedByProfile = new Set<number>();
+  for (const p of profiles) {
+    const port = extractConfiguredPort(p);
+    if (port !== undefined) usedByProfile.add(port);
+  }
+
+  for (let port = 9222; port <= 9399; port++) {
+    if (usedByProfile.has(port)) continue;
+    try {
+      execSync(`lsof -i :${port}`, { stdio: 'ignore' });
+      // lsof succeeded → something is listening → port is in use
+    } catch {
+      // lsof threw → nothing on this port → it's free
+      return port;
+    }
+  }
+
+  throw new Error('No available ports in range 9222-9399');
+}
+
 export async function createProfile(profile: BrowserProfile): Promise<void> {
   const meta = readMeta();
   if (meta.browser?.[profile.name]) {
     throw new Error(`Profile "${profile.name}" already exists`);
+  }
+
+  // Check for port collision with existing profiles
+  const newPort = extractConfiguredPort(profile);
+  if (newPort !== undefined && meta.browser) {
+    for (const [existingName, existingConfig] of Object.entries(meta.browser)) {
+      const existingProfile = configToProfile(existingName, existingConfig);
+      const existingPort = extractConfiguredPort(existingProfile);
+      if (existingPort === newPort) {
+        throw new Error(
+          `Port ${newPort} is already used by profile "${existingName}". ` +
+            `Each profile must own a unique port. Use a different port or omit --endpoint to auto-assign.`
+        );
+      }
+    }
   }
 
   // Resolve the browser binary at create time. Fails fast with an actionable
