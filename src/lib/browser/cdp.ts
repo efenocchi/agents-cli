@@ -141,13 +141,13 @@ export function verifyBrowserIdentity(
 
   const matches: Record<string, string[]> = {
     chrome: ['chrome', 'google-chrome', 'headlesschrome'],
-    chromium: ['chromium', 'headlesschrome'],
+    chromium: ['chromium', 'headlesschrome', 'chrome'],
     // Comet reports itself as plain "Chrome/<version>" in /json/version — it
     // doesn't override the Chromium branding. Accept chrome here so attaching
     // to a Comet instance doesn't trip a false "identity mismatch".
     comet: ['comet', 'chrome'],
-    brave: ['brave', 'brave-browser'],
-    edge: ['edge', 'microsoft-edge', 'msedge'],
+    brave: ['brave', 'brave-browser', 'chrome'],
+    edge: ['edge', 'microsoft-edge', 'msedge', 'chrome'],
   };
 
   const accepted = matches[expected] || [expected];

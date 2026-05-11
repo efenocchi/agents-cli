@@ -71,4 +71,16 @@ describe('verifyBrowserIdentity', () => {
   it('accepts brave-browser for brave', () => {
     expect(() => verifyBrowserIdentity('brave-browser', 'brave', 9222)).not.toThrow();
   });
+
+  it('accepts chrome for chromium (Chromium-family browsers report Chrome/<version>)', () => {
+    expect(() => verifyBrowserIdentity('chrome', 'chromium', 9222)).not.toThrow();
+  });
+
+  it('accepts chrome for brave (Brave reports Chrome/<version> in /json/version)', () => {
+    expect(() => verifyBrowserIdentity('chrome', 'brave', 9222)).not.toThrow();
+  });
+
+  it('accepts chrome for edge (Edge reports Chrome/<version> in /json/version)', () => {
+    expect(() => verifyBrowserIdentity('chrome', 'edge', 9222)).not.toThrow();
+  });
 });
