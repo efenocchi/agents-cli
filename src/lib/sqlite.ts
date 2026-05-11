@@ -98,12 +98,18 @@ class Database {
     this.inner.exec(`PRAGMA ${stmt}`);
   }
 
-  // Wrap fn in BEGIN/COMMIT, ROLLBACK on throw. Manual on both runtimes
-  // because node:sqlite has no `db.transaction(fn)` and the manual form is
-  // identical in shape to what better-sqlite3 / bun:sqlite produce.
+  // Wrap fn in BEGIN IMMEDIATE/COMMIT, ROLLBACK on throw. Manual on both
+  // runtimes because node:sqlite has no `db.transaction(fn)`.
+  //
+  // BEGIN IMMEDIATE (not BEGIN DEFERRED) is required for write transactions in
+  // WAL mode. BEGIN DEFERRED upgrades the lock lazily on the first write; if
+  // another writer already committed since the transaction started, SQLite
+  // returns SQLITE_BUSY_SNAPSHOT (a sub-code of SQLITE_BUSY that the busy
+  // handler does NOT retry). BEGIN IMMEDIATE claims the write lock upfront so
+  // the busy handler fires correctly and respects busy_timeout.
   transaction<Args extends unknown[], R>(fn: (...args: Args) => R): (...args: Args) => R {
     return (...args: Args): R => {
-      this.inner.exec('BEGIN');
+      this.inner.exec('BEGIN IMMEDIATE');
       try {
         const result = fn(...args);
         this.inner.exec('COMMIT');

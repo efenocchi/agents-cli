@@ -204,18 +204,19 @@ export function getDB(): Database.Database {
   db.pragma('journal_mode = WAL');
   db.pragma('synchronous = NORMAL');
   db.pragma('temp_store = MEMORY');
-  // Wait up to 10s instead of failing immediately on SQLITE_BUSY. Multiple
-  // agents (CLIs, indexers, hooks) all open this DB concurrently; without a
-  // busy timeout, parallel writers throw "database is locked" the moment one
-  // holds the write lock. 10s is well above any realistic transaction here.
-  db.pragma('busy_timeout = 10000');
+  // Wait up to 30s instead of failing immediately on SQLITE_BUSY. Multiple
+  // agents (CLIs, skills, hooks) open this DB concurrently. The first scan of
+  // a new version home can take longer than 10s; concurrent callers need enough
+  // headroom to wait. The ledger-recheck in upsertSessionsBatch makes
+  // subsequent writers near-instant, so 30s is a rarely-reached safety net.
+  db.pragma('busy_timeout = 30000');
   db.exec(SCHEMA);
 
   const current = db.prepare(`SELECT value FROM meta WHERE key = 'schema_version'`).get() as { value: string } | undefined;
   const currentVersion = current ? parseInt(current.value, 10) : 0;
 
   if (!current) {
-    db.prepare(`INSERT INTO meta(key, value) VALUES ('schema_version', ?)`).run(String(SCHEMA_VERSION));
+    db.prepare(`INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?)`).run(String(SCHEMA_VERSION));
   } else if (currentVersion < SCHEMA_VERSION) {
     migrateSchema(db, currentVersion);
     db.prepare(`INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', ?)`).run(String(SCHEMA_VERSION));
@@ -232,7 +233,7 @@ export function getDB(): Database.Database {
     ]) {
       try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch { /* ignore */ }
     }
-    db.prepare(`INSERT INTO meta(key, value) VALUES ('legacy_indexes_removed', '1')`).run();
+    db.prepare(`INSERT OR IGNORE INTO meta(key, value) VALUES ('legacy_indexes_removed', '1')`).run();
   }
 
   dbInstance = db;
@@ -445,8 +446,40 @@ export function upsertSessionsBatch(
       scanned_at = excluded.scanned_at
   `);
 
+  // Build a lookup from canonical file path → entry, used inside the write
+  // transaction to re-check the ledger AFTER acquiring the lock. When a
+  // concurrent process already committed the same files between our
+  // filterChangedFiles call and now, the ledger will have matching (mtime, size)
+  // rows — we skip those entries, making the second writer's transaction a
+  // near-instant no-op rather than redundant work.
+  const byPath = new Map(
+    entries
+      .filter(e => e.scan && e.meta.filePath)
+      .map(e => [canonicalLedgerKey(e.meta.filePath), e]),
+  );
+
   const txn = db.transaction((items: typeof entries) => {
+    // Re-read the ledger now that we hold the write lock. Any file committed
+    // by a concurrent process since our pre-scan is visible here.
+    const CHUNK = 500; // stay under SQLite's 999-variable limit
+    const alreadyIndexed = new Set<string>();
+    const paths = [...byPath.keys()];
+    for (let i = 0; i < paths.length; i += CHUNK) {
+      const chunk = paths.slice(i, i + CHUNK);
+      const phs = chunk.map(() => '?').join(',');
+      const rows = db
+        .prepare(`SELECT file_path, file_mtime_ms, file_size FROM scan_ledger WHERE file_path IN (${phs})`)
+        .all(...chunk) as Array<{ file_path: string; file_mtime_ms: number; file_size: number }>;
+      for (const row of rows) {
+        const entry = byPath.get(row.file_path);
+        if (entry && row.file_mtime_ms === entry.scan!.fileMtimeMs && row.file_size === entry.scan!.fileSize) {
+          alreadyIndexed.add(entry.meta.id);
+        }
+      }
+    }
+
     for (const { meta, content, scan } of items) {
+      if (alreadyIndexed.has(meta.id)) continue;
       upsert.run({
         id: meta.id,
         short_id: meta.shortId,
