@@ -113,4 +113,32 @@ describe('buildDispatchBody', () => {
     });
     expect(body.account_tokens).toBeUndefined();
   });
+
+  it('includes strategy when balanced', () => {
+    const body = buildDispatchBody({
+      prompt: 'x',
+      resolvedRepos: [{ installation_id: 1, repo_owner: 'a', repo_name: 'b' }],
+      strategy: 'balanced',
+    });
+    expect(body.strategy).toBe('balanced');
+  });
+
+  it('omits strategy when not set', () => {
+    const body = buildDispatchBody({
+      prompt: 'x',
+      resolvedRepos: [{ installation_id: 1, repo_owner: 'a', repo_name: 'b' }],
+    });
+    expect(body.strategy).toBeUndefined();
+  });
+
+  it('balanced strategy coexists with no account_manifest', () => {
+    const body = buildDispatchBody({
+      prompt: 'x',
+      resolvedRepos: [{ installation_id: 1, repo_owner: 'a', repo_name: 'b' }],
+      strategy: 'balanced',
+      accountManifest: null,
+    });
+    expect(body.strategy).toBe('balanced');
+    expect(body.account_manifest).toBeUndefined();
+  });
 });
