@@ -1,5 +1,83 @@
 # Changelog
 
+## 1.16.0
+
+**System-repo sweep: ~/.agents-system reduced to npm-shipped defaults only**
+
+- New migrators move every form of operational state out of ~/.agents-system into user-side buckets: sessions, teams (live + per-run), trash, repos (→ ~/.agents-<alias>/ peer dirs), legacy swarm/, cache/, cloud/.
+- SQLite DBs merge row-level (INSERT OR IGNORE) into the user-side DB; filesystem dirs merge dir-by-dir with user-side winning on collision.
+- Dead artifacts dropped automatically: bin/agents-keychain-*, empty shims/, .DS_Store-only versions/ skeletons.
+- Unrecognized leftover dirs print a one-line stderr warning so future drift surfaces immediately.
+- Migration diagnostics moved to stderr — `eval "$(agents secrets export …)"` stops being polluted by log lines.
+- DB merge now skips FTS5 virtual + shadow tables (previously corrupted the session_text index). Indexer re-populates FTS on the next scan.
+- Stale ~/.agents-system/agents.yaml is now dropped when a user copy exists.
+
+**~/.agents split into .history/ and .cache/ buckets**
+
+- Durable runtime state (sessions, versions, runs, teams/agents, trash, backups) moves to ~/.agents/.history/.
+- Regenerable runtime state (shims, packages, cloud, logs, swarmify, helpers, browser runtime, fetch cache, dot-files) moves to ~/.agents/.cache/.
+- Single-line gitignore for backing up ~/.agents/ — no more per-subdir cherry-picking.
+
+**Browser: profiles fold into agents.yaml + many new automation commands**
+
+- Profile YAMLs at ~/.agents/browser/profiles/*.yaml now live as a `browser:` section in agents.yaml. Single user-facing file, single sync.
+- Single window per profile; `start` renamed to `open`; new tab subcommands; session history with profile picker; viewport piped through to the launched browser.
+- New commands: `agents browser set viewport`, `set device`, `devices`, `console`, `errors`, `requests`, `responsebody`, `wait`, `download`, `waitdownload`.
+
+**Hooks: hooks.yaml folded into agents.yaml `hooks:` section**
+
+- ~/.agents/hooks.yaml is migrated into agents.yaml on first run; the standalone file is removed.
+- System repo ships the same shape — one config file, layered project > user > system.
+
+**Sessions & secrets**
+
+- `agents secrets exec <bundle> -- <command>` injects a bundle's env vars into a one-shot subprocess (no shell-state leakage).
+- `agents sessions` now groups active sessions by workspace and surfaces session topics in the picker.
+- Session discovery scans both version repos; migrator merges overlapping versions instead of leaving duplicates.
+
+**Renames**
+
+- `agents init` → `agents setup`.
+- `permissions/sets/` → `permissions/presets/` (resource directory + on-disk migration to match rules/presets convention).
+
+**Dev**
+
+- Crabbox remote-test profile (~$0.14/hr) + `scripts/sandbox.sh` documented in README and CLAUDE.md. Tests run remotely to avoid freezing the local machine.
+
+## 1.15.0
+
+**Secrets: Linux support via libsecret/GNOME Keyring**
+
+- `agents secrets` now works on Linux backed by libsecret/GNOME Keyring with the same UX as macOS Keychain. Headless workarounds documented.
+- New `agents password generate` subcommand.
+- Lifecycle events emitted for secrets and other subsystems; richer metadata (timing helpers) on the events system.
+
+**Browser**
+
+- HTTP and WebSocket endpoint support for remote browsers.
+- Concurrent Electron profile forks no longer step on each other; cleanup hardened.
+- Remote browser restart works; SSH port handling improved; page target created when none exists for Electron apps.
+- Events emitted for navigation and screenshots.
+
+**First-run UX**
+
+- Improved new-user experience: clearer CLI help, better defaults, audit-log opt-out, better run-timing display.
+
+**Prune**
+
+- `agents prune` learned `trash`, `sessions`, and `runs` cleanup targets.
+
+**Fixes**
+
+- Command-injection hole in daemon + secrets closed.
+- Layered permission resolution corrected; daemon tests isolated from real user state.
+- `.tmp-bun` gitignore pattern fixed.
+- `codex` interactive mode no longer routes through `exec` subcommand.
+
+**Docs**
+
+- Security/privacy section in README, browser skill + automation guide, FAQ updated with audit-log transparency.
+
 ## 1.14.6
 
 **Fix: OAuth token refresh now persists to Keychain**
@@ -18,45 +96,6 @@
 - New `custom` browser type that requires a binary path
 - Works with both local and SSH-based browser connections
 - Example profile for Rush: `agents browser profiles edit rush --browser custom --binary "/Applications/Rush.app/Contents/MacOS/Rush" --electron`
-
-## Unreleased
-
-**System repo moved to `~/.agents-system`; `~/.agents` is now free for user-owned repos**
-
-- The CLI-managed global root now lives under `~/.agents-system/` instead of `~/.agents/`. This includes `agents.yaml`, commands, skills, hooks, rules, versions, shims, routines, runs, plugins, secrets, and managed extra-repo clones.
-- `agents init` and `agents pull` now bootstrap and sync the fixed system repo in `~/.agents-system/`.
-- `agents repo init` now supports `--from <source>` and no longer pushes users toward generated names like `~/.agents-mine`; `~/.agents` is now the recommended clean path for a personal repo.
-
-**Scheduler merged into `routines`; top-level help simplified**
-
-- `agents routines add` now auto-starts the background scheduler when it is not already running. First-time users no longer need a separate `daemon start` step — the common path is just `routines add`.
-- New subcommands mirror the old daemon controls under `routines`: `agents routines start`, `stop`, `status`, `scheduler-logs`. The word "daemon" is no longer exposed in user-facing help.
-- `agents daemon <start|stop|status|logs>` is **deprecated**. It still works but prints a migration warning and is hidden from top-level help. Will be removed in v2.0.
-- Top-level help restructured: the old "Automation" grab-bag is gone. Commands are now grouped as **Run agents** (`run`, `teams`, `sessions`), **Schedule** (`routines`), and **Helpers** (`pty`).
-
-**Dev: sqlite auto-rebuild on `bun run test`**
-
-- Added `scripts/rebuild-sqlite.sh` and a `pretest` hook. The script probes `better-sqlite3` by opening an in-memory database and only rebuilds (plain `node-gyp rebuild --release`, no Electron flags) when the probe fails. Fixes the napi ABI mismatch that `bun install` sometimes leaves behind.
-
-**Default upstream moved to `phnx-labs/.agents`**
-
-- `DEFAULT_SYSTEM_REPO` now resolves to `gh:phnx-labs/.agents` — a curated, org-owned upstream. `agents pull` (no args) and `agents fork` target the new repo on fresh machines.
-- Existing users whose upstream still points at the old default see a one-time nudge on `agents pull --upstream` with the command to switch. Nothing else breaks; legacy remotes continue to work.
-
-**Consolidate sessions command**
-
-- Removed `agents sessions list` and `agents sessions view` subcommands; `agents sessions` is now a single smart command
-- Positional query resolves to a session ID (renders directly), a path (`.`, `../`, `/path`) to filter by project, or free text for search
-- Claude `/resume` history fallback (previously only in `view`) now fires from the top-level command too
-- Picker shows the selected-session preview by default; space hides it
-
-**Session view flags: filters + formats split cleanly**
-
-- Formats: default is the activity summary; `--markdown` renders the full conversation (user + assistant + thinking + tool calls) as markdown; `--json` emits normalized events
-- Filters compose orthogonally: `--include <roles>` / `--exclude <roles>` (values: `user`, `assistant`, `thinking`, `tools`), plus `--first N` / `--last N` to slice by turn (a turn starts at each user message)
-- Any filter flag without `--markdown`/`--json` defaults to markdown output — summary is an aggregate view so filters would be meaningless there
-- Mutual exclusion: `--include` vs `--exclude`, `--first` vs `--last`
-- Removed `--transcript`, `--trace`, `--timeline`, and `--role` (replaced by the above)
 
 ## 1.12.0
 
