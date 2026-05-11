@@ -64,6 +64,7 @@ vi.mock('../src/lib/state.js', () => {
     get recordVersionResources() { return () => {}; },
     get clearVersionResources() { return () => {}; },
     get getVersionResources() { return () => null; },
+    get ensureVersionResourcePatterns() { return () => {}; },
     get getActiveRulesPreset() { return () => 'default'; },
     get setActiveRulesPreset() { return () => {}; },
     get getCliVersionCachePath() { return () => path.join(hoistedState.AGENTS_DIR, '.cli-version-cache.json'); },
@@ -155,6 +156,7 @@ function emptyResources(): AvailableResources {
     permissions: [],
     subagents: [],
     plugins: [],
+    workflows: [],
     promptcuts: false,
   };
 }
@@ -360,6 +362,7 @@ describe('getNewResources', () => {
       permissions: ['01-core'],
       subagents: ['researcher'],
       plugins: ['my-plugin'],
+      workflows: [],
       promptcuts: false,
     };
     const synced = emptyResources();
@@ -378,6 +381,7 @@ describe('getNewResources', () => {
       permissions: ['01-core', '02-node'],
       subagents: ['researcher', 'writer'],
       plugins: ['p1', 'p2'],
+      workflows: [],
       promptcuts: false,
     };
     const synced: AvailableResources = {
@@ -389,6 +393,7 @@ describe('getNewResources', () => {
       permissions: ['01-core'],
       subagents: ['researcher'],
       plugins: ['p1'],
+      workflows: [],
       promptcuts: false,
     };
 
@@ -413,6 +418,7 @@ describe('getNewResources', () => {
       permissions: ['f'],
       subagents: ['g'],
       plugins: ['h'],
+      workflows: [],
       promptcuts: false,
     };
     const diff = getNewResources(resources, resources);
