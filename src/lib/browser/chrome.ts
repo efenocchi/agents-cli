@@ -95,6 +95,7 @@ export async function launchBrowser(
   const userDataDir = path.join(runtimeDir, 'chrome-data');
   fs.mkdirSync(userDataDir, { recursive: true });
 
+  const viewport = options.viewport ?? { width: 1440, height: 900 };
   const args = [
     `--remote-debugging-port=${port}`,
     `--user-data-dir=${userDataDir}`,
@@ -103,7 +104,10 @@ export async function launchBrowser(
     '--disable-backgrounding-occluded-windows',
     '--disable-renderer-backgrounding',
     ...(options.headless ? ['--headless=new'] : []),
-    ...(options.viewport ? [`--window-size=${options.viewport.width},${options.viewport.height}`] : []),
+    `--window-size=${viewport.width},${viewport.height}`,
+    ...(viewport.x !== undefined && viewport.y !== undefined
+      ? [`--window-position=${viewport.x},${viewport.y}`]
+      : []),
     ...(options.args || []),
   ];
 
@@ -213,4 +217,33 @@ export function allocatePort(): number {
   }
 
   throw new Error('No available ports in range 9200-9300');
+}
+
+export interface PortOccupant {
+  pid: number;
+  command: string;
+}
+
+/**
+ * Identify the process listening on a TCP port via lsof. Returns null when nothing is bound.
+ * Used for clearer error messages when a profile's configured port is taken by a non-debug
+ * process (e.g. Comet running without --remote-debugging-port).
+ */
+export function getPortOccupant(port: number): PortOccupant | null {
+  try {
+    const out = execSync(`lsof -nP -iTCP:${port} -sTCP:LISTEN -Fpcn`, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    let pid = 0;
+    let command = '';
+    for (const line of out.split('\n')) {
+      if (line.startsWith('p')) pid = parseInt(line.slice(1), 10) || 0;
+      else if (line.startsWith('c') && !command) command = line.slice(1);
+    }
+    if (!pid) return null;
+    return { pid, command: command || 'unknown' };
+  } catch {
+    return null;
+  }
 }

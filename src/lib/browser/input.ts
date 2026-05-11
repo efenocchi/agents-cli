@@ -32,6 +32,21 @@ export async function hoverAtCoords(
   );
 }
 
+export async function scrollAtCoords(
+  cdp: CDPClient,
+  sessionId: string,
+  x: number,
+  y: number,
+  deltaX: number,
+  deltaY: number
+): Promise<void> {
+  await cdp.send(
+    'Input.dispatchMouseEvent',
+    { type: 'mouseWheel', x, y, deltaX, deltaY },
+    sessionId
+  );
+}
+
 export async function typeText(
   cdp: CDPClient,
   sessionId: string,

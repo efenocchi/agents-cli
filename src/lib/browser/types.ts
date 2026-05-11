@@ -9,13 +9,13 @@ export interface BrowserProfile {
   endpoints: string[];
   chrome?: ChromeOptions;
   secrets?: string;
-  viewport?: { width: number; height: number };
+  viewport?: { width: number; height: number; x?: number; y?: number };
 }
 
 export interface ChromeOptions {
   headless?: boolean;
   args?: string[];
-  viewport?: { width: number; height: number };
+  viewport?: { width: number; height: number; x?: number; y?: number };
 }
 
 export interface Task {
@@ -68,6 +68,7 @@ export interface HistoricalTask {
 
 export type IPCAction =
   | 'start'
+  | 'launch-profile'
   | 'done'
   | 'stop'
   | 'status'
@@ -84,6 +85,7 @@ export type IPCAction =
   | 'type'
   | 'press'
   | 'hover'
+  | 'scroll'
   | 'set-viewport'
   | 'set-device'
   | 'console'
@@ -106,6 +108,10 @@ export interface IPCRequest {
   ref?: number;
   text?: string;
   key?: string;
+  scrollX?: number;
+  scrollY?: number;
+  scrollAtX?: number;
+  scrollAtY?: number;
   interactive?: boolean;
   limit?: number;
   // Viewport/device
@@ -141,6 +147,8 @@ export interface IPCResponse {
   result?: unknown;
   path?: string;
   refs?: string;
+  port?: number;
+  pid?: number;
   // Console/errors
   logs?: ConsoleEntry[];
   errors?: ErrorEntry[];
