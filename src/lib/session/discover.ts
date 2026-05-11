@@ -14,7 +14,7 @@ import * as crypto from 'crypto';
 import * as readline from 'readline';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { getAgentsDir, getUserAgentsDir } from '../state.js';
+import { getAgentsDir, getUserAgentsDir, getHistoryDir } from '../state.js';
 
 const execFileAsync = promisify(execFile);
 import type { SessionAgentId, SessionMeta } from './types.js';
@@ -40,13 +40,12 @@ import {
 
 const HOME = os.homedir();
 // Versions can live under either repo: the user repo (current canonical
-// location, ~/.agents/versions/) or the system repo (legacy / npm-shipped,
+// location, ~/.agents/.history/versions/) or the system repo (legacy / npm-shipped,
 // ~/.agents-system/versions/). Both must be scanned — sessions written by
 // any installed version end up in that version's projects/ dir, and the user
 // can be running one repo's version while another repo holds older versions
 // whose JSONLs the user still wants to search.
-const VERSIONS_ROOTS = [getUserAgentsDir(), getAgentsDir()];
-const AGENTS_DIR = getAgentsDir();
+const VERSIONS_ROOTS = [getHistoryDir(), getAgentsDir()];
 const RUSH_SESSIONS_DIR = path.join(HOME, '.rush', 'sessions');
 const HERMES_SESSIONS_DIR = path.join(HOME, '.hermes', 'sessions');
 
@@ -314,7 +313,7 @@ export function getAgentSessionDirs(agent: string, subdir: string): string[] {
     } catch { /* dir unreadable */ }
   }
 
-  const backupsBase = path.join(AGENTS_DIR, 'backups', agent);
+  const backupsBase = path.join(getHistoryDir(), 'backups', agent);
   if (fs.existsSync(backupsBase)) {
     try {
       for (const ts of fs.readdirSync(backupsBase)) {
