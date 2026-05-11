@@ -24,6 +24,7 @@ import { parseSSE } from './stream.js';
 import { listInstalledVersions, getVersionHomePath } from '../versions.js';
 import { getAccountInfo } from '../agents.js';
 import { loadClaudeOauth } from '../usage.js';
+import { selectBalancedVersion } from '../rotate.js';
 
 const PROXY_BASE = 'https://api.prix.dev';
 const USER_YAML = path.join(os.homedir(), '.rush', 'user.yaml');
@@ -246,18 +247,37 @@ async function readClaudeCredentialsBlob(home: string): Promise<string | null> {
  * Returns null when no Claude versions are signed in (the dispatch falls back
  * to the platform-wide key, current behavior).
  */
-export async function buildAccountManifest(): Promise<AccountManifest | null> {
-  const versions = listInstalledVersions('claude');
-  if (versions.length === 0) return null;
+export async function buildAccountManifest(strategy?: string): Promise<AccountManifest | null> {
+  let candidateVersions: Array<{ version: string; email: string }>;
+
+  if (strategy === 'balanced') {
+    // Use the same health-checked, deduped-by-email set that `agents run --balanced` uses.
+    // `result.healthy` contains one candidate per unique email, ordered by remaining capacity.
+    const result = await selectBalancedVersion('claude');
+    if (!result || result.healthy.length === 0) return null;
+    candidateVersions = result.healthy
+      .filter((c) => !!c.email)
+      .map((c) => ({ version: c.version, email: c.email! }));
+  } else {
+    // Default: all installed versions that have a signed-in account.
+    const versions = listInstalledVersions('claude');
+    if (versions.length === 0) return null;
+    const rows = await Promise.all(
+      versions.map(async (version) => {
+        const home = getVersionHomePath('claude', version);
+        const info = await getAccountInfo('claude', home);
+        return info.email ? { version, email: info.email } : null;
+      }),
+    );
+    candidateVersions = rows.filter((r): r is { version: string; email: string } => r !== null);
+  }
 
   const entries: AccountManifestEntry[] = [];
-  for (const version of versions) {
+  for (const { version, email } of candidateVersions) {
     const home = getVersionHomePath('claude', version);
-    const info = await getAccountInfo('claude', home);
-    if (!info.email) continue;
     const blob = await readClaudeCredentialsBlob(home);
     if (!blob) continue;
-    entries.push({ version, email: info.email, cred_fp: sha256(blob) });
+    entries.push({ version, email, cred_fp: sha256(blob) });
   }
 
   if (entries.length === 0) return null;
@@ -367,7 +387,8 @@ export class RushCloudProvider implements CloudProvider {
       })),
     );
 
-    const accountManifest = await buildAccountManifest();
+    const strategy = (options.providerOptions as { strategy?: string } | undefined)?.strategy;
+    const accountManifest = await buildAccountManifest(strategy);
 
     const body = buildDispatchBody({
       agent: options.agent,
@@ -399,7 +420,7 @@ export class RushCloudProvider implements CloudProvider {
               ``,
               `To consent, re-run with one of:`,
               `  AGENTS_RUSH_UPLOAD_TOKENS=1 agents cloud run ...`,
-              `  agents cloud run --upload-account-tokens ...   # if your CLI exposes this flag`,
+              `  agents cloud run --upload-account-tokens ...`,
               ``,
               `Consent will be recorded at ${RUSH_CONSENT_PATH} so you won't be asked again.`,
               `Remove that file to revoke.`,

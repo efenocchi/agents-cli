@@ -121,6 +121,18 @@ Examples:
     .option('--env <id>', 'Codex Cloud environment ID')
     .option('--computer <name>', 'Factory/Droid computer target')
     .option('--mode <mode>', 'Execution mode (e.g., plan, edit, full)')
+    .option(
+      '-b, --balanced',
+      'Shortcut for --strategy balanced. Route the factory run across all healthy accounts.',
+    )
+    .option(
+      '--strategy <strategy>',
+      'Account selection strategy for the factory: balanced. Sends all healthy accounts so the factory pod rotates between them on rate-limit.',
+    )
+    .option(
+      '--upload-account-tokens',
+      'Upload Claude OAuth credentials to Rush Cloud on first dispatch (consent recorded for future runs).',
+    )
     .option('--json', 'Structured JSON output')
     .option('--no-follow', 'Dispatch and exit without streaming output')
     .addHelpText('after', `
@@ -182,6 +194,10 @@ Examples:
       if (options.env) dispatchOptions.providerOptions!.env = options.env as string;
       if (options.computer) dispatchOptions.providerOptions!.computer = options.computer as string;
       if (options.mode) dispatchOptions.providerOptions!.mode = options.mode as string;
+      if (options.balanced || (options.strategy as string) === 'balanced') {
+        dispatchOptions.providerOptions!.strategy = 'balanced';
+      }
+      if (options.uploadAccountTokens) dispatchOptions.providerOptions!.uploadAccountTokens = true;
 
       // Dispatch
       const spinner = ora({ text: `Dispatching to ${provider.name}...`, stream: process.stderr }).start();
