@@ -24,7 +24,7 @@ import {
   type HistoricalTask,
 } from './types.js';
 import { getRefs, resolveRefToCoords, type RefOpts, type RefNode } from './refs.js';
-import { clickAtCoords, hoverAtCoords, typeText, pressKey, focusNode } from './input.js';
+import { clickAtCoords, hoverAtCoords, scrollAtCoords, typeText, pressKey, focusNode } from './input.js';
 import { emit } from '../events.js';
 
 interface ProfileConnection {
@@ -141,6 +141,27 @@ export class BrowserService {
     }
 
     return { task: taskId, name: taskName, tabId };
+  }
+
+  /**
+   * Launch (or attach to) the profile's browser without creating a task. Used by
+   * `agents browser profiles launch <name>` so users can warm up the browser —
+   * including the first-run onboarding flow — before any automation starts.
+   */
+  async launchProfile(profileName: string): Promise<{ port: number; pid: number }> {
+    const profile = await getProfile(profileName);
+    if (!profile) {
+      throw new Error(`Profile "${profileName}" not found`);
+    }
+
+    let conn = this.connections.get(profileName);
+    if (!conn) {
+      conn = await this.connectProfile(profile);
+      this.connections.set(profileName, conn);
+    }
+
+    emit('browser.launch', { profile: profileName, task: '', pid: conn.pid });
+    return { port: conn.port, pid: conn.pid };
   }
 
   async stop(taskName: string): Promise<{ ok: boolean; profile?: string }> {
@@ -563,6 +584,24 @@ export class BrowserService {
     const { nodeMap } = await getRefs(conn.cdp, sessionId, { interactive: false, limit: 1000 });
     const { x, y } = await resolveRefToCoords(conn.cdp, sessionId, nodeMap, ref);
     await hoverAtCoords(conn.cdp, sessionId, x, y);
+  }
+
+  async scroll(
+    taskId: string,
+    deltaX: number,
+    deltaY: number,
+    atX?: number,
+    atY?: number,
+    tabHint?: string
+  ): Promise<void> {
+    const { conn, task } = await this.findTask(taskId);
+    const shortId = tabHint ? await this.resolveTabHint(conn, task, tabHint) : this.resolveCurrentTab(task);
+    const cdpTargetId = this.getCdpTargetId(task, shortId);
+    const target = await this.getTarget(conn, cdpTargetId);
+    if (!target) throw new Error(`Tab ${shortId} not found`);
+
+    const sessionId = await this.getSessionId(conn, target.targetId);
+    await scrollAtCoords(conn.cdp, sessionId, atX ?? 0, atY ?? 0, deltaX, deltaY);
   }
 
   async status(profileName?: string): Promise<ProfileStatus[]> {

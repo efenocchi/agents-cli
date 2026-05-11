@@ -1,5 +1,5 @@
 import { CDPClient, discoverBrowserWsUrl, verifyBrowserIdentity } from '../cdp.js';
-import { launchBrowser, allocatePort } from '../chrome.js';
+import { launchBrowser, allocatePort, getPortOccupant } from '../chrome.js';
 import type { BrowserProfile } from '../types.js';
 
 export interface LocalConnection {
@@ -31,6 +31,21 @@ export async function connectLocal(
     if (err instanceof Error && err.message.startsWith('Browser identity mismatch')) {
       throw err;
     }
+
+    // Distinguish "nothing listening on this port" (fine to launch fresh) from
+    // "something is listening but it's not a debuggable browser" (bail loudly —
+    // silently launching on a different port leads to confusing `pid 0` and
+    // `CDP connection not open` errors downstream).
+    const occupant = getPortOccupant(port);
+    if (occupant) {
+      throw new Error(
+        `Port ${port} is occupied by ${occupant.command} (pid ${occupant.pid}) but is ` +
+          `not serving the Chrome DevTools Protocol. Either stop that process ` +
+          `(\`kill ${occupant.pid}\`) or restart it with \`--remote-debugging-port=${port}\` ` +
+          `so profile "${profile.name}" can attach.`
+      );
+    }
+
     const newPort = allocatePort();
     const chromeOpts = { ...profile.chrome, viewport: profile.viewport };
     const { pid, wsUrl } = await launchBrowser(

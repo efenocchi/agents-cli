@@ -6,6 +6,7 @@ import {
 } from '../state.js';
 import type { BrowserProfileConfig } from '../types.js';
 import type { BrowserProfile } from './types.js';
+import { findBrowserPath } from './chrome.js';
 
 export type { BrowserProfile } from './types.js';
 
@@ -66,6 +67,12 @@ export async function createProfile(profile: BrowserProfile): Promise<void> {
   if (meta.browser?.[profile.name]) {
     throw new Error(`Profile "${profile.name}" already exists`);
   }
+
+  // Resolve the browser binary at create time. Fails fast with an actionable
+  // error ("Comet not installed at /Applications/Comet.app") rather than
+  // deferring the failure to the first task. `findBrowserPath` short-circuits
+  // for browser=custom without a binary by throwing — same outcome.
+  findBrowserPath(profile.browser, profile.binary);
 
   meta.browser = meta.browser ?? {};
   meta.browser[profile.name] = profileToConfig(profile);

@@ -1,11 +1,17 @@
 import { Command } from 'commander';
+import * as fs from 'fs';
+import * as path from 'path';
 import {
   listProfiles,
   getProfile,
   createProfile,
   deleteProfile,
+  getProfileRuntimeDir,
+  extractConfiguredPort,
   type BrowserProfile,
 } from '../lib/browser/profiles.js';
+import { findBrowserPath, getPortOccupant } from '../lib/browser/chrome.js';
+import { discoverBrowserWsUrl, verifyBrowserIdentity } from '../lib/browser/cdp.js';
 import { sendIPCRequest } from '../lib/browser/ipc.js';
 import { browserTaskPicker, type BrowserTask } from './browser-picker.js';
 import { isInteractiveTerminal } from './utils.js';
@@ -70,6 +76,8 @@ function registerProfilesCommands(browser: Command): void {
     .option('-s, --secrets <bundle>', 'Secrets bundle to inject')
     .option('-d, --description <text>', 'Profile description')
     .option('--headless', 'Run in headless mode')
+    .option('--window <WxH>', 'Window size, e.g. 1600x1000')
+    .option('--position <X,Y>', 'Window position on screen, e.g. 80,80')
     .action(async (name: string, opts) => {
       if (!/^[a-z][a-z0-9-]*$/.test(name)) {
         console.error('Profile name must be lowercase alphanumeric with hyphens');
@@ -81,6 +89,29 @@ function registerProfilesCommands(browser: Command): void {
         process.exit(1);
       }
 
+      let viewport: { width: number; height: number; x?: number; y?: number } = {
+        width: 1440,
+        height: 900,
+      };
+      if (opts.window) {
+        const m = String(opts.window).match(/^(\d+)x(\d+)$/);
+        if (!m) {
+          console.error('--window must be WxH, e.g. 1600x1000');
+          process.exit(1);
+        }
+        viewport.width = parseInt(m[1], 10);
+        viewport.height = parseInt(m[2], 10);
+      }
+      if (opts.position) {
+        const m = String(opts.position).match(/^(-?\d+),(-?\d+)$/);
+        if (!m) {
+          console.error('--position must be X,Y, e.g. 80,80');
+          process.exit(1);
+        }
+        viewport.x = parseInt(m[1], 10);
+        viewport.y = parseInt(m[2], 10);
+      }
+
       const profile: BrowserProfile = {
         name,
         description: opts.description,
@@ -88,6 +119,7 @@ function registerProfilesCommands(browser: Command): void {
         endpoints: opts.endpoint,
         secrets: opts.secrets,
         chrome: opts.headless ? { headless: true } : undefined,
+        viewport,
       };
 
       await createProfile(profile);
@@ -131,6 +163,171 @@ function registerProfilesCommands(browser: Command): void {
     .action(async (name: string) => {
       await deleteProfile(name);
       console.log(`Deleted profile: ${name}`);
+    });
+
+  profiles
+    .command('launch <name>')
+    .description('Start (or attach to) the profile\'s browser without creating a task')
+    .action(async (name: string) => {
+      const profile = await getProfile(name);
+      if (!profile) {
+        console.error(`Profile "${name}" not found`);
+        process.exit(1);
+      }
+      const response = await sendIPCRequest({
+        action: 'launch-profile',
+        profile: name,
+      });
+      if (!response.ok) {
+        console.error(response.error);
+        process.exit(1);
+      }
+      const pidLabel = response.pid ? `pid ${response.pid}` : 'attached';
+      console.log(`Launched "${name}" on port ${response.port} (${pidLabel})`);
+      console.log(`Next: agents browser start --profile ${name} --url <url>`);
+    });
+
+  profiles
+    .command('doctor <name>')
+    .description('Diagnose a browser profile: binary, port, user-data-dir, onboarding state')
+    .action(async (name: string) => {
+      const profile = await getProfile(name);
+      if (!profile) {
+        console.error(`Profile "${name}" not found`);
+        process.exit(1);
+      }
+
+      const checks: Array<{ label: string; ok: boolean; detail: string }> = [];
+
+      // 1. Binary exists for declared browser type
+      try {
+        const binPath = findBrowserPath(profile.browser, profile.binary);
+        checks.push({ label: 'binary', ok: true, detail: binPath });
+      } catch (err) {
+        checks.push({
+          label: 'binary',
+          ok: false,
+          detail: err instanceof Error ? err.message : String(err),
+        });
+      }
+
+      // 2. Configured port: free, or already serving the expected browser?
+      const port = extractConfiguredPort(profile);
+      let attachingToExistingBrowser = false;
+      if (port === undefined) {
+        checks.push({ label: 'port', ok: true, detail: 'no port in endpoint' });
+      } else {
+        const occupant = getPortOccupant(port);
+        if (!occupant) {
+          checks.push({ label: 'port', ok: true, detail: `${port} is free` });
+        } else {
+          try {
+            const { browser } = await discoverBrowserWsUrl(port);
+            verifyBrowserIdentity(browser, profile.browser, port);
+            checks.push({
+              label: 'port',
+              ok: true,
+              detail: `${port} serving ${browser} (pid ${occupant.pid})`,
+            });
+            attachingToExistingBrowser = true;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            checks.push({
+              label: 'port',
+              ok: false,
+              detail: `${port} taken by ${occupant.command} (pid ${occupant.pid}) — ${msg}`,
+            });
+          }
+        }
+      }
+
+      // 3. User-data-dir exists and is writable
+      const userDataDir = path.join(getProfileRuntimeDir(name), 'chrome-data');
+      try {
+        if (!fs.existsSync(userDataDir)) {
+          checks.push({
+            label: 'user-data-dir',
+            ok: true,
+            detail: `will be created at ${userDataDir}`,
+          });
+        } else {
+          fs.accessSync(userDataDir, fs.constants.W_OK);
+          checks.push({ label: 'user-data-dir', ok: true, detail: userDataDir });
+        }
+      } catch (err) {
+        checks.push({
+          label: 'user-data-dir',
+          ok: false,
+          detail: `${userDataDir} not writable: ${err instanceof Error ? err.message : err}`,
+        });
+      }
+
+      // 4. Onboarding heuristic — only meaningful when WE will launch the
+      // browser. When the configured port is already serving a debuggable
+      // browser, that browser owns its own user-data-dir and the priming
+      // status of our managed dir is irrelevant.
+      if (attachingToExistingBrowser) {
+        checks.push({
+          label: 'onboarding',
+          ok: true,
+          detail: 'n/a (attaching to existing browser)',
+        });
+      } else {
+        const localStatePath = path.join(userDataDir, 'Local State');
+        if (fs.existsSync(localStatePath)) {
+          const size = fs.statSync(localStatePath).size;
+          if (size > 0) {
+            checks.push({ label: 'onboarding', ok: true, detail: 'Local State present' });
+          } else {
+            checks.push({
+              label: 'onboarding',
+              ok: false,
+              detail: 'Local State is empty — run `agents browser profiles prime ' + name + '`',
+            });
+          }
+        } else {
+          checks.push({
+            label: 'onboarding',
+            ok: false,
+            detail: 'Not primed yet — run `agents browser profiles prime ' + name + '`',
+          });
+        }
+      }
+
+      const allOk = checks.every((c) => c.ok);
+      for (const c of checks) {
+        const marker = c.ok ? 'OK  ' : 'FAIL';
+        console.log(`${marker}  ${c.label.padEnd(15)} ${c.detail}`);
+      }
+      if (!allOk) process.exit(1);
+    });
+
+  profiles
+    .command('prime <name>')
+    .description('Launch the profile so you can complete first-run onboarding interactively')
+    .action(async (name: string) => {
+      const profile = await getProfile(name);
+      if (!profile) {
+        console.error(`Profile "${name}" not found`);
+        process.exit(1);
+      }
+      const response = await sendIPCRequest({
+        action: 'launch-profile',
+        profile: name,
+      });
+      if (!response.ok) {
+        console.error(response.error);
+        process.exit(1);
+      }
+      const pidLabel = response.pid ? `pid ${response.pid}` : 'attached';
+      console.log(`Launched "${name}" on port ${response.port} (${pidLabel}).`);
+      console.log('');
+      console.log('Finish any first-run / onboarding screens in the browser window');
+      console.log('(welcome, profile setup, default-browser prompt, sign-in, etc.).');
+      console.log('Once you reach a normal browsing surface, this profile is primed');
+      console.log('— its user-data-dir persists across runs, so you only do this once.');
+      console.log('');
+      console.log(`Next: agents browser start --profile ${name} --url <url>`);
     });
 }
 
@@ -437,7 +634,10 @@ function registerTaskCommands(browser: Command): void {
             profile.configuredPort && profile.configuredPort !== profile.port
               ? `port ${profile.port} (configured ${profile.configuredPort})`
               : `port ${profile.port}`;
-          console.log(`\n${profile.name} (${portLabel}, pid ${profile.pid})`);
+          // pid 0 means the daemon attached to a browser we didn't launch — no
+          // tracked pid. Render it as "attached" rather than the literal 0.
+          const pidLabel = profile.pid ? `pid ${profile.pid}` : 'attached';
+          console.log(`\n${profile.name} (${portLabel}, ${pidLabel})`);
           if (profile.tasks.length === 0) {
             console.log('  No active tasks');
           } else {
@@ -684,6 +884,31 @@ function registerTaskCommands(browser: Command): void {
       }
 
       console.log('Hovered');
+    });
+
+  browser
+    .command('scroll <task> <deltaX> <deltaY>')
+    .description('Scroll the page by pixel amount')
+    .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
+    .option('-x, --at-x <x>', 'X coordinate to dispatch scroll from (default 0)', parseInt)
+    .option('-y, --at-y <y>', 'Y coordinate to dispatch scroll from (default 0)', parseInt)
+    .action(async (task: string, deltaX: string, deltaY: string, opts) => {
+      const response = await sendIPCRequest({
+        action: 'scroll',
+        task,
+        tabId: opts.tab,
+        scrollX: parseInt(deltaX, 10),
+        scrollY: parseInt(deltaY, 10),
+        scrollAtX: opts.atX,
+        scrollAtY: opts.atY,
+      });
+
+      if (!response.ok) {
+        console.error(response.error);
+        process.exit(1);
+      }
+
+      console.log('Scrolled');
     });
 
   // ─── Viewport & Device ───────────────────────────────────────────────────────

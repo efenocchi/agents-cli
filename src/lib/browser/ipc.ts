@@ -95,6 +95,14 @@ export class BrowserIPCServer {
         };
       }
 
+      case 'launch-profile': {
+        if (!request.profile) {
+          return { ok: false, error: 'Profile required' };
+        }
+        const result = await this.service.launchProfile(request.profile);
+        return { ok: true, port: result.port, pid: result.pid };
+      }
+
       case 'done': {
         if (!request.task) {
           return { ok: false, error: 'Task required' };
@@ -233,6 +241,21 @@ export class BrowserIPCServer {
           return { ok: false, error: 'Task and ref required' };
         }
         await this.service.hover(request.task, request.ref, request.tabId);
+        return { ok: true };
+      }
+
+      case 'scroll': {
+        if (!request.task) {
+          return { ok: false, error: 'Task required' };
+        }
+        await this.service.scroll(
+          request.task,
+          request.scrollX ?? 0,
+          request.scrollY ?? 0,
+          request.scrollAtX,
+          request.scrollAtY,
+          request.tabId
+        );
         return { ok: true };
       }
 
