@@ -65,6 +65,11 @@ import { getConfiguredRunStrategy } from '../lib/rotate.js';
 import { confirm } from '@inquirer/prompts';
 import { formatPath, isInteractiveTerminal, isPromptCancelled } from './utils.js';
 
+function termLink(text: string, filePath: string): string {
+  const url = `file://${filePath}`;
+  return `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
+}
+
 function formatLastActive(date: Date | null): string {
   if (!date) return '';
   const now = Date.now();
@@ -597,7 +602,8 @@ async function showAgentResources(agentId: AgentId, requestedVersion: string): P
     }
 
     const versionStr = agentData.version ? ` (${agentData.version})` : '';
-    console.log(`  ${chalk.bold(agentData.agentName)}${chalk.gray(versionStr)}:`);
+    const agentHeader = home ? termLink(agentData.agentName, home) : agentData.agentName;
+    console.log(`  ${chalk.bold(agentHeader)}${chalk.gray(versionStr)}:`);
 
     for (const r of items) {
       let nameColor = chalk.cyan;
@@ -606,16 +612,16 @@ async function showAgentResources(agentId: AgentId, requestedVersion: string): P
       else if (r.syncState === 'modified') nameColor = chalk.yellow;
       else if (r.syncState === 'deleted') nameColor = chalk.red;
 
-      let display = nameColor(r.name);
+      const linkedName = r.path ? termLink(r.name, r.path) : r.name;
+      let display = nameColor(linkedName);
       if (r.ruleCount !== undefined) display += chalk.gray(` (${r.ruleCount} rules)`);
       // Source annotation: project overrides user, user overrides system
       const sourceTag = r.scope === 'project' ? chalk.blue('[project]')
         : r.scope === 'user' ? chalk.cyan('[user]')
         : chalk.gray('[system]');
       display += ` ${sourceTag}`;
-      const pathStr = r.path ? chalk.gray(formatPath(r.path, cwd)) : '';
       const syncStr = r.syncState ? chalk.gray(` [${r.syncState}]`) : '';
-      console.log(`    ${display.padEnd(38)} ${pathStr}${syncStr}`);
+      console.log(`    ${display}${syncStr}`);
     }
   }
 
@@ -705,15 +711,15 @@ async function showAgentResources(agentId: AgentId, requestedVersion: string): P
       else if (r.syncState === 'modified') nameColor = chalk.yellow;
       else if (r.syncState === 'deleted') nameColor = chalk.red;
 
-      let display = nameColor(r.name);
+      const linkedName = r.path ? termLink(r.name, r.path) : r.name;
+      let display = nameColor(linkedName);
       if (r.ruleCount !== undefined) display += chalk.gray(` (${r.ruleCount} rules)`);
       const sourceTag = r.scope === 'project' ? chalk.blue('[project]')
         : r.scope === 'user' ? chalk.cyan('[user]')
         : chalk.gray('[system]');
       display += ` ${sourceTag}`;
-      const pathStr = r.path ? chalk.gray(formatPath(r.path, cwd)) : '';
       const syncStr = r.syncState ? chalk.gray(` [${r.syncState}]`) : '';
-      console.log(`    ${display.padEnd(38)} ${pathStr}${syncStr}`);
+      console.log(`    ${display}${syncStr}`);
 
       // Show subrules for user-scope rules (the compiled CLAUDE.md)
       if (r.scope === 'user' && composedSubrules.length > 0) {
@@ -722,7 +728,8 @@ async function showAgentResources(agentId: AgentId, requestedVersion: string): P
             : sub.layerScope === 'user' ? chalk.cyan('[user]')
             : sub.layerScope === 'extra' ? chalk.magenta(`[${sub.layerAlias || 'extra'}]`)
             : chalk.gray('[system]');
-          console.log(`      ${chalk.gray('-')} ${sub.name} ${scopeLabel}`);
+          const linkedSubName = termLink(sub.name, sub.sourcePath);
+          console.log(`      ${chalk.gray('-')} ${linkedSubName} ${scopeLabel}`);
         }
       }
     }
