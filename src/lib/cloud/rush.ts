@@ -32,7 +32,7 @@ const USER_YAML = path.join(os.homedir(), '.rush', 'user.yaml');
 // Persistent consent record for uploading Claude OAuth blobs to Rush Cloud.
 // Created on first explicit consent (env var or flag); subsequent dispatches
 // see it and proceed without re-prompting.
-const RUSH_CONSENT_PATH = path.join(getCloudDir(), 'rush-consent.json');
+export const RUSH_CONSENT_PATH = path.join(getCloudDir(), 'rush-consent.json');
 const RUSH_CONSENT_ENV = 'AGENTS_RUSH_UPLOAD_TOKENS';
 
 interface RushConsentFile {
@@ -40,7 +40,7 @@ interface RushConsentFile {
   granted_by: 'env' | 'flag' | 'manual';
 }
 
-function hasRushUploadConsent(opts?: DispatchOptions): boolean {
+export function hasRushUploadConsent(opts?: DispatchOptions): boolean {
   if (process.env[RUSH_CONSENT_ENV] === '1') return true;
   const po = opts?.providerOptions as { uploadAccountTokens?: boolean } | undefined;
   if (po?.uploadAccountTokens === true) return true;
@@ -314,6 +314,7 @@ export function buildDispatchBody(input: {
   agent?: string;
   prompt: string;
   mode?: string;
+  strategy?: string;
   resolvedRepos: Array<{ installation_id: number; repo_owner: string; repo_name: string }>;
   accountManifest?: AccountManifest | null;
   accountTokens?: AccountTokenEntry[] | null;
@@ -327,6 +328,7 @@ export function buildDispatchBody(input: {
     prompt: input.prompt,
     repos: input.resolvedRepos,
     mode: input.mode,
+    ...(input.strategy ? { strategy: input.strategy } : {}),
   };
   if (input.resolvedRepos.length === 1) {
     body.installation_id = primary.installation_id;
@@ -340,6 +342,52 @@ export function buildDispatchBody(input: {
     body.account_tokens = input.accountTokens;
   }
   return body;
+}
+
+/** A single account registered in Rush Cloud's multi-account rotation pool. */
+export interface RemoteAccount {
+  id: string;
+  provider: string;
+  email: string | null;
+  subscription_type: string | null;
+  five_hour_pct: number | null;
+  seven_day_pct: number | null;
+  usage_fetched_at: string | null;
+  created_at: string;
+}
+
+/** Fetch all Claude accounts in this user's Rush Cloud rotation pool (no tokens). */
+export async function listRemoteAccounts(): Promise<RemoteAccount[]> {
+  const token = readToken();
+  const res = await api('GET', '/api/v1/cloud-accounts', token);
+  if (!res.ok) {
+    throw new Error(`Failed to list accounts (${res.status}): ${sanitizeErrorBody(await res.text())}`);
+  }
+  const data = await res.json() as { accounts: RemoteAccount[] };
+  return data.accounts ?? [];
+}
+
+/**
+ * Register a CLAUDE_CODE_OAUTH_TOKEN with Rush Cloud's rotation pool.
+ * The server validates the token against the Anthropic usage API and stores it
+ * encrypted in Vault. Returns the account metadata (no token).
+ */
+export async function addRemoteAccount(provider: string, pastedToken: string): Promise<RemoteAccount & { five_hour_pct: number | null; seven_day_pct: number | null }> {
+  const token = readToken();
+  const res = await api('POST', '/api/v1/cloud-accounts', token, { provider, token: pastedToken });
+  if (!res.ok) {
+    throw new Error(`Failed to add account (${res.status}): ${sanitizeErrorBody(await res.text())}`);
+  }
+  return await res.json() as RemoteAccount & { five_hour_pct: number | null; seven_day_pct: number | null };
+}
+
+/** Remove a Claude account from Rush Cloud's rotation pool by its ID. */
+export async function removeRemoteAccount(id: string): Promise<void> {
+  const token = readToken();
+  const res = await api('DELETE', `/api/v1/cloud-accounts/${encodeURIComponent(id)}`, token);
+  if (!res.ok) {
+    throw new Error(`Failed to remove account (${res.status}): ${sanitizeErrorBody(await res.text())}`);
+  }
 }
 
 export class RushCloudProvider implements CloudProvider {
@@ -388,7 +436,10 @@ export class RushCloudProvider implements CloudProvider {
     );
 
     const strategy = (options.providerOptions as { strategy?: string } | undefined)?.strategy;
-    const accountManifest = await buildAccountManifest(strategy);
+    // When balanced, the server owns the pool and rotates internally — no
+    // client-side manifest needed. We just forward the strategy so the server
+    // knows to load from Vault instead of waiting for a manifest.
+    const accountManifest = strategy === 'balanced' ? null : await buildAccountManifest();
 
     const body = buildDispatchBody({
       agent: options.agent,
@@ -396,6 +447,7 @@ export class RushCloudProvider implements CloudProvider {
       mode: options.providerOptions?.mode as string | undefined,
       resolvedRepos,
       accountManifest,
+      strategy,
     });
 
     let res = await api('POST', '/api/v1/cloud-runs', token, body);
