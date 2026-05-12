@@ -248,6 +248,81 @@ export function closeDB(): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Scan coordinator — prevents concurrent full scans across processes
+// ---------------------------------------------------------------------------
+
+/** How long a scan claim is trusted before it's considered stale (ms). */
+const SCAN_CLAIM_TTL_MS = 120_000; // 2 minutes
+
+function isProcessAlive(pid: number): boolean {
+  if (!pid || isNaN(pid)) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Try to claim the right to run the incremental scan. Returns true if this
+ * process should proceed with scanning, false if another live process is
+ * already scanning (caller should skip the scan and serve from the DB).
+ *
+ * Uses the `meta` table so it survives crashes — dead PIDs are detected via
+ * process.kill(pid, 0), stale entries via TTL. No external lock files needed.
+ *
+ * Wrapped in db.transaction() (BEGIN IMMEDIATE) so the read-then-write is
+ * atomic and busy_timeout retries correctly — bare auto-commit DML in WAL
+ * mode can return SQLITE_BUSY_SNAPSHOT which bypasses the busy handler.
+ */
+export function tryClaimScan(pid: number): boolean {
+  const db = getDB();
+
+  const txn = db.transaction((): boolean => {
+    const existing = db
+      .prepare(`SELECT value FROM meta WHERE key = 'scan_in_progress'`)
+      .get() as { value: string } | undefined;
+
+    if (existing) {
+      const parts = existing.value.split(':');
+      const existingPid = parseInt(parts[0], 10);
+      const existingTs = parseInt(parts[1], 10);
+      const ageMs = Date.now() - existingTs;
+      if (isProcessAlive(existingPid) && ageMs < SCAN_CLAIM_TTL_MS) {
+        return false; // another live process is scanning — skip
+      }
+      // Dead PID or expired TTL — take over below
+    }
+
+    db.prepare(`INSERT OR REPLACE INTO meta (key, value) VALUES ('scan_in_progress', ?)`)
+      .run(`${pid}:${Date.now()}`);
+    return true;
+  });
+
+  return txn();
+}
+
+/**
+ * Release the scan claim written by tryClaimScan. Only deletes the entry
+ * if it still belongs to this process (guards against TTL takeovers).
+ */
+export function releaseScan(pid: number): void {
+  const db = getDB();
+  const txn = db.transaction((): void => {
+    const existing = db
+      .prepare(`SELECT value FROM meta WHERE key = 'scan_in_progress'`)
+      .get() as { value: string } | undefined;
+    if (!existing) return;
+    const claimPid = parseInt(existing.value.split(':')[0], 10);
+    if (claimPid === pid) {
+      db.prepare(`DELETE FROM meta WHERE key = 'scan_in_progress'`).run();
+    }
+  });
+  txn();
+}
+
 /** Return the absolute path to the sessions database file. */
 export function getDBPath(): string {
   return DB_PATH;

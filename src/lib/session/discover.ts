@@ -34,6 +34,8 @@ import {
   querySessions,
   countSessions,
   ftsSearch,
+  tryClaimScan,
+  releaseScan,
   type ScanStamp,
   type QueryOptions,
 } from './db.js';
@@ -126,6 +128,12 @@ interface ScanEntry {
 /**
  * Discover sessions. Scans only files whose (mtime, size) have changed since
  * the last run; everything else is served from the SQLite cache.
+ *
+ * Only one process runs the incremental scan at a time. When many agents boot
+ * simultaneously (e.g. after a restart), the first to claim the scan slot does
+ * the work; the rest skip parsing entirely and serve from the DB. The claim is
+ * stored in the `meta` table — crash-safe via dead-PID detection and a 2-min
+ * TTL, no external lock files needed.
  */
 export async function discoverSessions(options?: DiscoverOptions): Promise<SessionMeta[]> {
   // Touch the DB so the schema is ready and connection is cached for this run.
@@ -134,20 +142,25 @@ export async function discoverSessions(options?: DiscoverOptions): Promise<Sessi
   const agents = options?.agent ? [options.agent] : SESSION_AGENTS;
   const onProgress = options?.onProgress;
 
-  // Incrementally re-scan changed files across all selected agents in parallel.
-  await Promise.all(
-    agents.map(agent => {
-      switch (agent) {
-        case 'claude': return scanClaudeIncremental(onProgress);
-        case 'codex': return scanCodexIncremental(onProgress);
-        case 'gemini': return scanGeminiIncremental(onProgress);
-        case 'opencode': return scanOpenCodeIncremental();
-        case 'openclaw': return scanOpenClawIncremental();
-        case 'rush': return scanRushIncremental(onProgress);
-        case 'hermes': return scanHermesIncremental(onProgress);
-      }
-    }),
-  );
+  if (tryClaimScan(process.pid)) {
+    try {
+      await Promise.all(
+        agents.map(agent => {
+          switch (agent) {
+            case 'claude': return scanClaudeIncremental(onProgress);
+            case 'codex': return scanCodexIncremental(onProgress);
+            case 'gemini': return scanGeminiIncremental(onProgress);
+            case 'opencode': return scanOpenCodeIncremental();
+            case 'openclaw': return scanOpenClawIncremental();
+            case 'rush': return scanRushIncremental(onProgress);
+            case 'hermes': return scanHermesIncremental(onProgress);
+          }
+        }),
+      );
+    } finally {
+      releaseScan(process.pid);
+    }
+  }
 
   const sessions = querySessions(buildQueryOptions(options, agents, { includeLimit: true }));
   return sessions;
