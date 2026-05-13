@@ -48,3 +48,6 @@ scripts/scrub-history.sh
 **/.gemini
 **/.tmp
 **/.tmp-bun
+
+# Plugin executables — built/installed artifacts, never committed
+**/plugins/*/bin/
