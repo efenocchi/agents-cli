@@ -19,6 +19,12 @@ TASK_ID="${TASK_ID:-$(date +%s)-$$}"
 # Crabbox config
 BOX_CLASS="${CRABBOX_CLASS:-cpx62}"
 
+# Read profile from .crabbox.yaml so we only pick boxes warmed for THIS repo.
+# Falls back to "default" if the file is missing or unparseable.
+PROFILE="${CRABBOX_PROFILE:-$(awk '/^profile:/ {print $2; exit}' "$REPO_ROOT/.crabbox.yaml" 2>/dev/null)}"
+PROFILE="${PROFILE:-default}"
+export PROFILE
+
 # GitHub .agents repo for syncing skills/commands
 AGENTS_REPO="${AGENTS_REPO:-git@github.com:phnx-labs/.agents.git}"
 
@@ -103,16 +109,34 @@ GITHUB_TOKEN=$(generate_github_token || true)
 eval "$(agents secrets export anthropic.com 2>/dev/null)" || true
 CLAUDE_CODE_OAUTH_TOKEN="${CLAUDE_CODE_OAUTH_TOKEN:-}"
 
-# Find or create a crabbox
+# Pick the slug of a running box matching $PROFILE, or empty if none.
+pick_box_for_profile() {
+  crabbox list --json 2>/dev/null | /usr/bin/python3 -c "
+import sys, json, os
+profile = os.environ['PROFILE']
+try:
+    boxes = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for b in boxes:
+    if b.get('status') != 'running': continue
+    if b.get('labels', {}).get('profile') != profile: continue
+    slug = b.get('labels', {}).get('slug', '')
+    if slug:
+        print(slug); break
+" 2>/dev/null || true
+}
+
+# Find or create a crabbox bound to $PROFILE
 get_or_create_box() {
   local box_id
-  box_id=$(crabbox list 2>/dev/null | grep -oE 'slug=[^ ]+' | head -1 | cut -d= -f2 || true)
+  box_id=$(pick_box_for_profile)
 
   if [[ -z "$box_id" ]]; then
-    echo "No running box found, warming up (~60s)..."
-    crabbox warmup --class "$BOX_CLASS" >/dev/null
+    echo "No running box for profile '$PROFILE', warming up (~60s)..."
+    crabbox warmup --class "$BOX_CLASS" --profile "$PROFILE" >/dev/null
     sleep 5
-    box_id=$(crabbox list | grep -oE 'slug=[^ ]+' | head -1 | cut -d= -f2)
+    box_id=$(pick_box_for_profile)
   fi
 
   echo "$box_id"

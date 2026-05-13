@@ -1,5 +1,5 @@
-profile: agents-cli-check
-class: beast
+profile: default
+class: cpx62
 capacity:
   market: spot
   strategy: most-available
