@@ -834,6 +834,7 @@ function registerTaskCommands(browser: Command): void {
     .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
     .option('--all', 'Include non-interactive elements')
     .option('-l, --limit <n>', 'Max elements (default 500)', '500')
+    .option('--json', 'Output machine-readable JSON')
     .action(async (task: string, opts) => {
       const response = await sendIPCRequest({
         action: 'refs',
@@ -844,8 +845,17 @@ function registerTaskCommands(browser: Command): void {
       });
 
       if (!response.ok) {
-        console.error(response.error);
+        if (opts.json) {
+          console.log(JSON.stringify({ ok: false, error: response.error }));
+        } else {
+          console.error(response.error);
+        }
         process.exit(1);
+      }
+
+      if (opts.json) {
+        console.log(JSON.stringify(response.nodes ?? [], null, 2));
+        return;
       }
 
       console.log(response.refs);
@@ -875,6 +885,7 @@ function registerTaskCommands(browser: Command): void {
     .command('type <task> <ref> <text>')
     .description('Type text into an element by ref')
     .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
+    .option('--clear', 'Clear editor content before typing')
     .action(async (task: string, ref: string, text: string, opts) => {
       const response = await sendIPCRequest({
         action: 'type',
@@ -882,6 +893,7 @@ function registerTaskCommands(browser: Command): void {
         tabId: opts.tab,
         ref: parseInt(ref, 10),
         text,
+        clear: opts.clear,
       });
 
       if (!response.ok) {

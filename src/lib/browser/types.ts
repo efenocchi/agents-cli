@@ -158,6 +158,7 @@ export interface IPCResponse {
   result?: unknown;
   path?: string;
   refs?: string;
+  nodes?: RefNodeJson[];
   port?: number;
   pid?: number;
   // Console/errors
@@ -195,6 +196,14 @@ export interface NetworkRequest {
   status?: number;
   mimeType?: string;
   timestamp: number;
+}
+
+export interface RefNodeJson {
+  ref: number;
+  role: string;
+  name: string;
+  attrs: string[];
+  editor?: string;
 }
 
 export interface DeviceDescriptor {
