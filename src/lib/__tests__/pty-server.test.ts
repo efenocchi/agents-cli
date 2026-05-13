@@ -20,7 +20,11 @@ const { TEST_HOME } = vi.hoisted(() => {
   const nodeOs = require('os');
   const nodeFs = require('fs');
   const nodePath = require('path');
-  const testHome = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'agents-pty-server-test-'));
+  // macOS sun_path is 104 chars; os.tmpdir() under /var/folders pushes the
+  // socket path over that and listen() returns EINVAL. /tmp resolves short
+  // on both Linux (/tmp) and macOS (/private/tmp) so the socket fits.
+  const tmpBase = process.platform === 'darwin' ? '/tmp' : nodeOs.tmpdir();
+  const testHome = nodeFs.mkdtempSync(nodePath.join(tmpBase, 'agents-pty-test-'));
   // Set before state.ts loads so its module-level HOME constant picks up the override.
   process.env.HOME = testHome;
   return { TEST_HOME: testHome };
