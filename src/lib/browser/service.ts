@@ -26,12 +26,98 @@ import {
 import { getRefs, resolveRefToCoords, type RefOpts, type RefNode } from './refs.js';
 import { clickAtCoords, hoverAtCoords, scrollAtCoords, typeText, pressKey, focusNode } from './input.js';
 import { emit } from '../events.js';
+import type { TargetFilter } from './types.js';
+
+/**
+ * Parse a `targetFilter` string into its kind + value, or return `null`
+ * when the input is missing or malformed. Filter syntax:
+ *   - `url:<substring>`   — picks the first page target whose URL contains the substring
+ *   - `title:<substring>` — picks the first page target whose title contains the substring
+ *
+ * The match is case-insensitive on both sides because Electron apps
+ * frequently lowercase or title-case their target metadata in unpredictable ways.
+ */
+export function parseTargetFilter(filter: string | undefined): TargetFilter | null {
+  if (!filter) return null;
+  const idx = filter.indexOf(':');
+  if (idx <= 0) return null;
+  const kind = filter.slice(0, idx).trim().toLowerCase();
+  // Strip whitespace around the value so `url: https://x` (with a copy-pasted
+  // space after the colon) doesn't silently fail to match — `.includes(' x')`
+  // never hits a URL because URLs don't contain spaces.
+  const value = filter.slice(idx + 1).trim();
+  if (kind !== 'url' && kind !== 'title') return null;
+  if (!value) return null;
+  return { kind, value };
+}
+
+/**
+ * URLs that the skip-invisible heuristic excludes when no explicit filter
+ * matches. These are page targets Electron apps ship for housekeeping;
+ * picking one means screenshots come back blank.
+ */
+const INVISIBLE_URL_PATTERNS: RegExp[] = [
+  /^about:blank$/i,
+  /^file:\/\//i,
+  /\/_desktop-background-service(\?|$|\/)/i,
+  /\/_internal(\?|$|\/)/i,
+  /\/_background(\?|$|\/)/i,
+];
+
+function isLikelyInvisible(url: string | undefined): boolean {
+  if (!url) return true;
+  return INVISIBLE_URL_PATTERNS.some((re) => re.test(url));
+}
+
+/**
+ * Choose the CDP page target that represents the visible UI.
+ *
+ * Order:
+ *   1. If `filter` is set and parseable, narrow to page targets matching it
+ *      (case-insensitive substring). Among matches, prefer one that is not in
+ *      `INVISIBLE_URL_PATTERNS` — this is the tiebreaker that makes a coarse
+ *      filter like `url:https://www.canva.com/` skip the background service
+ *      (`https://www.canva.com/_desktop-background-service` *also* matches the
+ *      substring). If every match is invisible, return the first match so the
+ *      caller still gets something rather than silently falling through.
+ *      An explicit filter that finds *no* match returns `undefined` — callers
+ *      should surface this as an error rather than create an orphan window.
+ *   2. If `filter` is unset (or unparseable), apply the skip-invisible heuristic
+ *      across all page targets.
+ *   3. As a last resort, return the first page target.
+ */
+export function pickWindowTarget<T extends { type: string; url?: string; title?: string }>(
+  targets: T[],
+  filter: string | undefined
+): T | undefined {
+  const pages = targets.filter((t) => t.type === 'page');
+  if (pages.length === 0) return undefined;
+
+  const parsed = parseTargetFilter(filter);
+  if (parsed) {
+    const needle = parsed.value.toLowerCase();
+    const matches = pages.filter((t) => {
+      const hay = (parsed.kind === 'url' ? t.url : t.title) ?? '';
+      return hay.toLowerCase().includes(needle);
+    });
+    if (matches.length === 0) return undefined;
+    const visible = matches.find((t) => !isLikelyInvisible(t.url));
+    return visible ?? matches[0];
+  }
+
+  const visible = pages.find((t) => !isLikelyInvisible(t.url));
+  if (visible) return visible;
+
+  return pages[0];
+}
 
 interface ProfileConnection {
   cdp: CDPClient;
   port: number;
   pid: number;
   electron?: boolean;
+  /** Raw `url:<v>` / `title:<v>` filter copied from the profile config. */
+  targetFilter?: string;
   forkedFrom?: string;
   tasks: Map<string, Task>;
   windowId?: string; // single window shared by all tasks
@@ -457,11 +543,34 @@ export class BrowserService {
 
     const sessionId = await this.getSessionId(conn, target.targetId);
 
+    // `awaitPromise: true` lets callers write `evaluate '(async () => {...})()'`
+    // and get the resolved value back instead of a stringified Promise. This
+    // is essential for any flow that needs sub-step waits inside the page
+    // (e.g. driving a multi-step modal where each step needs React to settle
+    // before the next call). Without it, the shell-side workaround is to
+    // chain N separate `evaluate` calls with `sleep` between them, which
+    // races against the page's own state machine.
+    //
+    // `exceptionDetails` is surfaced as a thrown error so a rejected promise
+    // or a thrown error inside the expression doesn't silently return `undefined`.
     const result = (await conn.cdp.send(
       'Runtime.evaluate',
-      { expression, returnByValue: true },
+      { expression, returnByValue: true, awaitPromise: true },
       sessionId
-    )) as { result: { value: unknown } };
+    )) as {
+      result: { value: unknown };
+      exceptionDetails?: { text?: string; exception?: { description?: string; value?: unknown } };
+    };
+
+    if (result.exceptionDetails) {
+      const ex = result.exceptionDetails;
+      const msg =
+        ex.exception?.description ??
+        (typeof ex.exception?.value === 'string' ? ex.exception.value : undefined) ??
+        ex.text ??
+        'evaluate failed';
+      throw new Error(msg);
+    }
 
     return result.result.value;
   }
@@ -1092,6 +1201,7 @@ export class BrowserService {
       port,
       pid,
       electron: true,
+      targetFilter: profile.targetFilter,
       forkedFrom: profile.name,
       tasks: new Map(),
       sessionCache: new Map(),
@@ -1118,6 +1228,7 @@ export class BrowserService {
         port: existingInfo.port,
         pid: existingInfo.pid,
         electron: profile.electron,
+        targetFilter: profile.targetFilter,
         tasks,
         sessionCache: new Map(),
       };
@@ -1152,6 +1263,7 @@ export class BrowserService {
         port: conn.port,
         pid: conn.pid,
         electron: profile.electron,
+        targetFilter: profile.targetFilter,
         tasks: conn.pid === 0 ? this.loadTaskState(profile.name) : new Map(),
         sessionCache: new Map(),
       };
@@ -1165,6 +1277,7 @@ export class BrowserService {
         port: conn.port,
         pid: conn.pid,
         electron: profile.electron,
+        targetFilter: profile.targetFilter,
         tasks: new Map(),
         sessionCache: new Map(),
       };
@@ -1179,6 +1292,7 @@ export class BrowserService {
         port: 0,
         pid: 0,
         electron: profile.electron,
+        targetFilter: profile.targetFilter,
         tasks: this.loadTaskState(profile.name),
         sessionCache: new Map(),
       };
@@ -1196,6 +1310,7 @@ export class BrowserService {
         port,
         pid: 0,
         electron: profile.electron,
+        targetFilter: profile.targetFilter,
         tasks: this.loadTaskState(profile.name),
         sessionCache: new Map(),
       };
@@ -1213,7 +1328,7 @@ export class BrowserService {
     if (conn.windowId) {
       // Verify it still exists via CDP
       const { targetInfos } = (await conn.cdp.send('Target.getTargets')) as {
-        targetInfos: Array<{ targetId: string; type: string; url: string }>;
+        targetInfos: Array<{ targetId: string; type: string; url: string; title?: string }>;
       };
       if (targetInfos.some((t) => t.targetId === conn.windowId && t.type === 'page')) {
         return conn.windowId;
@@ -1223,12 +1338,28 @@ export class BrowserService {
 
     // Check if browser already has a page target we can use
     const { targetInfos } = (await conn.cdp.send('Target.getTargets')) as {
-      targetInfos: Array<{ targetId: string; type: string; url: string }>;
+      targetInfos: Array<{ targetId: string; type: string; url: string; title?: string }>;
     };
-    const existing = targetInfos.find((t) => t.type === 'page');
+    const existing = pickWindowTarget(targetInfos, conn.targetFilter);
     if (existing) {
       conn.windowId = existing.targetId;
       return existing.targetId;
+    }
+
+    // If we have an explicit filter, `pickWindowTarget` returns undefined when nothing
+    // matches. That almost always means the profile is misconfigured (typo in the
+    // filter, target hasn't loaded yet, app version moved the URL). Falling through
+    // to `Target.createTarget` would silently create an orphan tab the user can't see.
+    // Surface the failure instead, with the candidate list so the fix is obvious.
+    if (parseTargetFilter(conn.targetFilter)) {
+      const candidates = targetInfos
+        .filter((t) => t.type === 'page')
+        .map((t) => `  - url=${t.url ?? ''} title=${t.title ?? ''}`)
+        .join('\n');
+      throw new Error(
+        `Target filter ${JSON.stringify(conn.targetFilter)} matched no page target.\n` +
+          `Available page targets:\n${candidates || '  (none)'}`
+      );
     }
 
     // First ever use - create window
