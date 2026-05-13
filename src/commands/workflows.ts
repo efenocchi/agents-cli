@@ -58,21 +58,42 @@ export function registerWorkflowsCommands(program: Command): void {
     .command('workflows')
     .description('Manage multi-agent pipeline workflows (WORKFLOW.md bundles)')
     .addHelpText('after', `
-Workflows are directory bundles (WORKFLOW.md + subagents/) that define multi-agent pipelines run via:
-  agents run <workflow-name>
+Workflows are directory bundles that define reusable named agent pipelines.
+Run a workflow with:
+  agents run <workflow-name> [prompt]
+
+Structure:
+  ~/.agents/workflows/<name>/
+    WORKFLOW.md        required: YAML frontmatter + orchestrator system prompt
+    subagents/*.md     optional: subagents the orchestrator can dispatch to
+    skills/            optional: knowledge packs scoped to this workflow
+    plugins/           optional: plugin bundles scoped to this workflow
+
+Resolution: project (.agents/workflows/) > user (~/.agents/workflows/) > system.
+
+Note: agents run defaults to --mode plan (read-only). For workflows that
+write files, post comments, or otherwise mutate state, pass --mode edit or
+--mode full or the run will deadlock at ExitPlanMode.
 
 Examples:
   # See what workflows are available
   agents workflows list
 
-  # Install from GitHub
+  # Install from GitHub or a local directory
   agents workflows add gh:user/workflows
+  agents workflows add ./code-review
 
-  # Install a local workflow directory
-  agents workflows add ./rdev
+  # Inspect a workflow's frontmatter and subagents
+  agents workflows view code-review
 
-  # Remove a workflow
-  agents workflows remove rdev
+  # Run it (workflow name goes in the agent slot)
+  agents run code-review "review PR #42"
+
+  # Run a workflow that posts comments / edits files
+  agents run code-review --mode full "review PR #42 and post the review"
+
+  # Remove from version homes (and central storage on second run)
+  agents workflows remove code-review
 `);
 
   workflowsCmd

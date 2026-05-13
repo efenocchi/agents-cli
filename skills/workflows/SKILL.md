@@ -1,0 +1,185 @@
+---
+name: workflows
+description: "Create and run reusable multi-agent pipelines. Bundle an orchestrator prompt with optional subagents, skills, and plugins into a named workflow invoked as `agents run <workflow-name>`."
+author: phnx-labs
+version: 1.0.0
+license: MIT
+---
+
+# Workflows
+
+A workflow is a named, reusable agent pipeline. One directory bundles an orchestrator system prompt with optional subagents, skills, and plugins; invoke it like any other agent: `agents run <workflow-name> "<prompt>"`.
+
+## "I want to bottle up a task I keep repeating"
+
+A workflow is a directory with `WORKFLOW.md` at the root:
+
+```
+~/.agents/workflows/code-review/
+  WORKFLOW.md
+```
+
+`WORKFLOW.md` is YAML frontmatter (the workflow's metadata) plus a Markdown body (the orchestrator's system prompt):
+
+```markdown
+---
+name: Code Review
+description: Evidence-grounded PR review with file:line citations.
+model: claude-opus-4-7
+tools:
+  - Read
+  - Grep
+  - Glob
+  - Bash
+  - WebFetch
+---
+
+You are Code Reviewer. Read every AGENTS.md/CLAUDE.md/GEMINI.md in touched
+directories first. Then identify scope, read full files, trace data flow,
+run the project's tests, and produce a review with file:line citations.
+
+Output sections: Summary / Critical / Concerns / Nits / Tests run / Verdict.
+Do not commit or modify files.
+```
+
+Run it:
+
+```bash
+agents run code-review "review PR #42 on acme/api"
+```
+
+The workflow name goes in the agent slot. agents-cli resolves it (project `.agents/workflows/` > user `~/.agents/workflows/` > system), launches Claude, and prepends the WORKFLOW.md body to your prompt as the system instructions.
+
+## "My workflow needs multiple specialized agents, not one"
+
+Add a `subagents/` subdirectory. Each `.md` file is a named subagent the orchestrator can dispatch to via Claude's built-in Agent tool — including in parallel:
+
+```
+~/.agents/workflows/code-review/
+  WORKFLOW.md            ← orchestrator: dispatch + synthesize
+  subagents/
+    security.md          ← injection, secrets, auth findings
+    correctness.md       ← logic, data flow, root cause
+    style.md             ← naming, scope creep, test coverage
+```
+
+Each subagent `.md` uses Claude's standard subagent format:
+
+```markdown
+---
+name: security
+description: Review code for security issues — injection, secrets, auth.
+model: sonnet
+tools:
+  - Read
+  - Grep
+  - Bash
+---
+
+You are a security reviewer. Focus on injection vectors, secret handling,
+and auth/authz gaps. Quote file:line for every finding.
+```
+
+Tell the orchestrator (in `WORKFLOW.md` body) when to delegate:
+
+```markdown
+For each touched file:
+1. Spawn the `security` subagent in parallel with `correctness` and `style`.
+2. Wait for all three. Synthesize their findings into one review.
+```
+
+At run time, agents-cli copies `subagents/*.md` into `~/.claude/agents/` so the orchestrator can find them by name.
+
+## "How do I run a workflow that writes files or posts comments?"
+
+`agents run` defaults to `--mode plan` (read-only). For workflows that need to write — post a PR comment, edit a file, send a Slack message — pass an explicit mode:
+
+```bash
+# Allows file edits + auto-approves bash
+agents run code-review --mode edit "review PR #42 and post the review"
+
+# Bypasses all permission prompts (use when fully autonomous)
+agents run deploy-bot --mode full "deploy api to staging"
+```
+
+Without this, the orchestrator hangs at `ExitPlanMode` waiting for human approval it will never get in a headless run.
+
+## "I want my workflow to ship with its own skills and plugins"
+
+Drop a `skills/` or `plugins/` subdir alongside `WORKFLOW.md`:
+
+```
+~/.agents/workflows/deploy-bot/
+  WORKFLOW.md
+  skills/
+    kubernetes/SKILL.md     ← available to this workflow only
+    helm/SKILL.md
+  plugins/
+    rollback-tool/          ← plugin bundle synced in for the run
+```
+
+These sync into the version home before launch, so they're only active when this workflow runs — keeps cross-pollution off your general agent environment.
+
+## "I want to share my workflow with my team"
+
+Two paths.
+
+**Push via your user repo:**
+
+```bash
+# After authoring locally
+agents repo push    # syncs ~/.agents/, workflows included
+```
+
+Teammates run `agents repo pull` and the workflow appears for them.
+
+**Install from a GitHub repo:**
+
+```bash
+agents workflows add gh:yourteam/code-review
+agents workflows add ./local-path           # or from a local dir
+agents workflows add gh:yourteam/workflows --agents claude@2.1.138
+```
+
+`add` from GitHub clones the repo, discovers every directory with a `WORKFLOW.md`, and installs them into `~/.agents/workflows/`. Project-level workflows go at `.agents/workflows/` in the project root (committed with the repo).
+
+## "Where do my workflows live?"
+
+| Layer | Path | Wins over |
+|-------|------|-----------|
+| Project | `<repo>/.agents/workflows/<name>/` | user, system |
+| User | `~/.agents/workflows/<name>/` | system |
+| System | `~/.agents-system/workflows/<name>/` | — |
+
+Same precedence as every other resource. Higher layer overrides by name.
+
+## "How do I inspect or remove a workflow?"
+
+```bash
+agents workflows list                    # all + sync status across versions
+agents workflows view code-review        # frontmatter, subagent count, path
+agents workflows remove code-review      # remove (interactive picker if no name)
+```
+
+## `WORKFLOW.md` frontmatter reference
+
+```yaml
+name: <string>              # display name (also used for `view` output)
+description: <string>       # one-line summary shown in `list`
+model: <string>             # claude-opus-4-7, claude-sonnet-4-6, etc.
+tools:                      # tool allowlist for the orchestrator
+  - Read
+  - Bash
+skills:                     # extra skills to load for this run
+  - debug
+mcpServers:                 # MCP servers to enable
+  - github
+allowedAgents:              # restrict which agents can run this workflow
+  - claude                  # (only claude supports workflows today)
+```
+
+All fields are optional. A workflow with no frontmatter beyond `---` fences still works — the Markdown body alone is enough.
+
+## "What else can I do?"
+
+Run `agents workflows --help` — there's more: listing per agent version, syncing to specific versions on install, viewing subagent details.
