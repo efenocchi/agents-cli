@@ -40,7 +40,7 @@ import {
   type RotateResult,
 } from '../lib/rotate.js';
 import { getGlobalDefault, getVersionHomePath, resolveVersion, resolveVersionAlias } from '../lib/versions.js';
-import { loadPluginManifest, syncPluginToVersion } from '../lib/plugins.js';
+import { buildDiscoveredPlugin, loadPluginManifest, syncPluginToVersion } from '../lib/plugins.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -253,7 +253,7 @@ Examples:
             const manifest = loadPluginManifest(pluginRoot);
             if (!manifest) continue;
             syncPluginToVersion(
-              { name: manifest.name, root: pluginRoot, manifest, skills: [], hooks: [], scripts: [] },
+              buildDiscoveredPlugin(pluginRoot, manifest),
               'claude',
               versionHome,
             );

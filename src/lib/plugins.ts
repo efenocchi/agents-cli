@@ -40,22 +40,26 @@ export function discoverPlugins(): DiscoveredPlugin[] {
     const manifest = loadPluginManifest(pluginRoot);
     if (!manifest) continue;
 
-    plugins.push({
-      name: manifest.name,
-      root: pluginRoot,
-      manifest,
-      skills: discoverPluginSkills(pluginRoot),
-      hooks: discoverPluginHooks(pluginRoot),
-      scripts: discoverPluginScripts(pluginRoot),
-      commands: discoverPluginCommands(pluginRoot),
-      agentDefs: discoverPluginAgentDefs(pluginRoot),
-      bin: discoverPluginBin(pluginRoot),
-      hasMcp: fs.existsSync(path.join(pluginRoot, '.mcp.json')),
-      hasSettings: pluginHasNonPermissionSettings(pluginRoot),
-    });
+    plugins.push(buildDiscoveredPlugin(pluginRoot, manifest));
   }
 
   return plugins;
+}
+
+export function buildDiscoveredPlugin(pluginRoot: string, manifest: PluginManifest): DiscoveredPlugin {
+  return {
+    name: manifest.name,
+    root: pluginRoot,
+    manifest,
+    skills: discoverPluginSkills(pluginRoot),
+    hooks: discoverPluginHooks(pluginRoot),
+    scripts: discoverPluginScripts(pluginRoot),
+    commands: discoverPluginCommands(pluginRoot),
+    agentDefs: discoverPluginAgentDefs(pluginRoot),
+    bin: discoverPluginBin(pluginRoot),
+    hasMcp: fs.existsSync(path.join(pluginRoot, '.mcp.json')),
+    hasSettings: pluginHasNonPermissionSettings(pluginRoot),
+  };
 }
 
 /**
