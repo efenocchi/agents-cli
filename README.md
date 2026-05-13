@@ -47,6 +47,7 @@ Also available as `ag` -- all commands work with both `agents` and `ag`.
 - [Sessions across agents](#sessions-across-agents)
 - [Run open models through Claude Code](#run-open-models-through-claude-code)
 - [Teams](#teams)
+- [Workflows](#workflows)
 - [Browser](#browser)
 - [Secrets](#secrets)
 - [Routines](#routines)
@@ -241,6 +242,57 @@ agents teams status auth-feature    # Who's working, what they changed, what the
 Teammates run detached -- close your terminal, they keep working. Check in with `teams status`, read full output with `teams logs <name>`, clean up with `teams disband`.
 
 Team state is observable via `agents teams list --json` / `agents teams status --json`. External tools join it with `sessions --json` (teammates get `isTeamOrigin: true`) and `cloud list --json` (for `--cloud` teammates) to build a unified fleet view. See [docs/06-observability.md](docs/06-observability.md).
+
+---
+
+## Workflows
+
+Bundle an orchestrator prompt with optional subagents, skills, and plugins into a named, reusable pipeline. One bundle, one invocation.
+
+```bash
+# Use a workflow — workflow name goes in the agent slot
+agents run code-review "review PR #42 on acme/api"
+
+# List + inspect
+agents workflows list
+agents workflows view code-review
+
+# Install from GitHub or local
+agents workflows add gh:yourteam/code-review
+agents workflows add ./my-workflow
+```
+
+A workflow is a directory:
+
+```
+~/.agents/workflows/code-review/
+  WORKFLOW.md          # YAML frontmatter + orchestrator system prompt
+  subagents/           # optional: *.md files exposed to the orchestrator
+    security.md
+    style.md
+  skills/              # optional: knowledge packs scoped to this workflow
+  plugins/             # optional: plugin bundles
+```
+
+`WORKFLOW.md`'s Markdown body is the orchestrator's system prompt. Files under `subagents/` get copied to `~/.claude/agents/` at run time so the built-in Agent tool can dispatch to them by name — including in parallel. `skills/` and `plugins/` sync into the version home just for the run.
+
+```yaml
+# WORKFLOW.md frontmatter
+---
+name: Code Review
+description: Evidence-grounded PR review with file:line citations.
+model: claude-opus-4-7
+tools:
+  - Read
+  - Grep
+  - Bash
+  - WebFetch
+---
+```
+
+Workflows that need to write — post PR comments, edit files, send Slack — should run with `--mode edit` or `--mode full`. `agents run` defaults to `--mode plan` (read-only), which deadlocks at `ExitPlanMode` in headless runs.
+
+Resolution is project > user > system: a `<repo>/.agents/workflows/<name>/` overrides a same-named workflow in `~/.agents/workflows/`. Commit project workflows with your repo so teammates get the same pipeline.
 
 ---
 
