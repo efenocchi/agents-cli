@@ -230,6 +230,6 @@ export function extractConfiguredPort(profile: BrowserProfile): number | undefin
   }
   if (url.port) return parseInt(url.port, 10);
   if (url.protocol === 'cdp:') return 9222;
-  if (url.protocol === 'ssh:') return 9222;
+  // SSH endpoints tunnel to a remote port — they don't own a local port
   return undefined;
 }
