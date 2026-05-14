@@ -57,6 +57,8 @@ import {
 } from '../lib/shims.js';
 import { getAgentResources, listResources } from '../lib/resources.js';
 import { WORKFLOW_CAPABLE_AGENTS } from '../lib/workflows.js';
+import { discoverPlugins, pluginSupportsAgent } from '../lib/plugins.js';
+import { PLUGINS_CAPABLE_AGENTS } from '../lib/agents.js';
 import { getAgentsDir, getUserAgentsDir, getEffectivePromptcutsPath, readMergedPromptcuts } from '../lib/state.js';
 import { isGitRepo, getGitSyncStatus } from '../lib/git.js';
 import { getCentralRulesFileName } from '../lib/rules/rules.js';
@@ -68,6 +70,23 @@ import { formatPath, isInteractiveTerminal, isPromptCancelled } from './utils.js
 function termLink(text: string, filePath: string): string {
   const url = `file://${filePath}`;
   return `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
+}
+
+/**
+ * Resolve a resource path to something the IDE can open inline. When `p` is a
+ * directory, OSC 8 file:// links cause IDEs (Cursor/VS Code) to open it as a
+ * new workspace window; pointing at the bundle's marker file (SKILL.md /
+ * WORKFLOW.md / AGENT.md) opens in the current window instead.
+ */
+function linkTarget(p: string): string {
+  try {
+    if (!fs.statSync(p).isDirectory()) return p;
+  } catch { return p; }
+  for (const marker of ['SKILL.md', 'WORKFLOW.md', 'AGENT.md']) {
+    const candidate = path.join(p, marker);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return p;
 }
 
 function formatLastActive(date: Date | null): string {
@@ -612,7 +631,7 @@ async function showAgentResources(agentId: AgentId, requestedVersion: string): P
       else if (r.syncState === 'modified') nameColor = chalk.yellow;
       else if (r.syncState === 'deleted') nameColor = chalk.red;
 
-      const linkedName = r.path ? termLink(r.name, r.path) : r.name;
+      const linkedName = r.path ? termLink(r.name, linkTarget(r.path)) : r.name;
       let display = nameColor(linkedName);
       if (r.ruleCount !== undefined) display += chalk.gray(` (${r.ruleCount} rules)`);
       // Source annotation: project overrides user, user overrides system
@@ -682,6 +701,29 @@ async function showAgentResources(agentId: AgentId, requestedVersion: string): P
     renderSection('Workflows', agentData.workflows);
   }
 
+  if (PLUGINS_CAPABLE_AGENTS.includes(agentId)) {
+    const plugins = discoverPlugins().filter(p => pluginSupportsAgent(p, agentId));
+    console.log(chalk.bold('\nPlugins\n'));
+    if (plugins.length === 0) {
+      console.log(`  ${chalk.gray('none')}`);
+    } else {
+      const versionStr = agentData.version ? ` (${agentData.version})` : '';
+      const agentHeader = home ? termLink(agentData.agentName, home) : agentData.agentName;
+      console.log(`  ${chalk.bold(agentHeader)}${chalk.gray(versionStr)}:`);
+      for (const p of plugins) {
+        const linkedName = termLink(p.name, linkTarget(p.root));
+        const parts: string[] = [];
+        if (p.skills.length > 0) parts.push(`${p.skills.length} skill${p.skills.length === 1 ? '' : 's'}`);
+        if (p.commands.length > 0) parts.push(`${p.commands.length} command${p.commands.length === 1 ? '' : 's'}`);
+        if (p.hooks.length > 0) parts.push(`${p.hooks.length} hook${p.hooks.length === 1 ? '' : 's'}`);
+        if (p.agentDefs.length > 0) parts.push(`${p.agentDefs.length} subagent${p.agentDefs.length === 1 ? '' : 's'}`);
+        if (p.hasMcp) parts.push('mcp');
+        const contents = parts.length > 0 ? chalk.gray(` (${parts.join(', ')})`) : '';
+        console.log(`    ${chalk.cyan(linkedName)}${contents} ${chalk.cyan('[user]')}`);
+      }
+    }
+  }
+
   // Rules section with subrules breakdown
   function renderRulesSection(): void {
     console.log(chalk.bold('\nRules\n'));
@@ -711,7 +753,7 @@ async function showAgentResources(agentId: AgentId, requestedVersion: string): P
       else if (r.syncState === 'modified') nameColor = chalk.yellow;
       else if (r.syncState === 'deleted') nameColor = chalk.red;
 
-      const linkedName = r.path ? termLink(r.name, r.path) : r.name;
+      const linkedName = r.path ? termLink(r.name, linkTarget(r.path)) : r.name;
       let display = nameColor(linkedName);
       if (r.ruleCount !== undefined) display += chalk.gray(` (${r.ruleCount} rules)`);
       const sourceTag = r.scope === 'project' ? chalk.blue('[project]')
