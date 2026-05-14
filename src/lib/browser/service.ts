@@ -750,14 +750,30 @@ export class BrowserService {
       ],
       { stdio: ['pipe', 'ignore', 'pipe'] }
     );
-    let ffmpegStderr = '';
-    ffmpeg.stderr?.on('data', (chunk) => { ffmpegStderr += chunk.toString(); });
-    ffmpeg.on('error', (err) => {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        // ffmpeg is missing; surface a useful message via stop().
-        ffmpegStderr = 'ffmpeg not found on PATH — install via `brew install ffmpeg`';
-      }
+    // Wait for the spawn to confirm (or fail) before we wire CDP frames into a
+    // dead pipe. ENOENT from a missing ffmpeg surfaces here as a real error
+    // instead of a silently empty .webm.
+    await new Promise<void>((resolve, reject) => {
+      const onError = (err: NodeJS.ErrnoException) => {
+        ffmpeg.off('spawn', onSpawn);
+        if (err.code === 'ENOENT') {
+          reject(new Error('ffmpeg not found on PATH — install via `brew install ffmpeg`'));
+        } else {
+          reject(err);
+        }
+      };
+      const onSpawn = () => {
+        ffmpeg.off('error', onError);
+        resolve();
+      };
+      ffmpeg.once('error', onError);
+      ffmpeg.once('spawn', onSpawn);
     });
+
+    // Surface ffmpeg's own diagnostics (encoder error, etc.) in case stderr
+    // arrives after spawn.
+    ffmpeg.stderr?.on('data', () => { /* drain so the pipe doesn't fill */ });
+    ffmpeg.on('error', () => { /* post-spawn errors get reported via exit code */ });
 
     // 30 fps is CDP's screencast cap; everyNthFrame = round(30/fps).
     const everyNthFrame = Math.max(1, Math.round(30 / fps));
@@ -1474,6 +1490,25 @@ export class BrowserService {
   }
 
   async shutdown(): Promise<void> {
+    // Drain any in-flight recordings first so we don't orphan ffmpeg processes
+    // or leak the duration/size-check timers when the daemon goes down.
+    for (const [taskId, rec] of this.recordings) {
+      clearTimeout(rec.durationTimer);
+      clearInterval(rec.sizeCheckInterval);
+      try { rec.conn.cdp.off('Page.screencastFrame', rec.frameHandler); } catch { /* socket may be gone */ }
+      try { rec.ffmpeg.stdin?.end(); } catch { /* already closed */ }
+      // Give ffmpeg up to 1s to flush; then SIGKILL.
+      const exited = await new Promise<boolean>((resolve) => {
+        let done = false;
+        rec.ffmpeg.once('exit', () => { done = true; resolve(true); });
+        setTimeout(() => { if (!done) resolve(false); }, 1000);
+      });
+      if (!exited) {
+        try { rec.ffmpeg.kill('SIGKILL'); } catch { /* already dead */ }
+      }
+      this.recordings.delete(taskId);
+    }
+
     for (const [, conn] of this.connections) {
       conn.cdp.close();
     }
