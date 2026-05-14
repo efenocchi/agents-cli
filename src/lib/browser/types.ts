@@ -38,6 +38,10 @@ export interface BrowserProfile {
   chrome?: ChromeOptions;
   secrets?: string;
   viewport?: { width: number; height: number; x?: number; y?: number };
+  /** Directory holding source-side JSONL logs (e.g. ~/.rush/logs). */
+  logDir?: string;
+  /** Optional SSH host where logDir lives, e.g. "user@mac-mini". */
+  logHost?: string;
 }
 
 /** Parsed form of `BrowserProfile.targetFilter`. */
@@ -130,7 +134,8 @@ export type IPCAction =
   | 'wait'
   | 'set-download-path'
   | 'wait-download'
-  | 'upload';
+  | 'upload'
+  | 'getAppLogs';
 
 export interface IPCRequest {
   action: IPCAction;
@@ -181,6 +186,13 @@ export interface IPCRequest {
   fps?: number;
   duration?: number;
   maxMb?: number;
+  // App logs
+  source?: string;
+  lines?: number;
+  message?: string;
+  since?: string;
+  until?: string;
+  appLevel?: string;
 }
 
 /** Subset of IPCResponse describing a recording start result. */
@@ -232,6 +244,8 @@ export interface IPCResponse {
   devices?: string[];
   // Upload
   uploadMode?: 'input' | 'drop' | 'chooser';
+  // App logs
+  appLogs?: any[];
 }
 
 export interface ConsoleEntry {

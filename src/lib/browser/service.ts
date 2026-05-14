@@ -1,5 +1,8 @@
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { CDPClient, discoverBrowserWsUrl, verifyBrowserIdentity } from './cdp.js';
 import {
   getProfile,
@@ -150,6 +153,55 @@ export function pickWindowTarget<T extends { type: string; url?: string; title?:
   return pages[0];
 }
 
+const execFileP = promisify(execFile);
+
+/**
+ * Parse a `--since`/`--until` value. Accepts ISO-8601 absolute timestamps
+ * or relative offsets like `30s`, `5m`, `2h`, `1d`.
+ */
+export function parseSinceUntil(s: string): Date {
+  const ms = Date.parse(s);
+  if (!isNaN(ms)) return new Date(ms);
+  const m = s.match(/^(\d+)([smhd])$/);
+  if (!m) throw new Error(`Invalid since/until: ${s}`);
+  const n = parseInt(m[1], 10);
+  const unitMs: Record<string, number> = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
+  return new Date(Date.now() - n * unitMs[m[2]]);
+}
+
+async function execSSH(host: string, cmd: string): Promise<string> {
+  const { stdout } = await execFileP('ssh', [host, cmd], {
+    timeout: 10_000,
+    maxBuffer: 10_000_000,
+  });
+  return stdout;
+}
+
+export function readNewestMatchingFile(dir: string, prefix: string, tailLines: number): string {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return '';
+  }
+  const candidates = entries
+    .filter((f) => f.startsWith(prefix) && f.endsWith('.jsonl'))
+    .map((f) => ({ f, mtime: fs.statSync(path.join(dir, f)).mtimeMs }))
+    .sort((a, b) => b.mtime - a.mtime);
+  if (candidates.length === 0) return '';
+  const lines = fs
+    .readFileSync(path.join(dir, candidates[0].f), 'utf8')
+    .split('\n')
+    .filter(Boolean);
+  return lines.slice(-tailLines).join('\n');
+}
+
+function expandHome(p: string): string {
+  if (p.startsWith('~/')) return path.join(os.homedir(), p.slice(2));
+  if (p === '~') return os.homedir();
+  return p;
+}
+
 interface ProfileConnection {
   cdp: CDPClient;
   port: number;
@@ -171,6 +223,11 @@ type TargetInfo = {
 };
 
 export class BrowserService {
+  private static readonly SOURCE_PREFIX: Record<string, string> = {
+    'rush-app': 'rush-app-',
+    'rush-cli': 'rush-cli-',
+  };
+
   private connections = new Map<string, ProfileConnection>();
   private forkingProfiles = new Set<string>();
 
@@ -1352,6 +1409,69 @@ export class BrowserService {
     }
 
     throw new Error(`No response matching "${urlPattern}" within ${timeout}ms`);
+  }
+
+  // ─── App Logs (source-side JSONL) ───────────────────────────────────────────
+
+  async getAppLogs(
+    taskId: string,
+    opts: {
+      lines?: number;
+      level?: string;
+      filter?: string;
+      message?: string;
+      source?: string;
+      since?: string;
+      until?: string;
+    }
+  ): Promise<any[]> {
+    const { task } = await this.findTask(taskId);
+    const baseProfileName = task.profile.split('@')[0];
+    const profile = await getProfile(baseProfileName);
+    if (!profile?.logDir) {
+      throw new Error(`Profile '${task.profile}' has no logDir set`);
+    }
+    const logDir = expandHome(profile.logDir);
+
+    const sources = opts.source ? [opts.source] : ['rush-app', 'rush-cli'];
+    const since = opts.since ? parseSinceUntil(opts.since) : null;
+    const until = opts.until ? parseSinceUntil(opts.until) : null;
+    const tailN = since ? 100_000 : (opts.lines ?? 200);
+
+    const raws = await Promise.all(
+      sources.map(async (src) => {
+        const prefix = BrowserService.SOURCE_PREFIX[src];
+        if (!prefix) return '';
+        if (profile.logHost) {
+          return execSSH(
+            profile.logHost,
+            `ls -1t ${logDir}/${prefix}*.jsonl 2>/dev/null | head -1 | xargs -r tail -n ${tailN}`
+          );
+        }
+        return readNewestMatchingFile(logDir, prefix, tailN);
+      })
+    );
+
+    const entries = raws
+      .flatMap((r) => r.split('\n').filter(Boolean))
+      .map((line) => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return { raw: line };
+        }
+      })
+      .filter((e) => !opts.level || e.level === opts.level)
+      .filter((e) => !opts.message || e.message === opts.message)
+      .filter((e) => !opts.filter || JSON.stringify(e).includes(opts.filter))
+      .filter((e) => !since || (e.timestamp && new Date(e.timestamp) >= since))
+      .filter((e) => !until || (e.timestamp && new Date(e.timestamp) <= until))
+      .sort(
+        (a, b) =>
+          new Date(a.timestamp ?? 0).getTime() - new Date(b.timestamp ?? 0).getTime()
+      );
+
+    return since ? entries : entries.slice(-(opts.lines ?? 200));
   }
 
   // ─── Wait Conditions ─────────────────────────────────────────────────────────

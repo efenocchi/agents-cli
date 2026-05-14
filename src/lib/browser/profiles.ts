@@ -32,6 +32,8 @@ function configToProfile(name: string, config: BrowserProfileConfig): BrowserPro
     chrome: config.chrome,
     secrets: config.secrets,
     viewport: config.viewport,
+    logDir: config.logDir,
+    logHost: config.logHost,
   };
 }
 
@@ -48,6 +50,8 @@ function profileToConfig(profile: BrowserProfile): BrowserProfileConfig {
   if (profile.chrome) config.chrome = profile.chrome;
   if (profile.secrets) config.secrets = profile.secrets;
   if (profile.viewport) config.viewport = profile.viewport;
+  if (profile.logDir) config.logDir = profile.logDir;
+  if (profile.logHost) config.logHost = profile.logHost;
   return config;
 }
 
