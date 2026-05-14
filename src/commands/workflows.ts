@@ -457,11 +457,12 @@ Examples:
       lines.push(chalk.bold(`\n${fm.name || workflow.name}\n`));
       if (fm.description) lines.push(`  ${fm.description}`);
       lines.push('');
-      if (fm.model) lines.push(`  Model:  ${fm.model}`);
-      if (fm.tools?.length) lines.push(`  Tools:  ${fm.tools.join(', ')}`);
-      if (fm.mcpServers?.length) lines.push(`  MCP:    ${fm.mcpServers.join(', ')}`);
-      if (fm.skills?.length) lines.push(`  Skills: ${fm.skills.join(', ')}`);
-      lines.push(`  Path:   ${workflow.path}`);
+      if (fm.model) lines.push(`  Model:   ${fm.model}`);
+      if (fm.tools?.length) lines.push(`  Tools:   ${fm.tools.join(', ')}`);
+      if (fm.mcpServers?.length) lines.push(`  MCP:     ${fm.mcpServers.join(', ')}`);
+      if (fm.skills?.length) lines.push(`  Skills:  ${fm.skills.join(', ')}`);
+      if (fm.secrets?.length) lines.push(`  Secrets: ${fm.secrets.join(', ')}  ${chalk.gray('(auto-injected at run time — pass --no-auto-secrets to skip)')}`);
+      lines.push(`  Path:    ${workflow.path}`);
 
       if (fm.allowedAgents?.length) {
         lines.push(chalk.bold(`\n  Subagents (${workflow.subagentCount}):`));
