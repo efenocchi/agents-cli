@@ -59,6 +59,20 @@ bun install --silent
 dim "  Compiling TypeScript"
 bun run build >/dev/null 2>&1
 
+# TypeScript emits CLI entrypoints with mode 644. npm pack preserves the mode,
+# and npm install in newer versions does NOT auto-chmod the bin target, so
+# users see `zsh: permission denied: agents` when invoking through the global
+# shim. Set executable bits on every file declared in `package.json#bin`.
+node -e "
+  const fs = require('fs');
+  const bin = require('./package.json').bin || {};
+  for (const target of Object.values(bin)) {
+    if (!target) continue;
+    try { fs.chmodSync(target, 0o755); }
+    catch (err) { console.error('  warn: chmod failed for ' + target + ': ' + err.message); }
+  }
+"
+
 if $SKIP_TESTS; then
   dim "  Skipping tests (--skip-tests)"
 else
