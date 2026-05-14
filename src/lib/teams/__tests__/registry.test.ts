@@ -29,11 +29,11 @@ const { TEST_HOME } = vi.hoisted(() => {
 const { createTeam, loadTeams } = await import('../registry.js');
 
 function registryPath(): string {
-  return path.join(TEST_HOME, '.agents', 'teams', 'registry.json');
+  return path.join(TEST_HOME, '.agents', '.history', 'teams', 'registry.json');
 }
 
 beforeAll(async () => {
-  await fsp.mkdir(path.join(TEST_HOME, '.agents', 'teams'), { recursive: true });
+  await fsp.mkdir(path.join(TEST_HOME, '.agents', '.history', 'teams'), { recursive: true });
 });
 
 beforeEach(async () => {

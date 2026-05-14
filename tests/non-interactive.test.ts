@@ -310,7 +310,12 @@ describe('non-interactive CLI usage', () => {
     tempHomes.push(home);
     seedNewerUpdateCache(home, '99.0.0');
 
-    const result = runAgents(home, ['view']);
+    // tsx src/index.ts trips the dev-build auto-detect (.git at repo root)
+    // and disables the update prompt by default. This test verifies the
+    // update prompt itself, so override the auto-detect with an explicit
+    // empty env var (falsy — doesn't trip the disable guard, doesn't
+    // satisfy the "undefined" check in src/index.ts that would re-set it).
+    const result = runAgents(home, ['view'], { AGENTS_CLI_DISABLE_AUTO_UPDATE: '' });
     const combined = `${result.stdout}\n${result.stderr}`;
 
     expect(combined).toContain(`Update available: ${PACKAGE_VERSION.version} -> 99.0.0`);
