@@ -155,14 +155,20 @@ export function getAvailableResources(cwd: string = process.cwd()): AvailableRes
   }
   result.skills = Array.from(skillNames);
 
-  // Hooks (files)
+  // Hooks (files). Only executable files in hooks/ count as hooks. Auxiliary
+  // files like README.md (docs) or promptcuts.yaml (data read directly by a
+  // hook script) live alongside hooks but are not hooks themselves and must
+  // not be synced as such.
   const hookNames = new Set<string>();
   for (const { base } of resourceBases) {
     const hooksDir = path.join(base, 'hooks');
     if (!fs.existsSync(hooksDir)) continue;
-    const names = fs.readdirSync(hooksDir).filter(f => !f.startsWith('.'));
-    for (const name of names) {
-      hookNames.add(name);
+    for (const name of fs.readdirSync(hooksDir)) {
+      if (name.startsWith('.')) continue;
+      try {
+        const stat = fs.statSync(path.join(hooksDir, name));
+        if (stat.isFile() && (stat.mode & 0o111) !== 0) hookNames.add(name);
+      } catch { /* ignore unreadable */ }
     }
   }
   result.hooks = Array.from(hookNames);
@@ -1842,31 +1848,15 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
           fs.chmodSync(destFile, 0o755);
           syncedHooks.push(hook);
         }
-        // Remove orphan hook files that exist in version home but not in any trusted source.
-        const centralHookNames = new Set(
-          fs.existsSync(getHooksDir())
-            ? fs.readdirSync(getHooksDir()).filter(f => !f.startsWith('.'))
-            : []
-        );
-        {
-          const hooksDir = path.join(userAgentsDir, 'hooks');
-          if (fs.existsSync(hooksDir)) {
-            for (const file of fs.readdirSync(hooksDir).filter(f => !f.startsWith('.'))) {
-              centralHookNames.add(file);
-            }
-          }
-        }
-        for (const extra of extraRepos) {
-          const hooksDir = path.join(extra.dir, 'hooks');
-          if (fs.existsSync(hooksDir)) {
-            for (const file of fs.readdirSync(hooksDir).filter(f => !f.startsWith('.'))) {
-              centralHookNames.add(file);
-            }
-          }
-        }
+        // Remove orphan files from version home. The trusted set is the
+        // manifest-declared hook list (`available.hooks`) — auxiliary files
+        // like README.md or promptcuts.yaml may exist alongside hooks at the
+        // source but are not hooks and must not linger in version homes from
+        // older syncs.
+        const trustedHookNames = new Set(available.hooks);
         if (fs.existsSync(hooksTarget)) {
           for (const file of fs.readdirSync(hooksTarget).filter(f => !f.startsWith('.'))) {
-            if (!centralHookNames.has(file)) {
+            if (!trustedHookNames.has(file)) {
               removePath(safeJoin(hooksTarget, file));
             }
           }
