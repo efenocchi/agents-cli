@@ -723,7 +723,11 @@ if (process.env.AGENTS_SKIP_MIGRATION !== '1') {
   try {
     const { runMigration } = await import('./lib/migrate.js');
     const sentinel = getMigratedSentinelPath();
-    const sentinelValue = `${VERSION}-v8`;
+    // Sentinel is keyed to the migration SCHEMA version, not the binary version.
+    // Bumping the suffix re-runs migrations for every user; binary releases that
+    // don't change the schema must NOT re-run (they would destroy user content
+    // when migration steps overlap with user-authored paths). See issue #20.
+    const sentinelValue = 'v9';
     let needRun = true;
     try {
       if (fs.existsSync(sentinel) && fs.readFileSync(sentinel, 'utf-8').trim() === sentinelValue) {
