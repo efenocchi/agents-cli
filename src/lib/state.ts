@@ -339,6 +339,9 @@ export function getTeamsDir(): string { return TEAMS_DIR; }
 /** Path to teams execution history (~/.agents/.history/teams/agents/). */
 export function getTeamsAgentsDir(): string { return TEAMS_AGENTS_DIR; }
 
+/** Path to the team registry — list of named teams with timestamps. Durable runtime, per-machine. */
+export function getTeamsRegistryPath(): string { return path.join(HISTORY_DIR, 'teams', 'registry.json'); }
+
 /** Path to cloud dispatch cache (~/.agents/.cache/cloud/). */
 export function getCloudDir(): string { return CLOUD_DIR; }
 
