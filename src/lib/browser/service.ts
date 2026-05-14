@@ -15,6 +15,7 @@ import {
 import { killChrome, getRunningChromeInfo, launchBrowser, allocatePort } from './chrome.js';
 import { connectLocal } from './drivers/local.js';
 import { connectSSH } from './drivers/ssh.js';
+import { clearProfileRuntime } from './runtime-state.js';
 import {
   generateTaskId,
   generateShortId,
@@ -202,6 +203,28 @@ function expandHome(p: string): string {
   return p;
 }
 
+
+/**
+ * Probe a cached connection before reuse. A WebSocket can quietly transition
+ * to CLOSED without anyone noticing — most commonly when the user kills the
+ * browser process by hand. `Browser.getVersion` is the lightest CDP call we
+ * can make; if it doesn't round-trip within 1s the connection is dead.
+ */
+async function isConnHealthy(conn: ProfileConnection, timeoutMs = 1000): Promise<boolean> {
+  if (!conn.cdp.isOpen) return false;
+  try {
+    await Promise.race([
+      conn.cdp.send('Browser.getVersion'),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('healthcheck timeout')), timeoutMs)
+      ),
+    ]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 interface ProfileConnection {
   cdp: CDPClient;
   port: number;
@@ -214,6 +237,13 @@ interface ProfileConnection {
   windowId?: string; // single window shared by all tasks
   targetCache?: { targets: TargetInfo[]; ts: number };
   sessionCache: Map<string, string>;
+  /**
+   * Connection-specific teardown (e.g. killing the SSH tunnel for an ssh://
+   * profile). Must be called whenever the connection is removed from
+   * `this.connections`, otherwise the tunnel leaks across daemon restarts
+   * and hijacks future `cdp://127.0.0.1:N` profiles on the same local port.
+   */
+  cleanup?: () => void;
 }
 
 type TargetInfo = {
@@ -275,6 +305,18 @@ export class BrowserService {
 
     let conn = this.connections.get(composite);
     let effectiveProfileName = composite;
+
+    // If we have a cached connection, confirm it's still usable before any
+    // caller relies on it. A browser killed externally (Cmd-Q, crash, or a
+    // user clearing the profile by hand) leaves a closed WebSocket here.
+    // Without this check the next `cdp.send` throws "CDP connection not
+    // open" and the user has no way to recover short of killing the daemon.
+    if (conn && !(await isConnHealthy(conn))) {
+      try { conn.cdp.close(); } catch { /* already closed */ }
+      conn.cleanup?.();
+      this.connections.delete(composite);
+      conn = undefined;
+    }
 
     if (conn && conn.electron && conn.tasks.size > 0) {
       if (this.forkingProfiles.has(composite)) {
@@ -397,6 +439,7 @@ export class BrowserService {
         if (conn.forkedFrom && conn.tasks.size === 0) {
           conn.cdp.close();
           killChrome(conn.pid);
+          conn.cleanup?.();
           this.connections.delete(profileName);
         }
 
@@ -416,6 +459,7 @@ export class BrowserService {
     if (conn) {
       conn.cdp.close();
       killChrome(conn.pid);
+      conn.cleanup?.();
       this.connections.delete(profileName);
     }
 
@@ -1631,6 +1675,7 @@ export class BrowserService {
 
     for (const [, conn] of this.connections) {
       conn.cdp.close();
+      conn.cleanup?.();
     }
     this.connections.clear();
   }
@@ -1663,7 +1708,8 @@ export class BrowserService {
       port,
       chromeOpts,
       profile.secrets,
-      profile.binary
+      profile.binary,
+      profile.electron === true
     );
 
     const cdp = new CDPClient();
@@ -1701,23 +1747,33 @@ export class BrowserService {
     const existingInfo = getRunningChromeInfo(effectiveProfile.name);
 
     if (existingInfo) {
-      const { wsUrl, browser } = await discoverBrowserWsUrl(existingInfo.port);
-      verifyBrowserIdentity(browser, effectiveProfile.browser, existingInfo.port);
-      const cdp = new CDPClient();
-      await cdp.connect(wsUrl);
-      await this.enableDomains(cdp);
+      try {
+        const { wsUrl, browser } = await discoverBrowserWsUrl(existingInfo.port);
+        verifyBrowserIdentity(browser, effectiveProfile.browser, existingInfo.port);
+        const cdp = new CDPClient();
+        await cdp.connect(wsUrl);
+        await this.enableDomains(cdp);
 
-      const tasks = this.loadTaskState(effectiveProfile.name);
+        const tasks = this.loadTaskState(effectiveProfile.name);
 
-      return {
-        cdp,
-        port: existingInfo.port,
-        pid: existingInfo.pid,
-        electron: effectiveProfile.electron,
-        targetFilter: effectiveProfile.targetFilter,
-        tasks,
-        sessionCache: new Map(),
-      };
+        return {
+          cdp,
+          port: existingInfo.port,
+          pid: existingInfo.pid,
+          electron: effectiveProfile.electron,
+          targetFilter: effectiveProfile.targetFilter,
+          tasks,
+          sessionCache: new Map(),
+        };
+      } catch (err) {
+        // pid file says a process is alive on that port, but nothing is
+        // actually responding to CDP — most commonly because the user
+        // changed the configured endpoint port after a previous launch,
+        // or because the OS reused the pid for an unrelated process.
+        // Wipe the stale runtime files and fall through to a fresh
+        // connect against the profile's currently-configured endpoint.
+        clearProfileRuntime(effectiveProfile.name);
+      }
     }
 
     const conn = await this.connectEndpoint(effectiveProfile, target);
@@ -1758,6 +1814,7 @@ export class BrowserService {
         targetFilter: profile.targetFilter,
         tasks: new Map(),
         sessionCache: new Map(),
+        cleanup: conn.cleanup,
       };
     }
 
