@@ -1,16 +1,18 @@
 /**
  * Team registry.
  *
- * Manages the persistent registry of named teams stored in registry.json
- * under the teams data directory. Provides CRUD operations for team metadata
- * (creation timestamp and optional description).
+ * Manages the persistent registry of named teams stored at
+ * ~/.agents/.history/teams/registry.json. This is per-machine runtime
+ * state (timestamps + worktree paths that include absolute filesystem
+ * paths) and intentionally lives under .history/ so it's NOT pulled in
+ * by `agents repo push`.
  */
 import * as fs from 'fs/promises';
 import * as fsSync from 'fs';
 import * as path from 'path';
 import { randomBytes } from 'crypto';
 import lockfile from 'proper-lockfile';
-import { getTeamsDir } from '../state.js';
+import { getTeamsRegistryPath } from '../state.js';
 
 /** Metadata for a registered team. */
 export interface TeamMeta {
@@ -25,7 +27,7 @@ export interface TeamMeta {
 export type TeamRegistry = Record<string, TeamMeta>;
 
 async function registryPath(): Promise<string> {
-  return path.join(getTeamsDir(), 'registry.json');
+  return getTeamsRegistryPath();
 }
 
 /**
