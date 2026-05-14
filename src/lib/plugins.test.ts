@@ -340,9 +340,9 @@ describe('parseInstallSpec', () => {
   });
 });
 
-// ─── syncPluginMcp (integration) ─────────────────────────────────────────────
+// ─── syncPluginToVersion: native marketplace install ────────────────────────
 
-describe('syncPluginMcp (via syncPluginToVersion)', () => {
+describe('syncPluginToVersion (native marketplace install)', () => {
   let tmpDir: string;
 
   beforeEach(() => {
@@ -353,96 +353,20 @@ describe('syncPluginMcp (via syncPluginToVersion)', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('merges .mcp.json servers into settings.json with plugin name prefix', async () => {
-    const pluginRoot = path.join(tmpDir, 'plugin');
+  async function setupBasicPlugin(name = 'myplugin'): Promise<{ pluginRoot: string; versionHome: string; plugin: DiscoveredPlugin }> {
+    const pluginRoot = path.join(tmpDir, name);
     fs.mkdirSync(path.join(pluginRoot, '.claude-plugin'), { recursive: true });
     fs.writeFileSync(
       path.join(pluginRoot, '.claude-plugin', 'plugin.json'),
-      JSON.stringify({ name: 'myplugin', version: '1.0.0', description: 'test' })
+      JSON.stringify({ name, version: '1.0.0', description: 'test', author: { name: 'tester' } })
     );
-    fs.writeFileSync(
-      path.join(pluginRoot, '.mcp.json'),
-      JSON.stringify({
-        mcpServers: {
-          'my-server': {
-            command: 'node',
-            args: ['${CLAUDE_PLUGIN_ROOT}/server.js'],
-          },
-        },
-      })
-    );
-
-    const versionHome = path.join(tmpDir, 'version-home');
+    const versionHome = path.join(tmpDir, `${name}-home`);
     fs.mkdirSync(path.join(versionHome, '.claude'), { recursive: true });
 
-    const { syncPluginToVersion: sync } = await import('./plugins.js');
     const plugin: DiscoveredPlugin = {
-      name: 'myplugin',
+      name,
       root: pluginRoot,
-      manifest: { name: 'myplugin', version: '1.0.0', description: 'test' },
-      skills: [],
-      hooks: [],
-      scripts: [],
-      commands: [],
-      agentDefs: [],
-      bin: [],
-      hasMcp: true,
-      hasSettings: false,
-    };
-
-    sync(plugin, 'claude', versionHome);
-
-    const settingsPath = path.join(versionHome, '.claude', 'settings.json');
-    expect(fs.existsSync(settingsPath)).toBe(true);
-
-    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-    expect(settings.mcpServers).toBeDefined();
-    expect(settings.mcpServers['myplugin--my-server']).toBeDefined();
-    expect(settings.mcpServers['myplugin--my-server'].command).toBe('node');
-    // Verify variable expansion happened
-    expect(settings.mcpServers['myplugin--my-server'].args[0]).toBe(`${pluginRoot}/server.js`);
-  });
-});
-
-// ─── syncPluginSettings (integration) ────────────────────────────────────────
-
-describe('syncPluginSettings (via syncPluginToVersion)', () => {
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-test-'));
-  });
-
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  it('merges non-permission keys from plugin settings.json non-destructively', async () => {
-    const pluginRoot = path.join(tmpDir, 'plugin');
-    fs.mkdirSync(path.join(pluginRoot, '.claude-plugin'), { recursive: true });
-    fs.writeFileSync(
-      path.join(pluginRoot, '.claude-plugin', 'plugin.json'),
-      JSON.stringify({ name: 'settingsplugin', version: '1.0.0', description: 'test' })
-    );
-    fs.writeFileSync(
-      path.join(pluginRoot, 'settings.json'),
-      JSON.stringify({ theme: 'dark', fontSize: 14, permissions: { allow: [] } })
-    );
-
-    const versionHome = path.join(tmpDir, 'version-home');
-    const claudeDir = path.join(versionHome, '.claude');
-    fs.mkdirSync(claudeDir, { recursive: true });
-    // Pre-existing settings.json with conflicting and non-conflicting keys
-    fs.writeFileSync(
-      path.join(claudeDir, 'settings.json'),
-      JSON.stringify({ theme: 'light', existingKey: 'keep-me' })
-    );
-
-    const { syncPluginToVersion: sync } = await import('./plugins.js');
-    const plugin: DiscoveredPlugin = {
-      name: 'settingsplugin',
-      root: pluginRoot,
-      manifest: { name: 'settingsplugin', version: '1.0.0', description: 'test' },
+      manifest: { name, version: '1.0.0', description: 'test' },
       skills: [],
       hooks: [],
       scripts: [],
@@ -450,20 +374,102 @@ describe('syncPluginSettings (via syncPluginToVersion)', () => {
       agentDefs: [],
       bin: [],
       hasMcp: false,
-      hasSettings: true,
+      hasSettings: false,
     };
+    return { pluginRoot, versionHome, plugin };
+  }
 
-    sync(plugin, 'claude', versionHome);
+  it('copies plugin source into marketplaces/agents-cli/plugins/<name>/', async () => {
+    const { pluginRoot, versionHome, plugin } = await setupBasicPlugin();
+    fs.writeFileSync(path.join(pluginRoot, 'README.md'), '# hi');
 
-    const settings = JSON.parse(fs.readFileSync(path.join(claudeDir, 'settings.json'), 'utf-8'));
-    // theme: 'light' should NOT be overwritten (non-destructive)
-    expect(settings.theme).toBe('light');
-    // fontSize: 14 should be added (new key)
-    expect(settings.fontSize).toBe(14);
-    // existingKey should be preserved
-    expect(settings.existingKey).toBe('keep-me');
-    // permissions key should be excluded from settings merge (handled separately)
-    // no extra permissions key from settings merge
+    const { syncPluginToVersion } = await import('./plugins.js');
+    syncPluginToVersion(plugin, 'claude', versionHome);
+
+    const installDir = path.join(versionHome, '.claude', 'plugins', 'marketplaces', 'agents-cli', 'plugins', 'myplugin');
+    expect(fs.existsSync(path.join(installDir, '.claude-plugin', 'plugin.json'))).toBe(true);
+    expect(fs.existsSync(path.join(installDir, 'README.md'))).toBe(true);
+  });
+
+  it('synthesizes a marketplace.json catalog', async () => {
+    const { versionHome, plugin } = await setupBasicPlugin();
+    const { syncPluginToVersion } = await import('./plugins.js');
+    syncPluginToVersion(plugin, 'claude', versionHome);
+
+    const manifestPath = path.join(versionHome, '.claude', 'plugins', 'marketplaces', 'agents-cli', '.claude-plugin', 'marketplace.json');
+    expect(fs.existsSync(manifestPath)).toBe(true);
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+    expect(manifest.name).toBe('agents-cli');
+    expect(manifest.plugins).toHaveLength(1);
+    expect(manifest.plugins[0]).toMatchObject({
+      name: 'myplugin',
+      source: './plugins/myplugin',
+      version: '1.0.0',
+    });
+  });
+
+  it('registers the marketplace in known_marketplaces.json', async () => {
+    const { versionHome, plugin } = await setupBasicPlugin();
+    const { syncPluginToVersion } = await import('./plugins.js');
+    syncPluginToVersion(plugin, 'claude', versionHome);
+
+    const knownPath = path.join(versionHome, '.claude', 'plugins', 'known_marketplaces.json');
+    expect(fs.existsSync(knownPath)).toBe(true);
+    const known = JSON.parse(fs.readFileSync(knownPath, 'utf-8'));
+    expect(known['agents-cli']).toBeDefined();
+    expect(known['agents-cli'].source).toEqual({
+      source: 'local',
+      path: path.join(versionHome, '.claude', 'plugins', 'marketplaces', 'agents-cli'),
+    });
+  });
+
+  it('enables the plugin in settings.json#enabledPlugins', async () => {
+    const { versionHome, plugin } = await setupBasicPlugin();
+    fs.writeFileSync(path.join(versionHome, '.claude', 'settings.json'), JSON.stringify({ theme: 'dark' }));
+
+    const { syncPluginToVersion } = await import('./plugins.js');
+    syncPluginToVersion(plugin, 'claude', versionHome);
+
+    const settings = JSON.parse(fs.readFileSync(path.join(versionHome, '.claude', 'settings.json'), 'utf-8'));
+    expect(settings.enabledPlugins).toEqual({ 'myplugin@agents-cli': true });
+    expect(settings.theme).toBe('dark');
+  });
+
+  it('preserves ${CLAUDE_PLUGIN_ROOT} in copied .mcp.json (Claude expands natively)', async () => {
+    const { pluginRoot, versionHome, plugin } = await setupBasicPlugin();
+    fs.writeFileSync(
+      path.join(pluginRoot, '.mcp.json'),
+      JSON.stringify({ mcpServers: { 'my-server': { command: 'node', args: ['${CLAUDE_PLUGIN_ROOT}/server.js'] } } })
+    );
+    plugin.hasMcp = true;
+
+    const { syncPluginToVersion } = await import('./plugins.js');
+    syncPluginToVersion(plugin, 'claude', versionHome);
+
+    const copiedMcp = path.join(
+      versionHome, '.claude', 'plugins', 'marketplaces', 'agents-cli', 'plugins', 'myplugin', '.mcp.json'
+    );
+    const parsed = JSON.parse(fs.readFileSync(copiedMcp, 'utf-8'));
+    expect(parsed.mcpServers['my-server'].args[0]).toBe('${CLAUDE_PLUGIN_ROOT}/server.js');
+  });
+
+  it('migrates legacy dual-dash skill/command directories away', async () => {
+    const { pluginRoot, versionHome, plugin } = await setupBasicPlugin('legacy');
+    plugin.root = pluginRoot;
+
+    // Legacy layout: previous agents-cli put files at these flat paths.
+    const legacySkill = path.join(versionHome, '.claude', 'skills', 'legacy--blog');
+    fs.mkdirSync(legacySkill, { recursive: true });
+    fs.writeFileSync(path.join(legacySkill, 'SKILL.md'), 'legacy');
+    const legacyCmd = path.join(versionHome, '.claude', 'commands', 'legacy--deploy.md');
+    fs.mkdirSync(path.dirname(legacyCmd), { recursive: true });
+    fs.writeFileSync(legacyCmd, 'legacy');
+
+    const { syncPluginToVersion } = await import('./plugins.js');
+    syncPluginToVersion(plugin, 'claude', versionHome);
+
+    expect(fs.existsSync(legacySkill)).toBe(false);
+    expect(fs.existsSync(legacyCmd)).toBe(false);
   });
 });
 
@@ -480,7 +486,63 @@ describe('removePluginFromVersion', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('removes namespaced MCP servers from settings.json', async () => {
+  it('removes the marketplace install dir and disables the plugin', async () => {
+    const { syncPluginToVersion, removePluginFromVersion } = await import('./plugins.js');
+    const pluginRoot = path.join(tmpDir, 'mp');
+    fs.mkdirSync(path.join(pluginRoot, '.claude-plugin'), { recursive: true });
+    fs.writeFileSync(
+      path.join(pluginRoot, '.claude-plugin', 'plugin.json'),
+      JSON.stringify({ name: 'mp', version: '1.0.0', description: 'test' })
+    );
+
+    const versionHome = path.join(tmpDir, 'home');
+    fs.mkdirSync(path.join(versionHome, '.claude'), { recursive: true });
+    const plugin: DiscoveredPlugin = {
+      name: 'mp', root: pluginRoot,
+      manifest: { name: 'mp', version: '1.0.0', description: 'test' },
+      skills: [], hooks: [], scripts: [], commands: [], agentDefs: [], bin: [],
+      hasMcp: false, hasSettings: false,
+    };
+    syncPluginToVersion(plugin, 'claude', versionHome);
+
+    const installDir = path.join(versionHome, '.claude', 'plugins', 'marketplaces', 'agents-cli', 'plugins', 'mp');
+    expect(fs.existsSync(installDir)).toBe(true);
+
+    removePluginFromVersion('mp', pluginRoot, 'claude', versionHome);
+
+    expect(fs.existsSync(installDir)).toBe(false);
+    const settings = JSON.parse(fs.readFileSync(path.join(versionHome, '.claude', 'settings.json'), 'utf-8'));
+    expect(settings.enabledPlugins?.['mp@agents-cli']).toBeUndefined();
+
+    // Last plugin gone: marketplace dir and known_marketplaces entry should also be removed.
+    expect(fs.existsSync(path.join(versionHome, '.claude', 'plugins', 'marketplaces', 'agents-cli'))).toBe(false);
+    const knownPath = path.join(versionHome, '.claude', 'plugins', 'known_marketplaces.json');
+    if (fs.existsSync(knownPath)) {
+      const known = JSON.parse(fs.readFileSync(knownPath, 'utf-8'));
+      expect(known['agents-cli']).toBeUndefined();
+    }
+  });
+
+  it('cleans up legacy dual-dash command files left from older agents-cli', async () => {
+    const { removePluginFromVersion: remove } = await import('./plugins.js');
+
+    const pluginRoot = path.join(tmpDir, 'plugin');
+    const versionHome = path.join(tmpDir, 'home');
+    // Claude's commands subdir is 'commands' — hardcoded here to keep this test
+    // robust against test-isolation mocking of ./agents.js elsewhere in the suite.
+    const commandsDir = path.join(versionHome, '.claude', 'commands');
+    fs.mkdirSync(commandsDir, { recursive: true });
+
+    fs.writeFileSync(path.join(commandsDir, 'myplugin--deploy.md'), '# deploy');
+    fs.writeFileSync(path.join(commandsDir, 'other-cmd.md'), '# other');
+
+    const result = remove('myplugin', pluginRoot, 'claude', versionHome);
+    expect(result.commands).toContain('myplugin--deploy.md');
+    expect(fs.existsSync(path.join(commandsDir, 'myplugin--deploy.md'))).toBe(false);
+    expect(fs.existsSync(path.join(commandsDir, 'other-cmd.md'))).toBe(true);
+  });
+
+  it('strips legacy namespaced MCP servers from settings.json', async () => {
     const { removePluginFromVersion: remove } = await import('./plugins.js');
     const pluginRoot = path.join(tmpDir, 'plugin');
     const versionHome = path.join(tmpDir, 'home');
@@ -503,25 +565,5 @@ describe('removePluginFromVersion', () => {
     const settings = JSON.parse(fs.readFileSync(path.join(claudeDir, 'settings.json'), 'utf-8'));
     expect(settings.mcpServers['myplugin--server-a']).toBeUndefined();
     expect(settings.mcpServers['other-server']).toBeDefined();
-  });
-
-  it('removes namespaced command files from commands dir', async () => {
-    const { removePluginFromVersion: remove } = await import('./plugins.js');
-    const { AGENTS } = await import('./agents.js');
-
-    const pluginRoot = path.join(tmpDir, 'plugin');
-    const versionHome = path.join(tmpDir, 'home');
-    const agentConfig = AGENTS['claude'];
-    const commandsDir = path.join(versionHome, '.claude', agentConfig.commandsSubdir);
-    fs.mkdirSync(commandsDir, { recursive: true });
-
-    fs.writeFileSync(path.join(commandsDir, 'myplugin--deploy.md'), '# deploy');
-    fs.writeFileSync(path.join(commandsDir, 'other-cmd.md'), '# other');
-
-    const result = remove('myplugin', pluginRoot, 'claude', versionHome);
-    expect(result.commands).toHaveLength(1);
-    expect(result.commands[0]).toBe('myplugin--deploy.md');
-    expect(fs.existsSync(path.join(commandsDir, 'myplugin--deploy.md'))).toBe(false);
-    expect(fs.existsSync(path.join(commandsDir, 'other-cmd.md'))).toBe(true);
   });
 });
