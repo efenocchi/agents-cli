@@ -30,6 +30,13 @@ export interface WorkflowFrontmatter {
   skills?: string[];
   mcpServers?: string[];
   allowedAgents?: string[];
+  /**
+   * Secrets bundle names this workflow needs (e.g. `linear.app`, `github.com`).
+   * When `agents run <workflow>` resolves a workflow, these are unioned into the
+   * effective `--secrets` list and resolved from the macOS Keychain before spawn.
+   * Pass `--no-auto-secrets` to skip this injection.
+   */
+  secrets?: string[];
 }
 
 /** A workflow found during repo discovery. */
@@ -72,6 +79,7 @@ export function parseWorkflowFrontmatter(workflowDir: string): WorkflowFrontmatt
       skills: parsed.skills,
       mcpServers: parsed.mcpServers,
       allowedAgents: parsed.allowedAgents,
+      secrets: parsed.secrets,
     };
   } catch {
     return null;

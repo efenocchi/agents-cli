@@ -41,6 +41,7 @@ import {
 } from '../lib/rotate.js';
 import { getGlobalDefault, getVersionHomePath, resolveVersion, resolveVersionAlias } from '../lib/versions.js';
 import { buildDiscoveredPlugin, loadPluginManifest, syncPluginToVersion } from '../lib/plugins.js';
+import { parseWorkflowFrontmatter } from '../lib/workflows.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -54,6 +55,7 @@ interface ExecCommandActionOptions {
   addDir: string[];
   env: string[];
   secrets: string[];
+  noAutoSecrets?: boolean;
   json?: boolean;
   headless?: boolean;
   interactive?: boolean;
@@ -98,6 +100,10 @@ export function registerRunCommand(program: Command): void {
       'Inject a secrets bundle (repeatable). Values resolve from macOS Keychain at run time. See `agents secrets`.',
       (val: string, prev: string[]) => [...prev, val],
       []
+    )
+    .option(
+      '--no-auto-secrets',
+      'Skip auto-injection of secrets declared by a workflow\'s frontmatter `secrets:` field. Has no effect on bare-agent runs.',
     )
     .option('--cwd <dir>', 'Working directory for the agent (defaults to current directory)')
     .option(
@@ -257,6 +263,27 @@ Examples:
               'claude',
               versionHome,
             );
+          }
+        }
+
+        // Auto-inject secrets bundles declared in the workflow's frontmatter `secrets:` field.
+        // Union with any --secrets flags the user passed; dedupe. Skip when --no-auto-secrets is set.
+        if (!options.noAutoSecrets) {
+          const fm = parseWorkflowFrontmatter(workflowDir);
+          const declared = fm?.secrets ?? [];
+          if (declared.length > 0) {
+            const existing = new Set(options.secrets);
+            const added: string[] = [];
+            for (const b of declared) {
+              if (!existing.has(b)) {
+                options.secrets.push(b);
+                existing.add(b);
+                added.push(b);
+              }
+            }
+            if (added.length > 0) {
+              process.stderr.write(chalk.gray(`[workflow] auto-injecting secrets from ${rawAgent}: ${added.join(', ')}\n`));
+            }
           }
         }
 
