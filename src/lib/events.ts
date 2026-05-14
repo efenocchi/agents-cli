@@ -66,6 +66,7 @@ export type EventType =
   | 'secrets.get'
   | 'secrets.set'
   | 'secrets.delete'
+  | 'secrets.rename'
   // Cloud dispatch
   | 'cloud.dispatch'
   | 'cloud.complete'

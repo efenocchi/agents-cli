@@ -364,6 +364,73 @@ export function rotateBundleSecret(bundle: SecretsBundle, key: string, opts: Rot
   writeBundle(bundle);
 }
 
+/** Options for renameBundle. */
+export interface RenameOptions {
+  /** When true, overwrite an existing destination bundle (purges its keychain items first). */
+  force?: boolean;
+}
+
+/**
+ * Rename a bundle: move metadata + every keychain-backed value to a new name.
+ *
+ * Sequence is ordered so the source stays intact if anything in the copy
+ * phase fails:
+ *   1) read source, validate dest
+ *   2) purge dest if --force, refuse otherwise
+ *   3) copy each keychain value source -> dest
+ *   4) write new bundle metadata
+ *   5) delete the old per-key keychain items + old metadata
+ *
+ * Steps 1-4 are reversible. If 5 partially fails (e.g. iCloud Keychain
+ * hiccup), running `rename` again is a safe no-op for the source items.
+ */
+export function renameBundle(oldName: string, newName: string, opts: RenameOptions = {}): void {
+  validateBundleName(oldName);
+  validateBundleName(newName);
+  if (oldName === newName) {
+    throw new Error(`Bundle name unchanged ('${oldName}').`);
+  }
+  if (!bundleExists(oldName)) {
+    throw new Error(`Bundle '${oldName}' not found.`);
+  }
+  const source = readBundle(oldName);
+
+  if (bundleExists(newName)) {
+    if (!opts.force) {
+      throw new Error(`Bundle '${newName}' already exists. Use --force to overwrite.`);
+    }
+    const dest = readBundle(newName);
+    for (const { item } of keychainItemsForBundle(dest)) {
+      deleteKeychainToken(item, dest.icloud_sync);
+    }
+    deleteBundle(newName);
+  }
+
+  // Copy phase: read old item, write new item. Old items stay in place
+  // until step 5 so a partial failure here leaves the source intact.
+  const sourceItems = keychainItemsForBundle(source);
+  for (const { key, item: oldItem } of sourceItems) {
+    const raw = source.vars[key];
+    if (typeof raw !== 'string' || !raw.startsWith('keychain:')) continue;
+    const shortId = raw.slice('keychain:'.length);
+    const newItem = secretsKeychainItem(newName, shortId);
+    const value = getKeychainToken(oldItem, source.icloud_sync);
+    setKeychainToken(newItem, value, source.icloud_sync);
+  }
+
+  // writeBundle preserves source.created_at and refreshes updated_at.
+  const renamed: SecretsBundle = { ...source, name: newName };
+  writeBundle(renamed);
+
+  // Cleanup: delete the old per-key keychain items, then the old metadata.
+  for (const { item: oldItem } of sourceItems) {
+    deleteKeychainToken(oldItem, source.icloud_sync);
+  }
+  deleteBundle(oldName);
+
+  emit('secrets.rename', { from: oldName, to: newName });
+}
+
 // Iterate all keychain-backed keys in a bundle for cleanup on rm/unset.
 export function keychainItemsForBundle(bundle: SecretsBundle): Array<{ key: string; item: string }> {
   const items: Array<{ key: string; item: string }> = [];
