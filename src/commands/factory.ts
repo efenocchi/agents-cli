@@ -21,6 +21,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { homedir } from 'os';
 import { betaEnableHint, isBetaEnabled } from '../lib/beta.js';
+import { insertTask } from '../lib/cloud/store.js';
 
 const FACTORY_URL = process.env.FACTORY_FLOOR_URL ?? 'https://agents.427yosemite.com';
 
@@ -94,9 +95,21 @@ Examples:
         console.log(JSON.stringify(result, null, 2));
         return;
       }
+      // Register locally so `agents cloud logs <id>` can find it.
+      const now = new Date().toISOString();
+      insertTask({
+        id: result.cloud_execution_id,
+        provider: 'rush',
+        status: 'queued',
+        agent: 'claude',
+        prompt: result.linear_identifier,
+        createdAt: now,
+        updatedAt: now,
+      });
+
       console.log(chalk.green(`Submitted ${result.linear_identifier} (${result.label})`));
       console.log(`  ticket       ${result.ticket_id}`);
       console.log(`  execution    ${result.cloud_execution_id}`);
-      console.log(`  tail output  agents cloud tail ${result.cloud_execution_id}`);
+      console.log(`  tail output  agents cloud logs ${result.cloud_execution_id}`);
     });
 }
