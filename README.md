@@ -310,7 +310,7 @@ agents browser profiles create work --browser chrome
 export AGENTS_BROWSER_TASK=$(agents browser start --profile work --url https://app.example.com)
 agents browser refs                  # Get interactive element refs
 agents browser click 42              # Click element ref 42
-agents browser type 15 "hello"       # Type into element ref 15
+agents browser type 15 --text "hello"  # Type into element ref 15
 agents browser screenshot            # Smart resizing, token-efficient
 agents browser tabs                  # List tabs open for the current task
 agents browser tab focus tab123      # Switch focus to another tab

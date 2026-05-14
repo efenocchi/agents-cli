@@ -1,14 +1,4 @@
-import { Command, Argument } from 'commander';
-
-// Hidden trailing positional we use to capture the deprecated `<task>` slot
-// without polluting `--help`. Required for backward compat during migration.
-// commander v12 Argument lacks `hideHelp()`; we set the field our custom
-// help formatter (src/lib/help.ts) already filters on.
-function hiddenLegacyArg(name = 'legacyArg'): Argument {
-  const arg = new Argument(`[${name}]`, 'deprecated — legacy task positional');
-  (arg as Argument & { hidden: boolean }).hidden = true;
-  return arg;
-}
+import { Command } from 'commander';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
@@ -39,28 +29,13 @@ import { registerCommandGroups } from '../lib/help.js';
 /**
  * Resolve which browser task a command targets. Order:
  *   1. `--task <name>` flag (explicit per-command override)
- *   2. Legacy positional `<task>` arg (deprecated; emits a one-time warning)
- *   3. `$AGENTS_BROWSER_TASK` (set once at the start of an agent run)
+ *   2. `$AGENTS_BROWSER_TASK` (set once at the start of an agent run)
  *
  * Each agent process has its own environment, so the env-var path is safe for
  * parallel agents — they can't see each other's value.
  */
-let legacyTaskWarned = false;
-function warnLegacyTaskPositional(): void {
-  if (legacyTaskWarned) return;
-  legacyTaskWarned = true;
-  console.error(
-    'warning: passing <task> as a positional argument is deprecated. ' +
-      'Set AGENTS_BROWSER_TASK once per shell, or use --task <name> for a one-off override.'
-  );
-}
-
-function resolveTaskName(opts: { task?: string }, legacyTaskArg?: string): string {
+function resolveTaskName(opts: { task?: string }): string {
   if (opts.task) return opts.task;
-  if (legacyTaskArg !== undefined && legacyTaskArg !== '') {
-    warnLegacyTaskPositional();
-    return legacyTaskArg;
-  }
   const fromEnv = process.env.AGENTS_BROWSER_TASK;
   if (fromEnv) return fromEnv;
   console.error(
@@ -68,26 +43,6 @@ function resolveTaskName(opts: { task?: string }, legacyTaskArg?: string): strin
   );
   console.error('Tip: T=$(agents browser start --profile <p>) && export AGENTS_BROWSER_TASK=$T');
   process.exit(1);
-}
-
-/**
- * Split positional args into (deprecated leading task, new-shape positionals).
- *
- * If exactly one more positional than the new shape expects is supplied, treat
- * the first one as the deprecated `<task>` positional and shift the rest. Used
- * to keep old `agents browser navigate <task> <url>` style invocations working
- * during the migration to `--task <name>` / `$AGENTS_BROWSER_TASK`.
- */
-function unpackPositionals(
-  rawArgs: ReadonlyArray<string | undefined>,
-  newPositionalCount: number,
-  opts: { task?: string }
-): { task: string; positionals: string[] } {
-  const defined = rawArgs.filter((a): a is string => a !== undefined);
-  if (defined.length === newPositionalCount + 1) {
-    return { task: resolveTaskName(opts, defined[0]), positionals: defined.slice(1) };
-  }
-  return { task: resolveTaskName(opts), positionals: defined };
 }
 
 // `-t` is taken by `--tab` on most commands, so `--task` is long-form only.
@@ -554,11 +509,10 @@ function registerTaskCommands(browser: Command): void {
 
   browser
     .command('done')
-    .addArgument(hiddenLegacyArg('legacyTask'))
     .description('Complete a task and close its tabs')
     .option(TASK_OPTION_FLAG, TASK_OPTION_DESC)
-    .action(async (legacyTask: string | undefined, opts) => {
-      const { task } = unpackPositionals([legacyTask], 0, opts);
+    .action(async (opts) => {
+      const task = resolveTaskName(opts);
       const response = await sendIPCRequest({
         action: 'done',
         task,
@@ -574,11 +528,10 @@ function registerTaskCommands(browser: Command): void {
 
   browser
     .command('stop')
-    .addArgument(hiddenLegacyArg('legacyTask'))
     .description('Stop a browser task and close its tabs; with --profile, detach the whole profile (close browser + drop cached connection)')
     .option(TASK_OPTION_FLAG, TASK_OPTION_DESC)
     .option('-p, --profile <name>', 'Detach the whole profile (incl. composite "name@endpoint") instead of stopping a single task')
-    .action(async (legacyTask: string | undefined, opts) => {
+    .action(async (opts) => {
       if (opts.profile) {
         const response = await sendIPCRequest({
           action: 'stop',
@@ -592,11 +545,7 @@ function registerTaskCommands(browser: Command): void {
         return;
       }
 
-      const { task } = unpackPositionals([legacyTask], 0, opts);
-      if (!task) {
-        console.error('Either --task or --profile is required.');
-        process.exit(1);
-      }
+      const task = resolveTaskName(opts);
       const response = await sendIPCRequest({
         action: 'stop',
         task,
@@ -611,18 +560,17 @@ function registerTaskCommands(browser: Command): void {
     });
 
   browser
-    .command('navigate <url>')
-    .addArgument(hiddenLegacyArg('legacyUrl'))
+    .command('navigate')
     .description('Navigate current tab to URL (creates tab if none exist)')
     .option(TASK_OPTION_FLAG, TASK_OPTION_DESC)
+    .requiredOption('--url <url>', 'URL to navigate to')
     .option('-p, --profile <name>', 'Browser profile (optional if task is unique)')
-    .action(async (arg1: string, arg2: string | undefined, opts) => {
-      const { task, positionals } = unpackPositionals([arg1, arg2], 1, opts);
-      const [url] = positionals;
+    .action(async (opts) => {
+      const task = resolveTaskName(opts);
       const response = await sendIPCRequest({
         action: 'navigate',
         task,
-        url,
+        url: opts.url,
         profile: opts.profile,
       });
 
@@ -631,25 +579,24 @@ function registerTaskCommands(browser: Command): void {
         process.exit(1);
       }
 
-      console.log(`Navigated ${response.tabId} to ${url}`);
+      console.log(`Navigated ${response.tabId} to ${opts.url}`);
     });
 
   // Tab subcommand group
   const tab = browser.command('tab').description('Manage tabs');
 
   tab
-    .command('add <url>')
-    .addArgument(hiddenLegacyArg('legacyUrl'))
+    .command('add')
     .description('Open URL in new tab (becomes current)')
     .option(TASK_OPTION_FLAG, TASK_OPTION_DESC)
+    .requiredOption('--url <url>', 'URL to open in the new tab')
     .option('-p, --profile <name>', 'Browser profile')
-    .action(async (arg1: string, arg2: string | undefined, opts) => {
-      const { task, positionals } = unpackPositionals([arg1, arg2], 1, opts);
-      const [url] = positionals;
+    .action(async (opts) => {
+      const task = resolveTaskName(opts);
       const response = await sendIPCRequest({
         action: 'tab-add',
         task,
-        url,
+        url: opts.url,
         profile: opts.profile,
       });
 
@@ -658,17 +605,15 @@ function registerTaskCommands(browser: Command): void {
         process.exit(1);
       }
 
-      console.log(`Opened tab ${response.tabId}: ${url}`);
+      console.log(`Opened tab ${response.tabId}: ${opts.url}`);
     });
 
   tab
     .command('focus <tabId>')
-    .addArgument(hiddenLegacyArg('legacyTabId'))
     .description('Switch to tab (by ID, prefix, or URL substring)')
     .option(TASK_OPTION_FLAG, TASK_OPTION_DESC)
-    .action(async (arg1: string, arg2: string | undefined, opts) => {
-      const { task, positionals } = unpackPositionals([arg1, arg2], 1, opts);
-      const [tabId] = positionals;
+    .action(async (tabId: string, opts) => {
+      const task = resolveTaskName(opts);
       const response = await sendIPCRequest({
         action: 'tab-focus',
         task,
@@ -744,16 +689,17 @@ function registerTaskCommands(browser: Command): void {
 
 
   browser
-    .command('screenshot [tabId]')
+    .command('screenshot')
     .description('Take a screenshot — auto-saved per task; --output only needed when you want a specific path')
     .option(TASK_OPTION_FLAG, TASK_OPTION_DESC)
+    .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
     .option('-o, --output <path>', 'Specific output path (otherwise auto-saved under sessions/<task>/)')
     .option(
       '-q, --quality <mode>',
       'compressed (JPEG, capped at ~100 KB — default) or raw (PNG, pixel-faithful)',
       'compressed'
     )
-    .action(async (tabId: string | undefined, opts) => {
+    .action(async (opts) => {
       const task = resolveTaskName(opts);
       if (opts.quality !== 'compressed' && opts.quality !== 'raw') {
         console.error('--quality must be "compressed" or "raw"');
@@ -762,7 +708,7 @@ function registerTaskCommands(browser: Command): void {
       const response = await sendIPCRequest({
         action: 'screenshot',
         task,
-        tabId,
+        tabId: opts.tab,
         path: opts.output,
         quality: opts.quality,
       });
@@ -780,17 +726,42 @@ function registerTaskCommands(browser: Command): void {
       const size = humanizeBytes(response.bytes);
       const dims = response.width && response.height ? `${response.width}×${response.height}` : 'unknown size';
       console.error(`Saved screenshot to ${response.path} (${size}, ${dims})`);
+
+      // When auto-saving (no --output), surface the directory once so the
+      // agent doesn't have to dirname() the path or guess where files land.
+      if (!opts.output && response.path) {
+        const dir = path.dirname(response.path);
+        console.error(`Tip: auto-saving to ${dir}. Pass --output <path> to choose a path.`);
+      }
     });
 
   browser
-    .command('evaluate <expression>')
-    .addArgument(hiddenLegacyArg('legacyExpression'))
+    .command('evaluate')
     .description('Evaluate JavaScript in current tab')
     .option(TASK_OPTION_FLAG, TASK_OPTION_DESC)
     .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
-    .action(async (arg1: string, arg2: string | undefined, opts) => {
-      const { task, positionals } = unpackPositionals([arg1, arg2], 1, opts);
-      const [expression] = positionals;
+    .option('-e, --expression <js>', 'JavaScript expression to evaluate')
+    .option('-f, --file <path>', 'Path to a .js file whose contents will be evaluated')
+    .action(async (opts) => {
+      const task = resolveTaskName(opts);
+      if (opts.expression && opts.file) {
+        console.error('Pass exactly one of --expression or --file');
+        process.exit(1);
+      }
+      let expression: string;
+      if (opts.file) {
+        try {
+          expression = fs.readFileSync(opts.file, 'utf8');
+        } catch (err) {
+          console.error(`Cannot read --file ${opts.file}: ${(err as Error).message}`);
+          process.exit(1);
+        }
+      } else if (opts.expression) {
+        expression = opts.expression;
+      } else {
+        console.error('Pass --expression <js> or --file <path>');
+        process.exit(1);
+      }
       const response = await sendIPCRequest({
         action: 'evaluate',
         task,
@@ -1115,15 +1086,14 @@ function registerTaskCommands(browser: Command): void {
 
   browser
     .command('refs')
-    .addArgument(hiddenLegacyArg('legacyTask'))
     .description('Get DOM refs for interactive elements')
     .option(TASK_OPTION_FLAG, TASK_OPTION_DESC)
     .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
     .option('--all', 'Include non-interactive elements')
     .option('-l, --limit <n>', 'Max elements (default 500)', '500')
     .option('--json', 'Output machine-readable JSON')
-    .action(async (legacyTask: string | undefined, opts) => {
-      const { task } = unpackPositionals([legacyTask], 0, opts);
+    .action(async (opts) => {
+      const task = resolveTaskName(opts);
       const response = await sendIPCRequest({
         action: 'refs',
         task,
@@ -1151,13 +1121,11 @@ function registerTaskCommands(browser: Command): void {
 
   browser
     .command('click <ref>')
-    .addArgument(hiddenLegacyArg('legacyRef'))
     .description('Click an element by ref')
     .option(TASK_OPTION_FLAG, TASK_OPTION_DESC)
     .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
-    .action(async (arg1: string, arg2: string | undefined, opts) => {
-      const { task, positionals } = unpackPositionals([arg1, arg2], 1, opts);
-      const [ref] = positionals;
+    .action(async (ref: string, opts) => {
+      const task = resolveTaskName(opts);
       const response = await sendIPCRequest({
         action: 'click',
         task,
@@ -1174,21 +1142,25 @@ function registerTaskCommands(browser: Command): void {
     });
 
   browser
-    .command('type <ref> <text>')
-    .addArgument(hiddenLegacyArg('legacyText'))
+    .command('type <ref>')
     .description('Type text into an element by ref')
     .option(TASK_OPTION_FLAG, TASK_OPTION_DESC)
     .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
+    .requiredOption('--text <text>', 'Text to type (use quotes for spaces/special chars)')
     .option('--clear', 'Clear editor content before typing')
-    .action(async (arg1: string, arg2: string, arg3: string | undefined, opts) => {
-      const { task, positionals } = unpackPositionals([arg1, arg2, arg3], 2, opts);
-      const [ref, text] = positionals;
+    .action(async (ref: string, opts) => {
+      const task = resolveTaskName(opts);
+      const refNum = parseInt(ref, 10);
+      if (!Number.isFinite(refNum)) {
+        console.error(`<ref> must be an integer, got: ${ref}`);
+        process.exit(1);
+      }
       const response = await sendIPCRequest({
         action: 'type',
         task,
         tabId: opts.tab,
-        ref: parseInt(ref, 10),
-        text,
+        ref: refNum,
+        text: opts.text,
         clear: opts.clear,
       });
 
@@ -1202,13 +1174,11 @@ function registerTaskCommands(browser: Command): void {
 
   browser
     .command('press <key>')
-    .addArgument(hiddenLegacyArg('legacyKey'))
     .description('Press a key (Enter, Tab, Escape, etc)')
     .option(TASK_OPTION_FLAG, TASK_OPTION_DESC)
     .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
-    .action(async (arg1: string, arg2: string | undefined, opts) => {
-      const { task, positionals } = unpackPositionals([arg1, arg2], 1, opts);
-      const [key] = positionals;
+    .action(async (key: string, opts) => {
+      const task = resolveTaskName(opts);
       const response = await sendIPCRequest({
         action: 'press',
         task,
@@ -1226,13 +1196,11 @@ function registerTaskCommands(browser: Command): void {
 
   browser
     .command('hover <ref>')
-    .addArgument(hiddenLegacyArg('legacyRef'))
     .description('Hover over an element by ref')
     .option(TASK_OPTION_FLAG, TASK_OPTION_DESC)
     .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
-    .action(async (arg1: string, arg2: string | undefined, opts) => {
-      const { task, positionals } = unpackPositionals([arg1, arg2], 1, opts);
-      const [ref] = positionals;
+    .action(async (ref: string, opts) => {
+      const task = resolveTaskName(opts);
       const response = await sendIPCRequest({
         action: 'hover',
         task,
@@ -1249,22 +1217,30 @@ function registerTaskCommands(browser: Command): void {
     });
 
   browser
-    .command('scroll <deltaX> <deltaY>')
-    .addArgument(hiddenLegacyArg('legacyDeltaY'))
-    .description('Scroll the page by pixel amount')
+    .command('scroll')
+    .description('Scroll the page by pixel amount (negatives scroll up/left)')
     .option(TASK_OPTION_FLAG, TASK_OPTION_DESC)
     .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
+    .option('--dx <n>', 'Horizontal pixels (negative = left)', (v) => parseInt(v, 10), 0)
+    .option('--dy <n>', 'Vertical pixels (negative = up)', (v) => parseInt(v, 10), 0)
     .option('-x, --at-x <x>', 'X coordinate to dispatch scroll from (default 0)', parseInt)
     .option('-y, --at-y <y>', 'Y coordinate to dispatch scroll from (default 0)', parseInt)
-    .action(async (arg1: string, arg2: string, arg3: string | undefined, opts) => {
-      const { task, positionals } = unpackPositionals([arg1, arg2, arg3], 2, opts);
-      const [deltaX, deltaY] = positionals;
+    .action(async (opts) => {
+      const task = resolveTaskName(opts);
+      if (!Number.isFinite(opts.dx) || !Number.isFinite(opts.dy)) {
+        console.error('--dx and --dy must be integers');
+        process.exit(1);
+      }
+      if (opts.dx === 0 && opts.dy === 0) {
+        console.error('Pass --dx and/or --dy (at least one must be non-zero)');
+        process.exit(1);
+      }
       const response = await sendIPCRequest({
         action: 'scroll',
         task,
         tabId: opts.tab,
-        scrollX: parseInt(deltaX, 10),
-        scrollY: parseInt(deltaY, 10),
+        scrollX: opts.dx,
+        scrollY: opts.dy,
         scrollAtX: opts.atX,
         scrollAtY: opts.atY,
       });
@@ -1279,7 +1255,6 @@ function registerTaskCommands(browser: Command): void {
 
   browser
     .command('upload')
-    .addArgument(hiddenLegacyArg('legacyTask'))
     .description('Upload file(s) — supports hidden file inputs, drag-drop targets, and OS chooser interception')
     .option(TASK_OPTION_FLAG, TASK_OPTION_DESC)
     .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
@@ -1289,8 +1264,8 @@ function registerTaskCommands(browser: Command): void {
     .option('--drop', 'Force drag-drop pattern even if ref is an <input type=file>')
     .option('--input', 'Force file-input pattern (DOM.setFileInputFiles)')
     .option('--timeout <ms>', 'Timeout for chooser interception (Pattern C)', (v) => parseInt(v, 10))
-    .action(async (legacyTask: string | undefined, opts) => {
-      const { task } = unpackPositionals([legacyTask], 0, opts);
+    .action(async (opts) => {
+      const task = resolveTaskName(opts);
       const files: string[] = opts.file ?? [];
       if (files.length === 0) {
         console.error('--file <path> is required (repeat for multiple files)');
@@ -1335,15 +1310,13 @@ function registerTaskCommands(browser: Command): void {
 
   setCmd
     .command('viewport <width> <height>')
-    .addArgument(hiddenLegacyArg('legacyHeight'))
     .description('Set viewport size')
     .option(TASK_OPTION_FLAG, TASK_OPTION_DESC)
     .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
     .option('-m, --mobile', 'Enable mobile emulation')
     .option('-s, --scale <factor>', 'Device scale factor', parseFloat)
-    .action(async (arg1: string, arg2: string, arg3: string | undefined, opts) => {
-      const { task, positionals } = unpackPositionals([arg1, arg2, arg3], 2, opts);
-      const [width, height] = positionals;
+    .action(async (width: string, height: string, opts) => {
+      const task = resolveTaskName(opts);
       const response = await sendIPCRequest({
         action: 'set-viewport',
         task,
@@ -1364,13 +1337,11 @@ function registerTaskCommands(browser: Command): void {
 
   setCmd
     .command('device <device-name>')
-    .addArgument(hiddenLegacyArg('legacyDeviceName'))
     .description('Emulate a device (iPhone 14, iPad, MacBook Pro)')
     .option(TASK_OPTION_FLAG, TASK_OPTION_DESC)
     .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
-    .action(async (arg1: string, arg2: string | undefined, opts) => {
-      const { task, positionals } = unpackPositionals([arg1, arg2], 1, opts);
-      const [deviceName] = positionals;
+    .action(async (deviceName: string, opts) => {
+      const task = resolveTaskName(opts);
       const response = await sendIPCRequest({
         action: 'set-device',
         task,
@@ -1401,14 +1372,13 @@ function registerTaskCommands(browser: Command): void {
 
   browser
     .command('console')
-    .addArgument(hiddenLegacyArg('legacyTask'))
     .description('Read console logs from a tab')
     .option(TASK_OPTION_FLAG, TASK_OPTION_DESC)
     .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
     .option('-l, --level <level>', 'Filter by level (log, info, warn, error)')
     .option('--clear', 'Clear logs after reading')
-    .action(async (legacyTask: string | undefined, opts) => {
-      const { task } = unpackPositionals([legacyTask], 0, opts);
+    .action(async (opts) => {
+      const task = resolveTaskName(opts);
       const response = await sendIPCRequest({
         action: 'console',
         task,
@@ -1436,13 +1406,12 @@ function registerTaskCommands(browser: Command): void {
 
   browser
     .command('errors')
-    .addArgument(hiddenLegacyArg('legacyTask'))
     .description('Read page errors from a tab')
     .option(TASK_OPTION_FLAG, TASK_OPTION_DESC)
     .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
     .option('--clear', 'Clear errors after reading')
-    .action(async (legacyTask: string | undefined, opts) => {
-      const { task } = unpackPositionals([legacyTask], 0, opts);
+    .action(async (opts) => {
+      const task = resolveTaskName(opts);
       const response = await sendIPCRequest({
         action: 'errors',
         task,
@@ -1472,14 +1441,13 @@ function registerTaskCommands(browser: Command): void {
 
   browser
     .command('requests')
-    .addArgument(hiddenLegacyArg('legacyTask'))
     .description('Read captured network requests')
     .option(TASK_OPTION_FLAG, TASK_OPTION_DESC)
     .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
     .option('-f, --filter <text>', 'Filter URLs containing text')
     .option('--clear', 'Clear requests after reading')
-    .action(async (legacyTask: string | undefined, opts) => {
-      const { task } = unpackPositionals([legacyTask], 0, opts);
+    .action(async (opts) => {
+      const task = resolveTaskName(opts);
       const response = await sendIPCRequest({
         action: 'requests',
         task,
@@ -1547,15 +1515,13 @@ function registerTaskCommands(browser: Command): void {
 
   browser
     .command('responsebody <url-pattern>')
-    .addArgument(hiddenLegacyArg('legacyUrlPattern'))
     .description('Wait for and read a response body by URL pattern')
     .option(TASK_OPTION_FLAG, TASK_OPTION_DESC)
     .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
     .option('--timeout <ms>', 'Timeout in milliseconds', parseInt)
     .option('--max-chars <n>', 'Max characters to return', parseInt)
-    .action(async (arg1: string, arg2: string | undefined, opts) => {
-      const { task, positionals } = unpackPositionals([arg1, arg2], 1, opts);
-      const [urlPattern] = positionals;
+    .action(async (urlPattern: string, opts) => {
+      const task = resolveTaskName(opts);
       const response = await sendIPCRequest({
         action: 'response-body',
         task,
@@ -1577,7 +1543,6 @@ function registerTaskCommands(browser: Command): void {
 
   browser
     .command('wait')
-    .addArgument(hiddenLegacyArg('legacyTask'))
     .description('Wait for a condition')
     .option(TASK_OPTION_FLAG, TASK_OPTION_DESC)
     .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
@@ -1587,8 +1552,8 @@ function registerTaskCommands(browser: Command): void {
     .option('--fn <js>', 'Wait for JS expression to return truthy')
     .option('--state <state>', 'Wait for load state (domcontentloaded, load, networkidle)')
     .option('--timeout <ms>', 'Timeout in milliseconds', parseInt)
-    .action(async (legacyTask: string | undefined, opts) => {
-      const { task } = unpackPositionals([legacyTask], 0, opts);
+    .action(async (opts) => {
+      const task = resolveTaskName(opts);
       let waitType: 'time' | 'selector' | 'url' | 'function' | 'load';
       let waitValue: string | number;
 
@@ -1633,13 +1598,12 @@ function registerTaskCommands(browser: Command): void {
 
   browser
     .command('download')
-    .addArgument(hiddenLegacyArg('legacyTask'))
     .description('Set download directory for a task')
     .option(TASK_OPTION_FLAG, TASK_OPTION_DESC)
     .option('-t, --tab <tabId>', 'Tab ID (defaults to current)')
     .requiredOption('-p, --path <dir>', 'Download directory path')
-    .action(async (legacyTask: string | undefined, opts) => {
-      const { task } = unpackPositionals([legacyTask], 0, opts);
+    .action(async (opts) => {
+      const task = resolveTaskName(opts);
       const response = await sendIPCRequest({
         action: 'set-download-path',
         task,
@@ -1708,12 +1672,11 @@ function registerTaskCommands(browser: Command): void {
 
   browser
     .command('waitdownload')
-    .addArgument(hiddenLegacyArg('legacyTask'))
     .description('Wait for a download to complete')
     .option(TASK_OPTION_FLAG, TASK_OPTION_DESC)
     .option('--timeout <ms>', 'Timeout in milliseconds', parseInt)
-    .action(async (legacyTask: string | undefined, opts) => {
-      const { task } = unpackPositionals([legacyTask], 0, opts);
+    .action(async (opts) => {
+      const task = resolveTaskName(opts);
       const response = await sendIPCRequest({
         action: 'wait-download',
         task,
