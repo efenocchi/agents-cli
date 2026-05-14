@@ -216,14 +216,13 @@ export function deleteKeychainToken(item: string, sync = false): boolean {
   if (backend) return backend.delete(item, sync);
   assertSupportedPlatform();
   if (isLinux()) return linuxBackend.delete(item, sync);
-  // macOS path
-  if (sync) {
-    const bin = ensureKeychainHelper();
-    return spawnSync(bin, ['delete', item, os.userInfo().username], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }).status === 0;
-  }
-  return spawnSync('security', ['delete-generic-password', '-a', os.userInfo().username, '-s', item], {
+  // macOS: Try security first (no prompts for local items), fall back to binary for synced items.
+  if (!sync && spawnSync('security', ['delete-generic-password', '-a', os.userInfo().username, '-s', item], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).status === 0) return true;
+  // Fallback: binary deletes synced items via kSecAttrSynchronizableAny
+  const bin = ensureKeychainHelper();
+  return spawnSync(bin, ['delete', item, os.userInfo().username], {
     stdio: ['ignore', 'pipe', 'pipe'],
   }).status === 0;
 }
