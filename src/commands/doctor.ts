@@ -24,14 +24,13 @@ import { checkAllClis } from '../lib/teams/agents.js';
 import { AGENTS, ALL_AGENT_IDS, resolveAgentName, formatAgentError } from '../lib/agents.js';
 import type { AgentId } from '../lib/types.js';
 import {
-  getAvailableResources,
   getGlobalDefault,
   getVersionHomePath,
   isVersionInstalled,
   listInstalledVersions,
   parseAgentSpec,
 } from '../lib/versions.js';
-import { loadSyncManifest, isSyncStale } from '../lib/sync-manifest.js';
+import { loadManifest, isStale } from '../lib/staleness/index.js';
 import { diffVersionCommands, iterCommandsCapableVersions } from '../lib/commands.js';
 import { diffVersionSkills, iterSkillsCapableVersions } from '../lib/skills.js';
 import { diffVersionHooks, iterHooksCapableVersions } from '../lib/hooks.js';
@@ -77,13 +76,12 @@ function checkSyncStatus(cwd: string): SyncStatusRow[] {
   for (const agent of ALL_AGENT_IDS) {
     const version = getGlobalDefault(agent);
     if (!version) continue;
-    const manifest = loadSyncManifest(agent, version);
+    const manifest = loadManifest(agent, version);
     if (!manifest) {
       rows.push({ agent, version, status: 'never-synced' });
       continue;
     }
-    const available = getAvailableResources(cwd);
-    const stale = isSyncStale(manifest, available, agent, version, cwd);
+    const stale = isStale(manifest, agent, version, cwd);
     rows.push({ agent, version, status: stale ? 'stale' : 'fresh' });
   }
   return rows;
@@ -332,6 +330,20 @@ function renderTargetText(report: VersionResourceReport, options: { showDiff: bo
       : null,
   ].filter(Boolean).join(' ');
   console.log(chalk.gray(`  layers: ${layerStr}`));
+
+  // Staleness manifest verdict — single-line summary from the staleness
+  // library, sitting alongside the detailed per-resource diff below.
+  const manifest = loadManifest(report.agent, report.version);
+  if (!manifest) {
+    console.log(chalk.gray(`  manifest: ${chalk.gray('cold')} (never synced)`));
+  } else {
+    const stale = isStale(manifest, report.agent, report.version, report.cwd);
+    if (stale) {
+      console.log(chalk.gray('  manifest: ') + chalk.yellow('stale') + chalk.gray(' (sources changed since last sync)'));
+    } else {
+      console.log(chalk.gray('  manifest: ') + chalk.green('fresh'));
+    }
+  }
   console.log();
 
   for (const kind of DOCTOR_ALL_KINDS) {
