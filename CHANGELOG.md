@@ -4,18 +4,24 @@
 
 **Browser**
 
-- New canonical shape for action commands: bind the task once per shell via
-  `AGENTS_BROWSER_TASK`, then drop the positional `<task>` from every later
-  call. The old positional shape still works but emits a one-line deprecation
-  warning on stderr — agents and scripts can migrate at their own pace.
+- **Breaking:** action commands no longer accept a leading `<task>` positional.
+  Bind the task once per shell via `AGENTS_BROWSER_TASK`, or pass `--task <name>`
+  for a per-call override:
   ```bash
   export AGENTS_BROWSER_TASK=$(agents browser start --profile work)
-  agents browser navigate https://example.com
+  agents browser navigate --url https://example.com
   agents browser click 42
   agents browser screenshot
   ```
   Env vars are per-process, so parallel agents in different shells never collide.
-  `--task <name>` is supported on every action command as an explicit one-off override.
+- **Breaking:** URL/text/expression/scroll arguments are now flag-only — positional forms removed:
+  - `navigate --url <url>` (was `navigate <url>`)
+  - `tab add --url <url>` (was `tab add <url>`)
+  - `type <ref> --text "..."` (was `type <ref> "..."`)
+  - `evaluate --expression "..."` or `--file <path>` (was `evaluate "..."`)
+  - `scroll --dx <n> --dy <n>` (was `scroll <dx> <dy>` — fixes negative-value parser collision)
+- `screenshot` prints a one-line auto-save tip on stderr when `--output` is not passed,
+  so agents see the directory without having to dirname() the path.
 - `agents browser start` writes the resolved task name to **stdout** as a
   single line (e.g. `swift-crab-falcon-a3f92b1c`), and routes the human
   commentary ("Started task ... with tab ...", "Tip: export
