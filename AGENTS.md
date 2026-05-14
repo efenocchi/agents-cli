@@ -32,9 +32,12 @@ commands/  hooks/  hooks.yaml  mcp/  permissions/  profiles/  rules/  skills/
 Clone from `phnx-labs/.agents-system` to see exactly what ships. Nothing else belongs here.
 
 **User repo (`~/.agents/`)** — your resources + all operational state:
-- **Your resources:** commands, skills, hooks, rules, mcp, permissions, profiles, subagents
-- **Operational state:** `versions/`, `shims/`, `sessions/`, `routines/` (with `runs/` inside), `cache/`, `cloud/`, `teams/`, `browser/`, `.trash/`, `.backups/`, `agents.yaml`
-- **Browser:** `browser/profiles/` (YAML configs) + `browser/<profile>/` (runtime: chrome-data, pids)
+- **Your resources** (git-tracked, top-level): `commands/`, `skills/`, `hooks/`, `rules/`, `mcp/`, `permissions/`, `profiles/`, `subagents/`, `plugins/`, `workflows/`, `routines/`, `agents.yaml`
+- **Durable runtime** (under `~/.agents/.history/`): `versions/`, `sessions/`, `runs/`, `trash/`, `backups/`, `teams/agents/`
+- **Regenerable runtime** (under `~/.agents/.cache/`): `shims/`, `bin/`, `packages/`, `cloud/`, `drive/`, `logs/`, `helpers/`, `state/`, `companion/`, the migration sentinel `.migrated`
+- **Browser:** `browser/profiles/` (YAML configs) + `~/.agents/.cache/browser/<profile>/` (runtime: chrome-data, pids)
+
+**Plugins (`~/.agents/plugins/`) are user-authored.** Each plugin is a directory with a `.claude-plugin/plugin.json` manifest, optionally containing `skills/`, `commands/`, `hooks/`, `subagents/`, `.mcp.json`. The CLI never migrates this directory into `.cache/` — that was the [issue #20](https://github.com/phnx-labs/agents-cli/issues/20) regression in 1.16.x–1.17.6, fixed in 1.18.0. Treat `plugins/` exactly like `skills/`.
 
 **No `secrets/` directory anywhere.** Bundle metadata lives in macOS Keychain, not on disk.
 
@@ -94,6 +97,21 @@ Promptcuts are hook data, not a top-level resource — `~/.agents-system/hooks/p
 ```bash
 bun install && bun run build && bun test
 ```
+
+## Local development (`scripts/install.sh`)
+
+`scripts/install.sh` installs the working tree as a side-by-side dev build at `$HOME/.local/agents-cli-dev/`, binary symlinked into `$HOME/.local/bin/agents`. The registry-installed global `agents` is **never** touched. Version is stamped `0.0.0-dev.<sha>[-dirty]` so `agents --version` always tells you which build is on PATH.
+
+```bash
+scripts/install.sh --skip-tests   # build + install at ~/.local/agents-cli-dev
+# put $HOME/.local/bin ahead of nvm's bin dir on PATH to use the dev build
+```
+
+Reverting: drop `$HOME/.local/bin` from PATH (or `rm -rf ~/.local/agents-cli-dev` to wipe entirely). The registry release at `$(npm root -g)/@phnx-labs/agents-cli/` is untouched.
+
+**Why two prefixes?** Issue #20-class regressions ship to npm and silently break every install that auto-updates. Side-by-side dev installs let you iterate on the CLI without risking the working install on your machine, and let you `agents --version` to disambiguate immediately.
+
+**Bin entrypoints must be executable.** `scripts/build.sh` runs `chmod 0o755` on every file declared in `package.json#bin` after `tsc` emits dist/. Newer npm versions preserve file mode from the tarball and do NOT auto-chmod the bin target, so 644 entrypoints surface to users as `zsh: permission denied: agents`. Do not skip this step.
 
 ## Detailed design
 
