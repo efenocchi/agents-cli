@@ -56,13 +56,13 @@ function deleteSystemPromptsJson(): void {
  * The teams persistence layer already reads the legacy path as a fallback;
  * moving it here keeps the canonical location consistent.
  */
+// Delete the legacy ~/.agents-system/config.json. This was the teams agent
+// registry, which no longer exists — `agents teams` discovers agents through
+// `listInstalledVersions` and invokes them through `agents run`.
 function migrateSystemConfigJson(): void {
   const src = path.join(SYSTEM_DIR, 'config.json');
-  const dest = path.join(USER_DIR, 'teams', 'config.json');
-  if (!fs.existsSync(src) || fs.existsSync(dest)) return;
+  if (!fs.existsSync(src)) return;
   try {
-    fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
-    fs.copyFileSync(src, dest);
     fs.unlinkSync(src);
   } catch { /* best-effort */ }
 }
@@ -346,19 +346,40 @@ function deleteUserPromptsJson(): void {
 }
 
 /**
- * Delete ~/.agents/config.json. The canonical teams config is at
- * ~/.agents/teams/config.json (teams/persistence.ts). If the canonical
- * file exists we just unlink the legacy copy; otherwise migrate first.
+ * Delete ~/.agents/teams/config.json. The teams subsystem no longer carries
+ * its own agent registry — agent discovery flows through `listInstalledVersions`
+ * (the same source `agents view` uses) and invocation flows through
+ * `agents run`. The on-disk file is pure dead state on existing installs.
+ */
+function deleteTeamsConfigJson(): void {
+  const f = path.join(USER_DIR, 'teams', 'config.json');
+  if (!fs.existsSync(f)) return;
+  try {
+    fs.unlinkSync(f);
+  } catch { /* best-effort */ }
+}
+
+/**
+ * Move ~/.agents/teams/registry.json → ~/.agents/.history/teams/registry.json.
+ * The registry is per-machine runtime state (timestamps + absolute worktree
+ * paths) and belongs in the durable-runtime bucket, not at the user-root
+ * where `agents repo push` would sync it across machines.
+ */
+function moveTeamsRegistryToHistory(): void {
+  const src = path.join(USER_DIR, 'teams', 'registry.json');
+  const dest = path.join(HISTORY_DIR, 'teams', 'registry.json');
+  moveFileOnce(src, dest);
+}
+
+/**
+ * Delete ~/.agents/config.json. This was the legacy teams config location;
+ * the teams subsystem no longer carries a config file at all, so the legacy
+ * copy is simply removed.
  */
 function cleanupUserConfigJson(): void {
   const legacy = path.join(USER_DIR, 'config.json');
   if (!fs.existsSync(legacy)) return;
-  const canonical = path.join(USER_DIR, 'teams', 'config.json');
   try {
-    if (!fs.existsSync(canonical)) {
-      fs.mkdirSync(path.dirname(canonical), { recursive: true, mode: 0o700 });
-      fs.copyFileSync(legacy, canonical);
-    }
     fs.unlinkSync(legacy);
   } catch { /* best-effort */ }
 }
@@ -1324,6 +1345,8 @@ export async function runMigration(): Promise<void> {
   migratePermissionSetsToPresets();
   deleteUserLinearJson();
   deleteUserPromptsJson();
+  deleteTeamsConfigJson();
+  moveTeamsRegistryToHistory();
   cleanupUserConfigJson();
   cleanupEmptyTopLevelRuns();
   foldUserHooksYamlIntoAgentsYaml();

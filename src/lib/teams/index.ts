@@ -39,16 +39,11 @@ export {
 } from './api.js';
 
 export {
-  readConfig,
   resolveAgentsDir,
   resolveBaseDir,
-  type EffortLevel,
-  type ModelOverrides,
-  type ProviderConfig,
-  type AgentConfig,
-  type SwarmConfig,
-  type ReadConfigResult,
 } from './persistence.js';
+
+export { type EffortLevel } from './agents.js';
 
 export {
   collapseEvents,
