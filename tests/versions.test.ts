@@ -554,6 +554,7 @@ describe('getAvailableResources', () => {
     const hooksDir = path.join(AGENTS_DIR, 'hooks');
     fs.mkdirSync(hooksDir, { recursive: true });
     fs.writeFileSync(path.join(hooksDir, 'pre-commit.sh'), '#!/bin/bash');
+    fs.chmodSync(path.join(hooksDir, 'pre-commit.sh'), 0o755);
     fs.writeFileSync(path.join(hooksDir, '.hidden'), 'hidden');
 
     const resources = getAvailableResources();
@@ -660,6 +661,7 @@ describe('syncResourcesToVersion', () => {
     const hooksDir = path.join(AGENTS_DIR, 'hooks');
     fs.mkdirSync(hooksDir, { recursive: true });
     fs.writeFileSync(path.join(hooksDir, 'pre-commit.sh'), '#!/bin/bash\necho "pre-commit"');
+    fs.chmodSync(path.join(hooksDir, 'pre-commit.sh'), 0o755);
 
     // Rules — composer-model layout: subrules/ + rules.yaml. The state mock
     // points all rules-dir getters at <AGENTS_DIR>/memory, so we write here.
@@ -1218,6 +1220,7 @@ describe('sync then detect roundtrip', () => {
     const hooksDir = path.join(AGENTS_DIR, 'hooks');
     fs.mkdirSync(hooksDir, { recursive: true });
     fs.writeFileSync(path.join(hooksDir, 'check.sh'), '#!/bin/bash\necho check');
+    fs.chmodSync(path.join(hooksDir, 'check.sh'), 0o755);
 
     const versionHome = path.join(AGENTS_DIR, 'versions', 'claude', '2.0.65', 'home');
     fs.mkdirSync(versionHome, { recursive: true });

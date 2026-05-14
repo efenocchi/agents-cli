@@ -46,13 +46,14 @@ describe('state paths', () => {
 
     expect(getPackagesDir()).toBe(path.join(cache, 'packages'));
     expect(getShimsDir()).toBe(path.join(cache, 'shims'));
-    expect(getPluginsDir()).toBe(path.join(cache, 'plugins'));
     expect(getDriveDir()).toBe(path.join(cache, 'drive'));
   });
 
   it('keeps definitions/configs at the top of ~/.agents', () => {
     const userRoot = path.join(os.homedir(), '.agents');
     expect(getRoutinesDir()).toBe(path.join(userRoot, 'routines'));
+    // Plugins are user-authored resources, alongside skills/, commands/, etc.
+    expect(getPluginsDir()).toBe(path.join(userRoot, 'plugins'));
   });
 });
 
