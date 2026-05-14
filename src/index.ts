@@ -29,6 +29,30 @@ const packageJsonPath = path.join(__dirname, '..', 'package.json');
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
 const VERSION = packageJson.version;
 
+// Detect dev/working-tree builds and default the noisy startup steps off.
+// Three cases trip this:
+//   1. Dev install (scripts/install.sh) — package.json version stamped 0.0.0-dev.<sha>
+//   2. Running `node dist/index.js` from a working tree — repo root has .git/
+//   3. Running tsx/ts-node from src/ — also has .git/ at the repo root
+// For all three: skip auto-pull (no network noise + no surprise FF on the
+// system repo while iterating), skip migration (a buggy in-progress migration
+// must not scribble on the user's real ~/.agents/), and skip the update prompt
+// (the "0.0.0-dev -> 1.x.y" message is misleading). Each individual env var
+// can still be set explicitly to override (set to '0' to re-enable).
+const IS_DEV_BUILD: boolean = (() => {
+  if (VERSION.startsWith('0.0.0-dev')) return true;
+  try {
+    const cliPath = process.argv[1] || '';
+    const repoRoot = path.dirname(path.dirname(cliPath));
+    return fs.existsSync(path.join(repoRoot, '.git'));
+  } catch { return false; }
+})();
+if (IS_DEV_BUILD) {
+  if (process.env.AGENTS_NO_AUTOPULL === undefined) process.env.AGENTS_NO_AUTOPULL = '1';
+  if (process.env.AGENTS_SKIP_MIGRATION === undefined) process.env.AGENTS_SKIP_MIGRATION = '1';
+  if (process.env.AGENTS_CLI_DISABLE_AUTO_UPDATE === undefined) process.env.AGENTS_CLI_DISABLE_AUTO_UPDATE = '1';
+}
+
 // Import command registrations
 import { registerPullCommand } from './commands/pull.js';
 import { registerRepoCommands } from './commands/repo.js';
