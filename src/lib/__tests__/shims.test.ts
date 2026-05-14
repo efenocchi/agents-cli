@@ -84,8 +84,8 @@ describe('addShimsToPath', () => {
 });
 
 describe('SHIM_SCHEMA_VERSION', () => {
-  it('is 10 (post .history/ bucket refactor)', () => {
-    expect(SHIM_SCHEMA_VERSION).toBe(10);
+  it('is 11 (shim prompts to switch when configured version not installed)', () => {
+    expect(SHIM_SCHEMA_VERSION).toBe(11);
   });
 });
 
