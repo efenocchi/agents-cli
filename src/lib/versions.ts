@@ -38,7 +38,7 @@ import { parseHookManifest, registerHooksToSettings } from './hooks.js';
 import { supports, explainSkip } from './capabilities.js';
 import { discoverPlugins, syncPluginToVersion, isPluginSynced, pluginSupportsAgent, cleanOrphanedPluginSkills } from './plugins.js';
 import { composeRulesFromState } from './rules/compose.js';
-import { loadSyncManifest, saveSyncManifest, buildManifest, isSyncStale } from './sync-manifest.js';
+import { loadManifest, saveManifest, buildManifest as buildSyncManifest, isStale } from './staleness/index.js';
 import { PLUGINS_CAPABLE_AGENTS } from './agents.js';
 import { emit } from './events.js';
 import { safeJoin } from './paths.js';
@@ -155,10 +155,14 @@ export function getAvailableResources(cwd: string = process.cwd()): AvailableRes
   }
   result.skills = Array.from(skillNames);
 
-  // Hooks (files). Only executable files in hooks/ count as hooks. Auxiliary
-  // files like README.md (docs) or promptcuts.yaml (data read directly by a
-  // hook script) live alongside hooks but are not hooks themselves and must
-  // not be synced as such.
+  // Hooks (files). A hook is an actual script: known script extension, OR
+  // executable bit on a file with a non-data extension. Auxiliary content
+  // like `README.md` (docs) or `promptcuts.yaml` (data read directly by the
+  // expand-promptcuts script) lives in hooks/ but is not a hook. Older sync
+  // runs chmod 0o755'd everything they copied, so an exec bit alone can no
+  // longer be trusted as the signal.
+  const NON_SCRIPT_EXTS = new Set(['.md', '.markdown', '.rst', '.txt', '.yaml', '.yml', '.json', '.toml', '.ini', '.conf']);
+  const SCRIPT_EXTS     = new Set(['.sh', '.bash', '.zsh', '.py', '.js', '.ts', '.mjs', '.cjs', '.rb', '.pl', '.ps1']);
   const hookNames = new Set<string>();
   for (const { base } of resourceBases) {
     const hooksDir = path.join(base, 'hooks');
@@ -167,7 +171,10 @@ export function getAvailableResources(cwd: string = process.cwd()): AvailableRes
       if (name.startsWith('.')) continue;
       try {
         const stat = fs.statSync(path.join(hooksDir, name));
-        if (stat.isFile() && (stat.mode & 0o111) !== 0) hookNames.add(name);
+        if (!stat.isFile()) continue;
+        const ext = path.extname(name).toLowerCase();
+        if (SCRIPT_EXTS.has(ext)) { hookNames.add(name); continue; }
+        if ((stat.mode & 0o111) !== 0 && !NON_SCRIPT_EXTS.has(ext)) hookNames.add(name);
       } catch { /* ignore unreadable */ }
     }
   }
@@ -1606,6 +1613,11 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
   const versionHome = getVersionHomePath(agent, version);
   const agentDir = path.join(versionHome, `.${agent}`);
   fs.mkdirSync(agentDir, { recursive: true });
+  // Capture whether the caller passed a selection. The pattern-expansion
+  // path below reassigns `selection`, but for manifest write semantics we
+  // care about the ORIGINAL intent: a caller passing no selection means
+  // "full sync; persist the staleness manifest after."
+  const userPassedSelection = selection !== undefined;
 
   const result: SyncResult = { commands: false, skills: false, hooks: false, memory: [], permissions: false, mcp: [], subagents: [], plugins: [], workflows: [] };
   const cwd = options.cwd || process.cwd();
@@ -1695,8 +1707,8 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
   // has changed since the last full sync. Drops steady-state cost from ~16s
   // (unconditional file copies) to ~2ms (stat calls + manifest read).
   if (!selection && !options.force) {
-    const manifest = loadSyncManifest(agent, version);
-    if (manifest && !isSyncStale(manifest, available, agent, version, cwd)) {
+    const manifest = loadManifest(agent, version);
+    if (manifest && !isStale(manifest, agent, version, cwd)) {
       return { commands: false, skills: false, hooks: false, memory: [], permissions: false, mcp: [], subagents: [], plugins: [], workflows: [] };
     }
   }
@@ -2045,9 +2057,13 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
     // workflow patterns already written via ensureVersionResourcePatterns above.
   }
 
-  // Write manifest after a successful full sync so the next launch can skip this work.
-  if (!selection) {
-    saveSyncManifest(agent, version, buildManifest(agent, version, available, cwd));
+  // Write manifest after a full sync (no user-passed selection) so the next
+  // launch can skip the slow path. Pattern-derived selections still count as
+  // "full" — the agents.yaml patterns describe the intended scope, not a
+  // one-off override, so the resulting state matches what the manifest
+  // records as the synced set.
+  if (!userPassedSelection) {
+    saveManifest(agent, version, buildSyncManifest(agent, version, cwd));
   }
 
   return result;

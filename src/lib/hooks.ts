@@ -58,6 +58,19 @@ import type { AgentId, InstalledHook, ManifestHook } from './types.js';
 
 export type HookEntry = { name: string; scriptPath: string; dataFile?: string };
 
+/**
+ * Extensions that are NEVER hooks — docs, configuration, plain data. A file
+ * in hooks/ with one of these extensions is auxiliary content (e.g., the
+ * `promptcuts.yaml` data file read directly by the expand-promptcuts
+ * script, or the `README.md` that documents the hooks directory). They
+ * sometimes carry an exec bit by accident (older sync runs chmod 0o755'd
+ * everything) but they are not scripts.
+ */
+const NON_SCRIPT_EXTENSIONS = new Set([
+  '.md', '.markdown', '.rst', '.txt',
+  '.yaml', '.yml', '.json', '.toml', '.ini', '.conf',
+]);
+
 const SCRIPT_EXTENSIONS = new Set([
   '.sh',
   '.bash',
@@ -162,10 +175,16 @@ export function listHookEntriesFromDir(dir: string): HookEntry[] {
   const entries: HookEntry[] = [];
   for (const [base, group] of grouped) {
     group.sort((a, b) => a.name.localeCompare(b.name));
+    // A group is a hook only if it has an actual script: a script extension,
+    // OR an executable bit on a file whose extension is not a known data /
+    // docs type. Files like `README.md` (docs) or `promptcuts.yaml` (data
+    // the expand-promptcuts hook reads directly) sit alongside hooks but
+    // are NOT hooks themselves and must not surface in the hooks list
+    // anywhere — doctor, sync, view, or otherwise. Older sync runs may have
+    // chmod 0o755'd these files; an exec bit alone is not enough.
     const script =
-      group.find((f) => f.isExec) ||
       group.find((f) => SCRIPT_EXTENSIONS.has(f.ext.toLowerCase())) ||
-      group[0];
+      group.find((f) => f.isExec && !NON_SCRIPT_EXTENSIONS.has(f.ext.toLowerCase()));
     if (!script) continue;
     const data = group.find((f) => f !== script);
     entries.push({
