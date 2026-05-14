@@ -512,6 +512,10 @@ export interface BrowserProfileConfig {
   };
   secrets?: string;
   viewport?: { width: number; height: number };
+  /** Directory holding source-side JSONL logs (e.g. ~/.rush/logs). */
+  logDir?: string;
+  /** Optional SSH host where logDir lives, e.g. "muqsit@mac-mini". */
+  logHost?: string;
 }
 
 /** Options controlling which agents and resources are synced during `agents pull` / `agents use`. */

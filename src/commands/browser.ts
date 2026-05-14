@@ -102,7 +102,7 @@ const BROWSER_HELP_GROUPS = [
   },
   {
     title: 'Capture evidence',
-    names: ['console', 'errors', 'requests', 'responsebody', 'record'],
+    names: ['console', 'errors', 'requests', 'responsebody', 'record', 'logs'],
   },
 ] as const;
 
@@ -1367,6 +1367,45 @@ function registerTaskCommands(browser: Command): void {
       for (const req of response.requests) {
         const status = req.status ? String(req.status) : '...';
         console.log(`${req.method.padEnd(8)}${status.padEnd(8)}${req.url.slice(0, 100)}`);
+      }
+    });
+
+  browser
+    .command('logs <task>')
+    .description('Read merged rush-app + rush-cli JSONL logs for a task')
+    .option('--source <name>', 'Source to scope to: rush-app or rush-cli (default both)')
+    .option('--lines <n>', 'Tail N entries (default 200; ignored when --since)', (v) => parseInt(v, 10))
+    .option('--since <when>', 'Absolute timestamp or relative offset (e.g. 5m, 2h, 1d)')
+    .option('--until <when>', 'Absolute timestamp or relative offset (e.g. 5m, 2h, 1d)')
+    .option('--level <level>', 'Filter entries by level field')
+    .option('--message <name>', 'Filter entries by exact message field')
+    .option('--filter <text>', 'Filter entries whose JSON contains this substring')
+    .option('-f, --follow', 'Follow mode (not yet implemented)')
+    .action(async (task: string, opts) => {
+      if (opts.follow) {
+        process.stderr.write('follow mode not yet implemented; coming next pass\n');
+        process.exit(1);
+      }
+      const response = await sendIPCRequest({
+        action: 'getAppLogs',
+        task,
+        source: opts.source,
+        lines: opts.lines,
+        since: opts.since,
+        until: opts.until,
+        appLevel: opts.level,
+        message: opts.message,
+        filter: opts.filter,
+      });
+
+      if (!response.ok) {
+        console.error(response.error);
+        process.exit(1);
+      }
+
+      const entries = response.appLogs ?? [];
+      for (const entry of entries) {
+        console.log(JSON.stringify(entry));
       }
     });
 

@@ -376,6 +376,22 @@ export class BrowserIPCServer {
         return { ok: true, downloadPath };
       }
 
+      case 'getAppLogs': {
+        if (!request.task) {
+          return { ok: false, error: 'Task required' };
+        }
+        const appLogs = await this.service.getAppLogs(request.task, {
+          lines: request.lines,
+          level: request.appLevel,
+          filter: request.filter,
+          message: request.message,
+          source: request.source,
+          since: request.since,
+          until: request.until,
+        });
+        return { ok: true, appLogs };
+      }
+
       case 'upload': {
         if (!request.task || !request.files || request.files.length === 0) {
           return { ok: false, error: 'Task and at least one file required' };
