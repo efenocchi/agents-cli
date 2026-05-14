@@ -237,7 +237,7 @@ main() {
 
   # Default command: run tests
   if [[ $# -eq 0 ]]; then
-    cmd="bun install && bun test"
+    cmd="bun install && bun run test"
   else
     cmd="$*"
   fi
