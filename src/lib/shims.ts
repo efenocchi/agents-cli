@@ -202,8 +202,10 @@ async function promptConflictStrategy(
  *        (two-repo split: system = shipped defaults, user = operational state).
  *   v9 — claude shim exports CLAUDE_CODE_OAUTH_TOKEN from per-version
  *        .oauth_token file on Linux (keychain-less sandbox fallback).
+ *   v11 — when no default is set or the configured version is not installed,
+ *         interactively propose the latest already-installed version.
  */
-export const SHIM_SCHEMA_VERSION = 10;
+export const SHIM_SCHEMA_VERSION = 11;
 
 /** Internal marker string used to embed the schema version in shim scripts. */
 const SHIM_VERSION_MARKER = 'agents-shim-version:';
@@ -314,6 +316,31 @@ find_project_agents_dir() {
   return 1
 }
 
+# Find the latest installed version by numeric component comparison.
+# Handles both semver (2.1.138) and date-based (2026.5.7) version strings.
+find_latest_installed() {
+  local versions_dir="$AGENTS_USER_DIR/.history/versions/$AGENT"
+  [ -d "$versions_dir" ] || return
+  ls "$versions_dir" 2>/dev/null | awk '
+    BEGIN { best="" }
+    {
+      cur = $0
+      n = split(cur, a, /[^0-9]+/)
+      m = split(best, b, /[^0-9]+/)
+      maxn = (n > m) ? n : m
+      winner = cur
+      for (i=1; i<=maxn; i++) {
+        ai = (i<=n) ? a[i]+0 : 0
+        bi = (i<=m) ? b[i]+0 : 0
+        if (ai > bi) { winner=cur; break }
+        if (ai < bi) { winner=best; break }
+      }
+      best = winner
+    }
+    END { print best }
+  '
+}
+
 # Try project version first, then global default
 VERSION=$(find_project_version)
 VERSION_SOURCE="project"
@@ -323,9 +350,32 @@ if [ -z "$VERSION" ]; then
 fi
 
 if [ -z "$VERSION" ]; then
-  echo "agents: no version of $AGENT configured" >&2
-  echo "Run: agents add $AGENT@<version>" >&2
-  exit 1
+  LATEST=$(find_latest_installed)
+  if [ -n "$LATEST" ]; then
+    echo "agents: no default set for $AGENT — found $AGENT@$LATEST installed" >&2
+    if [ -t 2 ]; then
+      printf "  Set as default and continue? [Y/n] " >&2
+      read -r _ans </dev/tty
+      case "$_ans" in
+        ""|y|Y)
+          agents use "$AGENT" "$LATEST" >/dev/null 2>&1
+          VERSION="$LATEST"
+          VERSION_SOURCE="default"
+          ;;
+        *)
+          echo "  Run: agents use $AGENT <version>" >&2
+          exit 1
+          ;;
+      esac
+    else
+      echo "  Run: agents use $AGENT <version>" >&2
+      exit 1
+    fi
+  else
+    echo "agents: no version of $AGENT configured" >&2
+    echo "  Run: agents add $AGENT@<version>" >&2
+    exit 1
+  fi
 fi
 
 VERSION_DIR="$AGENTS_USER_DIR/.history/versions/$AGENT/$VERSION"
@@ -362,9 +412,33 @@ if [ ! -x "$BINARY" ]; then
       exit 1
     fi
   else
-    echo "agents: $AGENT@$VERSION not installed" >&2
-    echo "Run: agents add $AGENT@$VERSION" >&2
-    exit 1
+    LATEST=$(find_latest_installed)
+    if [ -n "$LATEST" ] && [ "$LATEST" != "$VERSION" ]; then
+      echo "agents: $AGENT@$VERSION not installed — found $AGENT@$LATEST installed" >&2
+      if [ -t 2 ]; then
+        printf "  Switch default to $AGENT@$LATEST and continue? [Y/n] " >&2
+        read -r _ans </dev/tty
+        case "$_ans" in
+          ""|y|Y)
+            agents use "$AGENT" "$LATEST" >/dev/null 2>&1
+            VERSION="$LATEST"
+            VERSION_DIR="$AGENTS_USER_DIR/.history/versions/$AGENT/$VERSION"
+            BINARY="$VERSION_DIR/node_modules/.bin/$CLI_COMMAND"
+            ;;
+          *)
+            echo "  Run: agents add $AGENT@$VERSION" >&2
+            exit 1
+            ;;
+        esac
+      else
+        echo "  Run: agents add $AGENT@$VERSION" >&2
+        exit 1
+      fi
+    else
+      echo "agents: $AGENT@$VERSION not installed" >&2
+      echo "  Run: agents add $AGENT@$VERSION" >&2
+      exit 1
+    fi
   fi
 fi
 
