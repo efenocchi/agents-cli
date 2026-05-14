@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.18.4
+## 1.18.5
 
 **Browser**
 
@@ -22,6 +22,11 @@
   - `scroll --dx <n> --dy <n>` (was `scroll <dx> <dy>` — fixes negative-value parser collision)
 - `screenshot` prints a one-line auto-save tip on stderr when `--output` is not passed,
   so agents see the directory without having to dirname() the path.
+
+## 1.18.4
+
+**Browser**
+
 - `agents browser start` writes the resolved task name to **stdout** as a
   single line (e.g. `swift-crab-falcon-a3f92b1c`), and routes the human
   commentary ("Started task ... with tab ...", "Tip: export
