@@ -191,9 +191,37 @@ describe('generateShimScript', () => {
 
   it('find_project_agents_dir stops at agents.yaml or .git', () => {
     const script = generateShimScript('claude');
-    // Boundary detection should check agents.yaml
     expect(script).toContain('[ -f "$dir/agents.yaml" ]');
-    // And should NOT check .agents-version as a boundary
     expect(script).not.toContain('[ -f "$dir/.agents-version" ]');
+  });
+
+  it('includes find_latest_installed that handles semver and date-based versions', () => {
+    const script = generateShimScript('claude');
+    expect(script).toContain('find_latest_installed()');
+    expect(script).toContain('split(cur, a, /[^0-9]+/)');
+  });
+
+  it('proposes latest installed when no default is configured', () => {
+    const script = generateShimScript('claude');
+    expect(script).toContain('no default set for $AGENT');
+    expect(script).toContain('Set as default and continue?');
+    expect(script).toContain('agents use "$AGENT" "$LATEST"');
+  });
+
+  it('proposes switching to latest installed when configured version is missing', () => {
+    const script = generateShimScript('claude');
+    expect(script).toContain('not installed — found $AGENT@$LATEST installed');
+    expect(script).toContain('Switch default to $AGENT@$LATEST and continue?');
+  });
+
+  it('falls back gracefully when no versions are installed at all', () => {
+    const script = generateShimScript('claude');
+    expect(script).toContain('no version of $AGENT configured');
+    expect(script).toContain('Run: agents add $AGENT@<version>');
+  });
+
+  it('reads answer from /dev/tty not stdin so piped input does not trigger prompt', () => {
+    const script = generateShimScript('claude');
+    expect(script).toContain('read -r _ans </dev/tty');
   });
 });
