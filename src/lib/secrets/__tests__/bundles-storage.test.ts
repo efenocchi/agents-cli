@@ -21,6 +21,7 @@ import {
   listBundles,
   migrateLegacyBundles,
   readBundle,
+  renameBundle,
   resolveBundleEnv,
   rotateBundleSecret,
   writeBundle,
@@ -316,6 +317,71 @@ describe('rotateBundleSecret', () => {
     const after = readBundle('rot-clear');
     expect(after.meta?.A).toBeUndefined();
     expect(after.meta?.B).toEqual({ type: 'token', note: 'stays' });
+  });
+});
+
+describe('renameBundle', () => {
+  it('moves metadata and every keychain value to the new name', () => {
+    writeBundle({
+      name: 'old',
+      description: 'before',
+      icloud_sync: true,
+      vars: { API_KEY: 'keychain:API_KEY', LITERAL: 'lit' },
+    });
+    // Seed the per-key keychain item the way `add` would.
+    store.set('agents-cli.secrets.old.API_KEY', { value: 'v1', sync: true });
+
+    renameBundle('old', 'new');
+
+    expect(bundleExists('old')).toBe(false);
+    expect(store.has('agents-cli.secrets.old.API_KEY')).toBe(false);
+    const got = readBundle('new');
+    expect(got.description).toBe('before');
+    expect(got.icloud_sync).toBe(true);
+    expect(got.vars).toEqual({ API_KEY: 'keychain:API_KEY', LITERAL: 'lit' });
+    expect(store.get('agents-cli.secrets.new.API_KEY')?.value).toBe('v1');
+    expect(store.get('agents-cli.secrets.new.API_KEY')?.sync).toBe(true);
+  });
+
+  it('preserves created_at and refreshes updated_at', async () => {
+    writeBundle({ name: 'src', vars: {} });
+    const before = readBundle('src');
+    await new Promise((r) => setTimeout(r, 10));
+    renameBundle('src', 'dst');
+    const after = readBundle('dst');
+    expect(after.created_at).toBe(before.created_at);
+    expect(Date.parse(after.updated_at!)).toBeGreaterThan(Date.parse(before.updated_at!));
+  });
+
+  it('refuses when destination exists and --force is not set', () => {
+    writeBundle({ name: 'src', vars: {} });
+    writeBundle({ name: 'dst', vars: {} });
+    expect(() => renameBundle('src', 'dst')).toThrow(/already exists/);
+    expect(bundleExists('src')).toBe(true);
+    expect(bundleExists('dst')).toBe(true);
+  });
+
+  it('overwrites destination and purges its keychain items with force', () => {
+    writeBundle({ name: 'src', vars: { K: 'keychain:K' } });
+    store.set('agents-cli.secrets.src.K', { value: 'src-val', sync: false });
+    writeBundle({ name: 'dst', vars: { OLD: 'keychain:OLD' } });
+    store.set('agents-cli.secrets.dst.OLD', { value: 'dst-val', sync: false });
+
+    renameBundle('src', 'dst', { force: true });
+
+    expect(bundleExists('src')).toBe(false);
+    expect(store.has('agents-cli.secrets.dst.OLD')).toBe(false);
+    expect(readBundle('dst').vars).toEqual({ K: 'keychain:K' });
+    expect(store.get('agents-cli.secrets.dst.K')?.value).toBe('src-val');
+  });
+
+  it('rejects renaming to the same name', () => {
+    writeBundle({ name: 'same', vars: {} });
+    expect(() => renameBundle('same', 'same')).toThrow(/unchanged/);
+  });
+
+  it('errors when the source does not exist', () => {
+    expect(() => renameBundle('nope', 'something')).toThrow(/not found/);
   });
 });
 

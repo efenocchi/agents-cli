@@ -19,6 +19,7 @@ import {
   migrateLegacyBundles,
   parseDotenv,
   readBundle,
+  renameBundle,
   rotateBundleSecret,
   validateBundleName,
   validateEnvKey,
@@ -342,7 +343,7 @@ function countExpiringSoon(meta: Record<string, VarMeta> | undefined): number {
 export function registerSecretsCommands(program: Command): void {
   const cmd = program
     .command('secrets')
-    .description('Named bundles of env variables backed by macOS Keychain (with optional iCloud sync). Inject into agents via `agents run --secrets <name>`.')
+    .description('Named bundles of env variables backed by macOS Keychain (iCloud-synced by default). Inject into agents via `agents run --secrets <name>`.')
     .hook('preAction', () => { migrateLegacyBundles(); })
     .addHelpText('after', `
 Workflow:
@@ -351,16 +352,24 @@ Workflow:
   run with --secrets <name>. Keychain-backed values never touch disk in
   plaintext.
 
-  Pass --icloud-sync at create time to store values in the iCloud-synced
-  keychain so they appear automatically on your other Macs (same iCloud
-  account, iCloud Keychain enabled). Without the flag, values are device-local.
+  New bundles store values in the iCloud-synced keychain by default so they
+  appear automatically on your other Macs (same iCloud account, iCloud
+  Keychain enabled). Pass --no-icloud-sync at create time to keep values
+  device-local instead.
 
 Examples:
-  # Create a bundle for production credentials
+  # Create a bundle for production credentials (iCloud-synced by default)
   agents secrets create prod --description "Production keys for the api stack"
 
-  # Create a bundle that syncs to your other Macs via iCloud Keychain
-  agents secrets create npm-tokens --icloud-sync
+  # Create a bundle that never leaves this Mac
+  agents secrets create local-only --no-icloud-sync
+
+  # Rename a bundle (moves metadata + every keychain value)
+  agents secrets rename prod production
+
+  # Edit the description of an existing bundle
+  agents secrets describe prod "Production keys for the api stack"
+  agents secrets describe prod --clear
 
   # Add a keychain-backed secret (prompts for the value)
   agents secrets add prod STRIPE_API_KEY
@@ -416,7 +425,7 @@ Examples:
 `);
 
   registerCommandGroups(cmd, [
-    { title: 'Bundle commands', names: ['list', 'view', 'create', 'delete'] },
+    { title: 'Bundle commands', names: ['list', 'view', 'create', 'rename', 'describe', 'delete'] },
     { title: 'Secret commands', names: ['add', 'rotate', 'remove', 'import', 'export'] },
     { title: 'Utilities', names: ['exec', 'generate'] },
   ]);
@@ -507,7 +516,7 @@ Examples:
     .description('Create an empty bundle')
     .option('--description <text>', 'Free-form description')
     .option('--allow-exec', 'Allow exec: refs in this bundle (off by default)')
-    .option('--icloud-sync', 'Store keychain values in iCloud Keychain so they sync across your Macs (requires Xcode CLT)')
+    .option('--no-icloud-sync', 'Store keychain values device-local instead of syncing them via iCloud Keychain')
     .option('--force', 'Overwrite an existing bundle')
     .action(async (name: string | undefined, opts: { description?: string; allowExec?: boolean; icloudSync?: boolean; force?: boolean }) => {
       try {
@@ -521,7 +530,7 @@ Examples:
           name: resolvedName,
           description: opts.description,
           allow_exec: opts.allowExec,
-          icloud_sync: opts.icloudSync,
+          icloud_sync: opts.icloudSync !== false,
           vars: {},
         };
         writeBundle(bundle);
@@ -529,6 +538,54 @@ Examples:
         console.log(chalk.gray(`Try: agents secrets add ${resolvedName} MY_KEY`));
       } catch (err) {
         if (isPromptCancelled(err)) return;
+        console.error(chalk.red((err as Error).message));
+        process.exit(1);
+      }
+    });
+
+  cmd
+    .command('rename <old> <new>')
+    .alias('mv')
+    .description('Rename a bundle. Moves the metadata and every keychain-backed value to the new name.')
+    .option('--force', 'Overwrite the destination bundle if it already exists (purges its keychain items first)')
+    .action((oldName: string, newName: string, opts: { force?: boolean }) => {
+      try {
+        renameBundle(oldName, newName, { force: opts.force });
+        console.log(chalk.green(`Bundle '${oldName}' renamed to '${newName}'.`));
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
+        process.exit(1);
+      }
+    });
+
+  cmd
+    .command('describe <name> [text...]')
+    .description('Update the description of a bundle. Pass --clear to remove it.')
+    .option('--clear', 'Remove the existing description')
+    .action((name: string, textParts: string[], opts: { clear?: boolean }) => {
+      try {
+        const bundle = readBundle(name);
+        const text = textParts.join(' ').trim();
+        if (opts.clear) {
+          if (text) {
+            console.error(chalk.red('Pass either description text or --clear, not both.'));
+            process.exit(1);
+          }
+          bundle.description = undefined;
+        } else {
+          if (!text) {
+            console.error(chalk.red('Description text is required. Pass it as an argument or use --clear.'));
+            process.exit(1);
+          }
+          bundle.description = text;
+        }
+        writeBundle(bundle);
+        console.log(chalk.green(
+          opts.clear
+            ? `Bundle '${name}' description cleared.`
+            : `Bundle '${name}' description updated.`,
+        ));
+      } catch (err) {
         console.error(chalk.red((err as Error).message));
         process.exit(1);
       }
