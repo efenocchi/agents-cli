@@ -44,6 +44,9 @@ function makeDiscoveredPlugin(root: string, manifest: PluginManifest): Discovere
     commands: [],
     agentDefs: [],
     bin: [],
+    mcpServers: [],
+    lspServers: [],
+    monitors: [],
     hasMcp: false,
     hasSettings: false,
   };
@@ -373,6 +376,9 @@ describe('syncPluginToVersion (native marketplace install)', () => {
       commands: [],
       agentDefs: [],
       bin: [],
+      mcpServers: [],
+      lspServers: [],
+      monitors: [],
       hasMcp: false,
       hasSettings: false,
     };
@@ -501,6 +507,7 @@ describe('removePluginFromVersion', () => {
       name: 'mp', root: pluginRoot,
       manifest: { name: 'mp', version: '1.0.0', description: 'test' },
       skills: [], hooks: [], scripts: [], commands: [], agentDefs: [], bin: [],
+      mcpServers: [], lspServers: [], monitors: [],
       hasMcp: false, hasSettings: false,
     };
     syncPluginToVersion(plugin, 'claude', versionHome);

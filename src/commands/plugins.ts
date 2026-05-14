@@ -192,7 +192,21 @@ Examples:
       if (plugin.skills.length > 0) {
         console.log(chalk.bold('\n  Skills'));
         for (const skill of plugin.skills) {
-          console.log(`    ${chalk.cyan(`${plugin.name}:${skill}`)}`);
+          console.log(`    ${chalk.cyan(`/${plugin.name}:${skill}`)}`);
+        }
+      }
+
+      if (plugin.commands.length > 0) {
+        console.log(chalk.bold('\n  Commands'));
+        for (const cmd of plugin.commands) {
+          console.log(`    ${chalk.cyan(`/${plugin.name}:${cmd}`)}`);
+        }
+      }
+
+      if (plugin.agentDefs.length > 0) {
+        console.log(chalk.bold('\n  Subagents'));
+        for (const a of plugin.agentDefs) {
+          console.log(`    ${chalk.magenta(a)}`);
         }
       }
 
@@ -203,11 +217,44 @@ Examples:
         }
       }
 
+      if (plugin.mcpServers.length > 0) {
+        console.log(chalk.bold('\n  MCP Servers'));
+        for (const s of plugin.mcpServers) {
+          console.log(`    ${chalk.green(s)}`);
+        }
+      }
+
+      if (plugin.lspServers.length > 0) {
+        console.log(chalk.bold('\n  LSP Servers'));
+        for (const s of plugin.lspServers) {
+          console.log(`    ${chalk.green(s)}`);
+        }
+      }
+
+      if (plugin.monitors.length > 0) {
+        console.log(chalk.bold('\n  Monitors'));
+        for (const m of plugin.monitors) {
+          console.log(`    ${chalk.blue(m)}`);
+        }
+      }
+
+      if (plugin.bin.length > 0) {
+        console.log(chalk.bold('\n  Bin'));
+        for (const b of plugin.bin) {
+          console.log(`    ${chalk.white(b)}`);
+        }
+      }
+
       if (plugin.scripts.length > 0) {
         console.log(chalk.bold('\n  Scripts'));
         for (const script of plugin.scripts) {
           console.log(`    ${chalk.gray(script)}`);
         }
+      }
+
+      if (plugin.hasSettings) {
+        console.log(chalk.bold('\n  Settings'));
+        console.log(`    ${chalk.gray('settings.json')}`);
       }
 
       // Show installation status per agent version
@@ -659,22 +706,24 @@ function formatPluginDetail(plugin: DiscoveredPlugin, targets: SyncTarget[]): st
   }
   lines.push('  ' + chalk.gray(formatPath(plugin.root)));
 
-  if (plugin.skills.length > 0) {
+  const section = (label: string, items: string[], colorFn: (s: string) => string) => {
+    if (items.length === 0) return;
     lines.push('');
-    lines.push(chalk.bold('  Skills'));
-    lines.push('  ' + plugin.skills.map((s) => chalk.cyan(s)).join(chalk.gray(', ')));
-  }
+    lines.push(chalk.bold(`  ${label}`));
+    lines.push('  ' + items.map(colorFn).join(chalk.gray(', ')));
+  };
 
-  if (plugin.hooks.length > 0) {
-    lines.push('');
-    lines.push(chalk.bold('  Hooks'));
-    lines.push('  ' + plugin.hooks.map((h) => chalk.yellow(h)).join(chalk.gray(', ')));
-  }
-
-  if (plugin.scripts.length > 0) {
-    lines.push('');
-    lines.push(chalk.bold('  Scripts'));
-    lines.push('  ' + plugin.scripts.map((s) => chalk.white(s)).join(chalk.gray(', ')));
+  section('Skills', plugin.skills.map((s) => `/${plugin.name}:${s}`), chalk.cyan);
+  section('Commands', plugin.commands.map((c) => `/${plugin.name}:${c}`), chalk.cyan);
+  section('Subagents', plugin.agentDefs, chalk.magenta);
+  section('Hooks', plugin.hooks, chalk.yellow);
+  section('MCP Servers', plugin.mcpServers, chalk.green);
+  section('LSP Servers', plugin.lspServers, chalk.green);
+  section('Monitors', plugin.monitors, chalk.blue);
+  section('Bin', plugin.bin, chalk.white);
+  section('Scripts', plugin.scripts, chalk.white);
+  if (plugin.hasSettings) {
+    section('Settings', ['settings.json'], chalk.gray);
   }
 
   if (targets.length > 0) {

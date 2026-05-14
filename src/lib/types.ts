@@ -396,6 +396,12 @@ export interface DiscoveredPlugin {
   agentDefs: string[];
   /** Executable files in the plugin's bin/ directory. */
   bin: string[];
+  /** MCP server names parsed from .mcp.json. */
+  mcpServers: string[];
+  /** LSP server keys parsed from .lsp.json. */
+  lspServers: string[];
+  /** Monitor names parsed from monitors/monitors.json. */
+  monitors: string[];
   /** Whether the plugin root contains a .mcp.json file. */
   hasMcp: boolean;
   /** Whether the plugin root contains a settings.json with non-permission keys to merge. */
