@@ -13,7 +13,7 @@ import * as fsSync from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { randomUUID } from 'crypto';
-import { resolveAgentsDir, type ModelOverrides, type AgentConfig, type ReadConfigResult, readConfig } from './persistence.js';
+import { resolveAgentsDir } from './persistence.js';
 import { normalizeEvents, AgentType } from './parsers.js';
 import { debug } from './debug.js';
 import { buildReasoningFlags } from '../models.js';
@@ -283,18 +283,6 @@ export function applyFullMode(agentType: AgentType, cmd: string[]): string[] {
  * Does not select a model; use --model separately to pin a specific model per teammate.
  */
 export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'auto';
-
-// Minimal defaults — no per-effort model map. Configs on disk may still have
-// a model pinned; launchProcess picks it up from agent.model when set.
-function loadDefaultAgentConfigs(): Record<AgentType, AgentConfig> {
-  return {
-    claude:   { command: 'claude -p \'{prompt}\' --output-format stream-json --json', enabled: true, model: null, provider: 'anthropic' },
-    codex:    { command: 'codex exec --sandbox workspace-write \'{prompt}\' --json', enabled: true, model: null, provider: 'openai' },
-    gemini:   { command: 'gemini \'{prompt}\' --output-format stream-json',           enabled: true, model: null, provider: 'google' },
-    cursor:   { command: 'cursor-agent -p --output-format stream-json \'{prompt}\'',   enabled: true, model: null, provider: 'custom' },
-    opencode: { command: 'opencode run --format json \'{prompt}\'',                   enabled: true, model: null, provider: 'custom' },
-  };
-}
 
 // Suffix appended to all prompts to ensure agents provide a summary
 const PROMPT_SUFFIX = `
@@ -1006,8 +994,6 @@ export class AgentManager {
   private filterByCwd: string | null;
   private cleanupAgeDays: number;
   private defaultMode: Mode;
-  private agentConfigs!: Record<AgentType, AgentConfig>;
-  private constructorAgentConfigs: Record<AgentType, AgentConfig> | null = null;
   private initPromise: Promise<void> | null = null;
   private cloudDispatcher: CloudDispatchFn | null = null;
 
@@ -1019,7 +1005,6 @@ export class AgentManager {
     defaultMode: Mode | null = null,
     filterByCwd: string | null = null,
     cleanupAgeDays: number = 7,
-    agentConfigs: Record<AgentType, AgentConfig> | null = null
   ) {
     this.maxAgents = maxAgents;
     this.constructorAgentsDir = agentsDir;
@@ -1030,7 +1015,6 @@ export class AgentManager {
       throw new Error(`Invalid default_mode '${defaultMode}'. Use 'plan' or 'edit'.`);
     }
     this.defaultMode = resolvedDefaultMode;
-    this.constructorAgentConfigs = agentConfigs;
 
     this.initPromise = this.doInitialize();
   }
@@ -1046,17 +1030,11 @@ export class AgentManager {
     this.agentsDir = this.constructorAgentsDir || await getAgentsDir();
     await fs.mkdir(this.agentsDir, { recursive: true });
 
-    this.agentConfigs = this.constructorAgentConfigs ?? loadDefaultAgentConfigs();
-
     await this.loadExistingAgents();
   }
 
   getDefaultMode(): Mode {
     return this.defaultMode;
-  }
-
-  setModelOverrides(agentConfigs: Record<AgentType, AgentConfig>): void {
-    this.agentConfigs = agentConfigs;
   }
 
   /**
@@ -1317,11 +1295,10 @@ export class AgentManager {
     warnIfMemoryLow(running.length);
 
     const effort = agent.effort ?? 'medium';
-    // Falls back to the pinned model in agentConfigs; null means "let the
-    // CLI pick its own default" (no --model flag forwarded). Effort is a
-    // separate knob wired into buildReasoningFlags inside buildCommand.
-    const resolvedModel: string | null =
-      agent.model ?? this.agentConfigs[agent.agentType]?.model ?? null;
+    // null model means "let the CLI pick its own default" (no --model flag
+    // forwarded). Effort is a separate knob wired into buildReasoningFlags
+    // inside buildCommand.
+    const resolvedModel: string | null = agent.model ?? null;
     const cmd = this.buildCommand(
       agent.agentType,
       agent.prompt,

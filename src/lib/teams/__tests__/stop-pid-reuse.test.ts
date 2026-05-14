@@ -31,7 +31,7 @@ afterEach(async () => {
 
 describe('AgentManager.stop() PID-reuse guard', () => {
   it('refuses to signal a PID whose start-time mismatches', async () => {
-    const manager = new AgentManager(50, baseDir, 'plan', null, 7, null);
+    const manager = new AgentManager(50, baseDir, 'plan', null, 7);
 
     // PID = our own test process. kill(pid, 0) succeeds; that's exactly
     // the PID-reuse scenario the guard exists to handle (the slot is

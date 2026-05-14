@@ -46,8 +46,9 @@ describe('runMigration', () => {
     expect(fs.readFileSync(path.join(userDir, 'agents.yaml'), 'utf-8')).toContain('claude');
     expect(fs.existsSync(path.join(systemDir, 'agents.yaml'))).toBe(false);
     expect(fs.existsSync(path.join(systemDir, 'prompts.json'))).toBe(false);
-    expect(fs.readFileSync(path.join(userDir, 'teams', 'config.json'), 'utf-8')).toBe('{"version":1}');
+    // Legacy ~/.agents-system/config.json (old teams agent registry) is just deleted.
     expect(fs.existsSync(path.join(systemDir, 'config.json'))).toBe(false);
+    expect(fs.existsSync(path.join(userDir, 'teams', 'config.json'))).toBe(false);
     expect(fs.readFileSync(path.join(systemDir, 'hooks', 'promptcuts.yaml'), 'utf-8')).toBe('system: true\n');
     expect(fs.readFileSync(path.join(userDir, 'hooks', 'promptcuts.yaml'), 'utf-8')).toBe('user: true\n');
     expect(fs.existsSync(path.join(systemDir, 'promptcuts.yaml'))).toBe(false);
@@ -56,19 +57,14 @@ describe('runMigration', () => {
 
   it('is idempotent and preserves existing destination files', () => {
     fs.writeFileSync(path.join(systemDir, 'agents.yaml'), 'system agents');
-    fs.writeFileSync(path.join(systemDir, 'config.json'), '{"new":true}');
-    fs.mkdirSync(path.join(userDir, 'teams'), { recursive: true });
     fs.writeFileSync(path.join(userDir, 'agents.yaml'), 'user agents');
-    fs.writeFileSync(path.join(userDir, 'teams', 'config.json'), '{"existing":true}');
 
     runRealMigration();
     runRealMigration();
 
     expect(fs.readFileSync(path.join(userDir, 'agents.yaml'), 'utf-8')).toBe('user agents');
-    expect(fs.readFileSync(path.join(userDir, 'teams', 'config.json'), 'utf-8')).toBe('{"existing":true}');
     // migrateAgentsYaml intentionally deletes the system copy when the user copy already exists.
     expect(fs.existsSync(path.join(systemDir, 'agents.yaml'))).toBe(false);
-    expect(fs.readFileSync(path.join(systemDir, 'config.json'), 'utf-8')).toBe('{"new":true}');
   });
 
   it('moves ~/.agents-system/versions/<agent>/<ver>/ into ~/.agents/versions/ and merges overlap', () => {
@@ -213,22 +209,25 @@ describe('runMigration', () => {
       expect(fs.existsSync(runsDir)).toBe(false);
     });
 
-    it('migrates ~/.agents/config.json to teams/config.json when canonical absent', () => {
+    it('deletes legacy ~/.agents/config.json and ~/.agents/teams/config.json (no longer used)', () => {
       fs.writeFileSync(path.join(userDir, 'config.json'), '{"agents":{"claude":{"enabled":true}}}');
-      runRealMigration();
-      expect(fs.existsSync(path.join(userDir, 'config.json'))).toBe(false);
-      expect(fs.readFileSync(path.join(userDir, 'teams', 'config.json'), 'utf-8'))
-        .toBe('{"agents":{"claude":{"enabled":true}}}');
-    });
-
-    it('deletes ~/.agents/config.json when canonical teams/config.json exists', () => {
-      fs.writeFileSync(path.join(userDir, 'config.json'), '{"legacy":true}');
       fs.mkdirSync(path.join(userDir, 'teams'), { recursive: true });
       fs.writeFileSync(path.join(userDir, 'teams', 'config.json'), '{"canonical":true}');
       runRealMigration();
       expect(fs.existsSync(path.join(userDir, 'config.json'))).toBe(false);
-      expect(fs.readFileSync(path.join(userDir, 'teams', 'config.json'), 'utf-8'))
-        .toBe('{"canonical":true}');
+      expect(fs.existsSync(path.join(userDir, 'teams', 'config.json'))).toBe(false);
+    });
+
+    it('moves ~/.agents/teams/registry.json into .history/teams/', () => {
+      fs.mkdirSync(path.join(userDir, 'teams'), { recursive: true });
+      fs.writeFileSync(
+        path.join(userDir, 'teams', 'registry.json'),
+        '{"team-a":{"created_at":"2026-01-01T00:00:00Z"}}',
+      );
+      runRealMigration();
+      expect(fs.existsSync(path.join(userDir, 'teams', 'registry.json'))).toBe(false);
+      expect(fs.readFileSync(path.join(userDir, '.history', 'teams', 'registry.json'), 'utf-8'))
+        .toBe('{"team-a":{"created_at":"2026-01-01T00:00:00Z"}}');
     });
   });
 
