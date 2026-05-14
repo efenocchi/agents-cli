@@ -16,6 +16,19 @@ import type { AgentId, DiscoveredPlugin, PluginManifest } from './types.js';
 import { getPluginsDir, getTrashPluginsDir } from './state.js';
 import { listInstalledVersions, getVersionHomePath } from './versions.js';
 import { AGENTS, PLUGINS_CAPABLE_AGENTS } from './agents.js';
+import {
+  copyPluginToMarketplace,
+  syncMarketplaceManifest,
+  registerMarketplace,
+  unregisterMarketplace,
+  enablePluginInSettings,
+  disablePluginInSettings,
+  removePluginFromMarketplace,
+  marketplaceIsEmpty,
+  removeEmptyMarketplaceDir,
+  isInstalledInMarketplace,
+  marketplaceRoot,
+} from './plugin-marketplace.js';
 
 const PLUGIN_MANIFEST_DIR = '.claude-plugin';
 const PLUGIN_MANIFEST_FILE = 'plugin.json';
@@ -250,15 +263,18 @@ export function checkPluginDependencies(manifest: PluginManifest): string[] {
 /**
  * Sync a plugin to a specific agent version's home directory.
  *
- * For Claude:
- *   1. Copy plugin skills into version's skills dir (prefixed: pluginName--skillName)
- *   2. Copy plugin commands into version's commands dir (prefixed: pluginName--cmdName.md)
- *   3. Copy plugin agent defs into version's agents dir (prefixed: pluginName--agentName.md)
- *   4. Copy plugin bin/ into version home plugin-bin/<pluginName>/, note path in settings
- *   5. Read hooks/hooks.json, expand vars, merge into settings.json hooks
- *   6. Read .mcp.json, expand vars, merge mcpServers into settings.json
- *   7. Read settings.json, merge non-permission keys non-destructively into settings.json
- *   8. Read settings.json permissions, expand vars, merge into settings.json
+ * For plugins-capable agents (claude, openclaw):
+ *   1. Copy plugin source into <versionHome>/.<agent>/plugins/marketplaces/agents-cli/plugins/<name>/
+ *   2. Pre-expand ${user_config.*} variables in copied text files (Claude doesn't know this var).
+ *   3. (Re-)synthesize the marketplace.json catalog from the installed plugins.
+ *   4. Register the synthetic marketplace in known_marketplaces.json.
+ *   5. Mark <plugin>@agents-cli enabled in settings.json#enabledPlugins.
+ *   6. Migrate (remove) legacy dual-dash skills/commands/agents/bin/hooks/mcp entries.
+ *
+ * Claude/OpenClaw natively handle the plugin's skills, commands, agents, hooks,
+ * MCP servers, bin/, settings.json, and permissions once the plugin lives at the
+ * native install path and is marked enabled — see
+ * https://code.claude.com/docs/en/plugins.
  */
 export function syncPluginToVersion(
   plugin: DiscoveredPlugin,
@@ -293,640 +309,214 @@ export function syncPluginToVersion(
 
   const userConfig = loadUserConfig(plugin.name);
 
-  // 1. Sync skills
-  result.skills = syncPluginSkills(plugin, agent, versionHome, userConfig);
+  // 1. Copy plugin to native marketplace install dir.
+  const installDir = copyPluginToMarketplace(plugin, agent, versionHome);
 
-  // 2. Sync commands (Claude + compatible agents only)
-  if (agent === 'claude' || agent === 'openclaw') {
-    result.commands = syncPluginCommands(plugin, agent, versionHome, userConfig);
+  // 2. Pre-expand ${user_config.*} in the copy. Leave ${CLAUDE_PLUGIN_ROOT} /
+  //    ${CLAUDE_PLUGIN_DATA} alone — Claude expands those natively at runtime.
+  if (Object.keys(userConfig).length > 0) {
+    expandUserConfigInDir(installDir, userConfig);
   }
 
-  // 3. Sync agent defs (Claude only)
-  if (agent === 'claude') {
-    result.agentDefs = syncPluginAgentDefs(plugin, agent, versionHome, userConfig);
-  }
+  // 3-5. Synthesize manifest, register marketplace, enable plugin.
+  syncMarketplaceManifest(agent, versionHome);
+  registerMarketplace(agent, versionHome);
+  enablePluginInSettings(plugin.name, agent, versionHome);
 
-  // 4. Sync bin executables (Claude only for now)
-  if (agent === 'claude') {
-    result.bin = syncPluginBin(plugin, agent, versionHome);
-  }
+  // 6. Migrate legacy dual-dash flat layout from previous versions of agents-cli.
+  migrateLegacyFlatLayout(plugin, agent, versionHome);
 
-  // 5. Sync hooks (Claude only - uses settings.json hook registration)
-  if (agent === 'claude') {
-    result.hooks = syncPluginHooks(plugin, agent, versionHome, userConfig);
-  }
-
-  // 6. Sync MCP servers (Claude only)
-  if (agent === 'claude') {
-    result.mcp = syncPluginMcp(plugin, agent, versionHome, userConfig);
-  }
-
-  // 7. Merge non-permission settings keys non-destructively (Claude only)
-  if (agent === 'claude') {
-    result.settings = syncPluginSettings(plugin, agent, versionHome);
-  }
-
-  // 8. Sync permissions (Claude only - uses settings.json permissions)
-  if (agent === 'claude') {
-    result.permissions = syncPluginPermissions(plugin, agent, versionHome, userConfig);
-  }
-
-  result.success =
-    result.skills.length > 0 ||
-    result.commands.length > 0 ||
-    result.agentDefs.length > 0 ||
-    result.bin.length > 0 ||
-    result.hooks.length > 0 ||
-    result.mcp ||
-    result.settings ||
-    result.permissions;
+  // Populate the result shape for backward-compatible callers/reporting.
+  result.skills = plugin.skills.map(s => `${plugin.name}:${s}`);
+  result.commands = plugin.commands.map(c => `${plugin.name}:${c}`);
+  result.agentDefs = plugin.agentDefs.map(a => `${plugin.name}:${a}`);
+  result.bin = plugin.bin;
+  result.hooks = plugin.hooks;
+  result.mcp = plugin.hasMcp;
+  result.settings = plugin.hasSettings;
+  result.permissions = pluginHasPermissions(plugin);
+  result.success = true;
 
   return result;
 }
 
-// ─── Individual sync functions ────────────────────────────────────────────────
+function pluginHasPermissions(plugin: DiscoveredPlugin): boolean {
+  const settingsPath = path.join(plugin.root, 'settings.json');
+  if (!fs.existsSync(settingsPath)) return false;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as {
+      permissions?: { allow?: string[]; deny?: string[] };
+    };
+    return !!(parsed.permissions?.allow?.length || parsed.permissions?.deny?.length);
+  } catch {
+    return false;
+  }
+}
 
 /**
- * Copy plugin skills into the version's skills directory.
- * Skills are prefixed with the plugin name: pluginName--skillName
+ * Walk a directory and replace ${user_config.*} placeholders in text files.
+ * Leaves all other variables (${CLAUDE_PLUGIN_ROOT}, ${CLAUDE_PLUGIN_DATA}) alone.
  */
-function syncPluginSkills(
-  plugin: DiscoveredPlugin,
-  agent: AgentId,
-  versionHome: string,
-  userConfig: Record<string, string>
-): string[] {
-  const synced: string[] = [];
-  const pluginSkillsDir = path.join(plugin.root, 'skills');
-  if (!fs.existsSync(pluginSkillsDir)) return synced;
-
-  const targetSkillsDir = path.join(versionHome, `.${agent}`, 'skills');
-  fs.mkdirSync(targetSkillsDir, { recursive: true });
-
-  for (const skillName of plugin.skills) {
-    const srcDir = path.join(pluginSkillsDir, skillName);
-    const fsSafeName = `${plugin.name}--${skillName}`;
-    const destDir = path.join(targetSkillsDir, fsSafeName);
-
+function expandUserConfigInDir(dir: string, userConfig: Record<string, string>): void {
+  const textExtensions = new Set(['.md', '.json', '.sh', '.py', '.js', '.ts', '.yaml', '.yml', '.toml', '.txt']);
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      expandUserConfigInDir(full, userConfig);
+      continue;
+    }
+    if (!textExtensions.has(path.extname(entry.name).toLowerCase())) continue;
     try {
-      if (fs.existsSync(destDir)) {
-        fs.rmSync(destDir, { recursive: true, force: true });
+      const content = fs.readFileSync(full, 'utf-8');
+      if (!content.includes('${user_config.')) continue;
+      const expanded = content.replace(/\$\{user_config\.([^}]+)\}/g, (_, key) => userConfig[key] ?? '');
+      if (expanded !== content) {
+        fs.writeFileSync(full, expanded, 'utf-8');
       }
-      copyDirWithVarExpansion(srcDir, destDir, plugin.root, plugin.name, agent, versionHome, userConfig);
-      synced.push(`${plugin.name}:${skillName}`);
-    } catch {
-      // Skip on error
-    }
+    } catch { /* skip unreadable */ }
   }
-
-  return synced;
 }
 
 /**
- * Copy plugin commands into the version's commands directory.
- * Commands are namespaced: pluginName--commandName.md
+ * Remove legacy <plugin>--* entries from a version home, left by the previous
+ * flatten-based sync. Safe to call repeatedly — only deletes paths matching the
+ * plugin's prefix.
  */
-function syncPluginCommands(
-  plugin: DiscoveredPlugin,
-  agent: AgentId,
-  versionHome: string,
-  userConfig: Record<string, string>
-): string[] {
-  const synced: string[] = [];
-  const pluginCommandsDir = path.join(plugin.root, 'commands');
-  if (!fs.existsSync(pluginCommandsDir) || plugin.commands.length === 0) return synced;
-
-  const agentConfig = AGENTS[agent];
-  const commandsTarget = path.join(versionHome, `.${agent}`, agentConfig.commandsSubdir);
-  fs.mkdirSync(commandsTarget, { recursive: true });
-
-  for (const cmdName of plugin.commands) {
-    const srcFile = path.join(pluginCommandsDir, `${cmdName}.md`);
-    if (!fs.existsSync(srcFile)) continue;
-
-    const destName = `${plugin.name}--${cmdName}.md`;
-    const destFile = path.join(commandsTarget, destName);
-
-    try {
-      let content = fs.readFileSync(srcFile, 'utf-8');
-      content = expandPluginVars(content, plugin.root, plugin.name, agent, versionHome, userConfig);
-      fs.writeFileSync(destFile, content, 'utf-8');
-      synced.push(`${plugin.name}:${cmdName}`);
-    } catch {
-      // Skip on error
-    }
-  }
-
-  return synced;
-}
-
-/**
- * Copy plugin agent definitions into the version's agents directory.
- * Agent defs are namespaced: pluginName--agentName.md
- */
-function syncPluginAgentDefs(
-  plugin: DiscoveredPlugin,
-  agent: AgentId,
-  versionHome: string,
-  userConfig: Record<string, string>
-): string[] {
-  const synced: string[] = [];
-  const pluginAgentsDir = path.join(plugin.root, 'agents');
-  if (!fs.existsSync(pluginAgentsDir) || plugin.agentDefs.length === 0) return synced;
-
-  const agentsTarget = path.join(versionHome, `.${agent}`, 'agents');
-  fs.mkdirSync(agentsTarget, { recursive: true });
-
-  for (const agentDefName of plugin.agentDefs) {
-    const srcFile = path.join(pluginAgentsDir, `${agentDefName}.md`);
-    if (!fs.existsSync(srcFile)) continue;
-
-    const destName = `${plugin.name}--${agentDefName}.md`;
-    const destFile = path.join(agentsTarget, destName);
-
-    try {
-      let content = fs.readFileSync(srcFile, 'utf-8');
-      content = expandPluginVars(content, plugin.root, plugin.name, agent, versionHome, userConfig);
-      fs.writeFileSync(destFile, content, 'utf-8');
-      synced.push(`${plugin.name}:${agentDefName}`);
-    } catch {
-      // Skip on error
-    }
-  }
-
-  return synced;
-}
-
-/**
- * Copy plugin bin executables into the version home plugin-bin/<pluginName>/ directory.
- * Records the bin path in settings.json under pluginBinPaths so callers can add it to PATH.
- */
-function syncPluginBin(
+function migrateLegacyFlatLayout(
   plugin: DiscoveredPlugin,
   agent: AgentId,
   versionHome: string
-): string[] {
-  const synced: string[] = [];
-  const pluginBinDir = path.join(plugin.root, 'bin');
-  if (!fs.existsSync(pluginBinDir) || plugin.bin.length === 0) return synced;
+): void {
+  const prefix = `${plugin.name}--`;
+  const agentRoot = path.join(versionHome, `.${agent}`);
 
-  const targetBinDir = path.join(versionHome, `.${agent}`, 'plugin-bin', plugin.name);
-  fs.mkdirSync(targetBinDir, { recursive: true });
-
-  for (const binFile of plugin.bin) {
-    const srcFile = path.join(pluginBinDir, binFile);
-    if (!fs.existsSync(srcFile)) continue;
-
-    const destFile = path.join(targetBinDir, binFile);
-    try {
-      fs.copyFileSync(srcFile, destFile);
-      const stat = fs.statSync(srcFile);
-      fs.chmodSync(destFile, stat.mode | 0o111);
-      synced.push(binFile);
-    } catch {
-      // Skip on error
+  // 1. skills
+  const skillsDir = path.join(agentRoot, 'skills');
+  if (fs.existsSync(skillsDir)) {
+    for (const entry of fs.readdirSync(skillsDir, { withFileTypes: true })) {
+      if (entry.isDirectory() && entry.name.startsWith(prefix)) {
+        try { fs.rmSync(path.join(skillsDir, entry.name), { recursive: true, force: true }); } catch { /* skip */ }
+      }
     }
   }
 
-  if (synced.length === 0) return synced;
-
-  // Note the bin path in settings.json so the calling shim can add it to PATH.
-  const configDir = path.join(versionHome, `.${agent}`);
-  const settingsPath = path.join(configDir, 'settings.json');
-  let settings: Record<string, unknown> = {};
-
-  if (fs.existsSync(settingsPath)) {
-    try {
-      settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-    } catch { /* start fresh */ }
-  }
-
-  if (!Array.isArray(settings.pluginBinPaths)) {
-    settings.pluginBinPaths = [];
-  }
-  const binPaths = settings.pluginBinPaths as string[];
-  if (!binPaths.includes(targetBinDir)) {
-    binPaths.push(targetBinDir);
-  }
-
-  try {
-    fs.mkdirSync(configDir, { recursive: true });
-    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
-  } catch { /* ignore write errors */ }
-
-  return synced;
-}
-
-/**
- * Merge plugin hooks into Claude's settings.json.
- * Reads the plugin's hooks/hooks.json and merges each event's hooks
- * into the version's settings.json, expanding variables.
- */
-function syncPluginHooks(
-  plugin: DiscoveredPlugin,
-  agent: AgentId,
-  versionHome: string,
-  userConfig: Record<string, string>
-): string[] {
-  const synced: string[] = [];
-  const hooksFile = path.join(plugin.root, 'hooks', 'hooks.json');
-  if (!fs.existsSync(hooksFile)) return synced;
-
-  let pluginHooks: Record<string, Array<{
-    matcher?: string;
-    hooks?: Array<{ type: string; command: string; timeout?: number }>;
-  }>>;
-
-  try {
-    pluginHooks = JSON.parse(fs.readFileSync(hooksFile, 'utf-8'));
-  } catch {
-    return synced;
-  }
-
-  const configDir = path.join(versionHome, `.${agent}`);
-  const settingsPath = path.join(configDir, 'settings.json');
-  let settings: Record<string, unknown> = {};
-
-  if (fs.existsSync(settingsPath)) {
-    try {
-      settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-    } catch { /* start fresh */ }
-  }
-
-  if (!settings.hooks || typeof settings.hooks !== 'object') {
-    settings.hooks = {};
-  }
-  const hooksConfig = settings.hooks as Record<string, unknown[]>;
-
-  for (const [event, matcherGroups] of Object.entries(pluginHooks)) {
-    if (!hooksConfig[event]) {
-      hooksConfig[event] = [];
-    }
-    const eventEntries = hooksConfig[event] as Array<{
-      matcher?: string;
-      hooks?: Array<{ type: string; command: string; timeout?: number }>;
-    }>;
-
-    for (const group of matcherGroups) {
-      const matcher = group.matcher || '';
-      const expandedHooks = (group.hooks || []).map(h => ({
-        ...h,
-        command: expandPluginVars(h.command, plugin.root, plugin.name, agent, versionHome, userConfig),
-      }));
-
-      let matcherGroup = eventEntries.find(e => (e.matcher || '') === matcher);
-      if (!matcherGroup) {
-        matcherGroup = { matcher, hooks: [] };
-        eventEntries.push(matcherGroup);
-      }
-      if (!matcherGroup.hooks) {
-        matcherGroup.hooks = [];
-      }
-
-      for (const hook of expandedHooks) {
-        const exists = matcherGroup.hooks.some(h => h.command === hook.command);
-        if (!exists) {
-          matcherGroup.hooks.push(hook);
+  // 2. commands
+  if (agent === 'claude' || agent === 'openclaw') {
+    const cmdsDir = path.join(agentRoot, AGENTS[agent]?.commandsSubdir ?? 'commands');
+    if (fs.existsSync(cmdsDir)) {
+      for (const entry of fs.readdirSync(cmdsDir, { withFileTypes: true })) {
+        if (entry.isFile() && entry.name.startsWith(prefix) && entry.name.endsWith('.md')) {
+          try { fs.unlinkSync(path.join(cmdsDir, entry.name)); } catch { /* skip */ }
         }
       }
     }
-
-    synced.push(event);
   }
 
-  try {
-    fs.mkdirSync(configDir, { recursive: true });
-    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
-  } catch { /* ignore write errors */ }
-
-  return synced;
-}
-
-/**
- * Merge plugin .mcp.json MCP server definitions into Claude's settings.json.
- * Server names are namespaced as pluginName--serverName to avoid collisions.
- * Expands ${CLAUDE_PLUGIN_ROOT}, ${CLAUDE_PLUGIN_DATA}, ${user_config.*} in args and env.
- */
-function syncPluginMcp(
-  plugin: DiscoveredPlugin,
-  agent: AgentId,
-  versionHome: string,
-  userConfig: Record<string, string>
-): boolean {
-  const mcpFile = path.join(plugin.root, '.mcp.json');
-  if (!fs.existsSync(mcpFile)) return false;
-
-  let pluginMcp: { mcpServers?: Record<string, unknown> };
-  try {
-    pluginMcp = JSON.parse(fs.readFileSync(mcpFile, 'utf-8'));
-  } catch {
-    return false;
-  }
-
-  const servers = pluginMcp.mcpServers;
-  if (!servers || Object.keys(servers).length === 0) return false;
-
-  const configDir = path.join(versionHome, `.${agent}`);
-  const settingsPath = path.join(configDir, 'settings.json');
-  let settings: Record<string, unknown> = {};
-
-  if (fs.existsSync(settingsPath)) {
-    try {
-      settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-    } catch { /* start fresh */ }
-  }
-
-  if (!settings.mcpServers || typeof settings.mcpServers !== 'object') {
-    settings.mcpServers = {};
-  }
-  const existing = settings.mcpServers as Record<string, unknown>;
-
-  let merged = false;
-  for (const [serverName, serverConfig] of Object.entries(servers)) {
-    const namespacedName = `${plugin.name}--${serverName}`;
-    // Expand variables inside the server config
-    const configStr = expandPluginVars(
-      JSON.stringify(serverConfig),
-      plugin.root,
-      plugin.name,
-      agent,
-      versionHome,
-      userConfig
-    );
-    existing[namespacedName] = JSON.parse(configStr) as unknown;
-    merged = true;
-  }
-
-  if (merged) {
-    try {
-      fs.mkdirSync(configDir, { recursive: true });
-      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
-    } catch {
-      return false;
+  // 3. agent definitions
+  const agentsDir = path.join(agentRoot, 'agents');
+  if (fs.existsSync(agentsDir)) {
+    for (const entry of fs.readdirSync(agentsDir, { withFileTypes: true })) {
+      if (entry.isFile() && entry.name.startsWith(prefix) && entry.name.endsWith('.md')) {
+        try { fs.unlinkSync(path.join(agentsDir, entry.name)); } catch { /* skip */ }
+      }
     }
   }
 
-  return merged;
-}
+  // 4. plugin-bin
+  const binDir = path.join(agentRoot, 'plugin-bin', plugin.name);
+  if (fs.existsSync(binDir)) {
+    try { fs.rmSync(binDir, { recursive: true, force: true }); } catch { /* skip */ }
+  }
 
-/**
- * Merge non-permission keys from plugin's settings.json non-destructively into agent settings.
- * Only adds keys that don't already exist — never overwrites user config.
- * Permission keys are handled separately by syncPluginPermissions.
- */
-function syncPluginSettings(
-  plugin: DiscoveredPlugin,
-  agent: AgentId,
-  versionHome: string
-): boolean {
-  const pluginSettingsPath = path.join(plugin.root, 'settings.json');
-  if (!fs.existsSync(pluginSettingsPath)) return false;
+  // 5. settings.json — strip namespaced mcpServers, hooks referencing plugin
+  //    root, permissions referencing plugin root, and pluginBinPaths entries.
+  const settingsPath = path.join(agentRoot, 'settings.json');
+  if (!fs.existsSync(settingsPath)) return;
 
-  let pluginSettings: Record<string, unknown>;
+  let settings: Record<string, unknown>;
   try {
-    pluginSettings = JSON.parse(fs.readFileSync(pluginSettingsPath, 'utf-8'));
-  } catch {
-    return false;
-  }
-
-  // Exclude permissions — those are handled by syncPluginPermissions
-  const keysToMerge = Object.entries(pluginSettings).filter(([k]) => k !== 'permissions');
-  if (keysToMerge.length === 0) return false;
-
-  const configDir = path.join(versionHome, `.${agent}`);
-  const settingsPath = path.join(configDir, 'settings.json');
-  let settings: Record<string, unknown> = {};
-
-  if (fs.existsSync(settingsPath)) {
-    try {
-      settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-    } catch { /* start fresh */ }
-  }
+    settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+  } catch { return; }
 
   let changed = false;
-  for (const [key, value] of keysToMerge) {
-    if (!(key in settings)) {
-      settings[key] = value;
+  const pluginRoot = plugin.root;
+
+  const hooksCfg = settings.hooks as Record<string, unknown> | undefined;
+  if (hooksCfg && typeof hooksCfg === 'object') {
+    for (const [event, entries] of Object.entries(hooksCfg)) {
+      if (!Array.isArray(entries)) continue;
+      const groups = entries as Array<{ matcher?: string; hooks?: Array<{ command: string }> }>;
+      for (const group of groups) {
+        if (!Array.isArray(group.hooks)) continue;
+        const orig = group.hooks.length;
+        group.hooks = group.hooks.filter(h => !(typeof h.command === 'string' && h.command.includes(pluginRoot)));
+        if (group.hooks.length !== orig) changed = true;
+      }
+      const kept = groups.filter(g => Array.isArray(g.hooks) && g.hooks.length > 0);
+      if (kept.length !== groups.length) {
+        hooksCfg[event] = kept;
+        changed = true;
+      }
+      if (Array.isArray(hooksCfg[event]) && (hooksCfg[event] as unknown[]).length === 0) {
+        delete hooksCfg[event];
+        changed = true;
+      }
+    }
+  }
+
+  const perms = settings.permissions as { allow?: string[]; deny?: string[] } | undefined;
+  if (perms && typeof perms === 'object') {
+    for (const key of ['allow', 'deny'] as const) {
+      const list = perms[key];
+      if (!Array.isArray(list)) continue;
+      const kept = list.filter(r => !(typeof r === 'string' && r.includes(pluginRoot)));
+      if (kept.length !== list.length) {
+        perms[key] = kept;
+        changed = true;
+      }
+    }
+  }
+
+  const mcp = settings.mcpServers as Record<string, unknown> | undefined;
+  if (mcp && typeof mcp === 'object') {
+    for (const key of Object.keys(mcp)) {
+      if (key.startsWith(prefix)) {
+        delete mcp[key];
+        changed = true;
+      }
+    }
+  }
+
+  if (Array.isArray(settings.pluginBinPaths)) {
+    const targetBinDir = path.join(agentRoot, 'plugin-bin', plugin.name);
+    const before = (settings.pluginBinPaths as string[]).length;
+    settings.pluginBinPaths = (settings.pluginBinPaths as string[]).filter(p => p !== targetBinDir);
+    if ((settings.pluginBinPaths as string[]).length !== before) changed = true;
+    if ((settings.pluginBinPaths as string[]).length === 0) {
+      delete settings.pluginBinPaths;
       changed = true;
     }
   }
 
   if (changed) {
-    try {
-      fs.mkdirSync(configDir, { recursive: true });
-      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
-    } catch {
-      return false;
-    }
-  }
-
-  return changed;
-}
-
-/**
- * Merge plugin permissions into Claude's settings.json.
- * Reads the plugin's settings.json and merges permissions.allow / deny entries.
- */
-function syncPluginPermissions(
-  plugin: DiscoveredPlugin,
-  agent: AgentId,
-  versionHome: string,
-  userConfig: Record<string, string>
-): boolean {
-  const pluginSettingsPath = path.join(plugin.root, 'settings.json');
-  if (!fs.existsSync(pluginSettingsPath)) return false;
-
-  let pluginSettings: { permissions?: { allow?: string[]; deny?: string[] } };
-  try {
-    pluginSettings = JSON.parse(fs.readFileSync(pluginSettingsPath, 'utf-8'));
-  } catch {
-    return false;
-  }
-
-  const pluginAllow = pluginSettings.permissions?.allow || [];
-  const pluginDeny = pluginSettings.permissions?.deny || [];
-  if (pluginAllow.length === 0 && pluginDeny.length === 0) return false;
-
-  const expandedAllow = pluginAllow.map(rule =>
-    expandPluginVars(rule, plugin.root, plugin.name, agent, versionHome, userConfig)
-  );
-  const expandedDeny = pluginDeny.map(rule =>
-    expandPluginVars(rule, plugin.root, plugin.name, agent, versionHome, userConfig)
-  );
-
-  const configDir = path.join(versionHome, `.${agent}`);
-  const settingsPath = path.join(configDir, 'settings.json');
-  let settings: Record<string, unknown> = {};
-
-  if (fs.existsSync(settingsPath)) {
-    try {
-      settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-    } catch { /* start fresh */ }
-  }
-
-  if (!settings.permissions || typeof settings.permissions !== 'object') {
-    settings.permissions = { allow: [], deny: [] };
-  }
-  const perms = settings.permissions as { allow: string[]; deny: string[] };
-  if (!perms.allow) perms.allow = [];
-  if (!perms.deny) perms.deny = [];
-
-  for (const rule of expandedAllow) {
-    if (!perms.allow.includes(rule)) {
-      perms.allow.push(rule);
-    }
-  }
-  for (const rule of expandedDeny) {
-    if (!perms.deny.includes(rule)) {
-      perms.deny.push(rule);
-    }
-  }
-
-  try {
-    fs.mkdirSync(configDir, { recursive: true });
-    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// ─── Utility ──────────────────────────────────────────────────────────────────
-
-/**
- * Copy a directory recursively, expanding plugin variables in text file contents.
- * Only expands variables in text files (.md, .json, .sh, .py, .js, .ts, .yaml, .yml, .toml).
- */
-function copyDirWithVarExpansion(
-  src: string,
-  dest: string,
-  pluginRoot: string,
-  pluginName: string,
-  agent: AgentId,
-  versionHome: string,
-  userConfig?: Record<string, string>
-): void {
-  fs.mkdirSync(dest, { recursive: true });
-  const entries = fs.readdirSync(src, { withFileTypes: true });
-
-  const textExtensions = new Set(['.md', '.json', '.sh', '.py', '.js', '.ts', '.yaml', '.yml', '.toml', '.txt']);
-
-  for (const entry of entries) {
-    const srcPath = path.join(src, entry.name);
-    const destPath = path.join(dest, entry.name);
-
-    if (entry.isDirectory()) {
-      copyDirWithVarExpansion(srcPath, destPath, pluginRoot, pluginName, agent, versionHome, userConfig);
-    } else {
-      const ext = path.extname(entry.name).toLowerCase();
-      if (textExtensions.has(ext)) {
-        let content = fs.readFileSync(srcPath, 'utf-8');
-        content = expandPluginVars(content, pluginRoot, pluginName, agent, versionHome, userConfig);
-        fs.writeFileSync(destPath, content, 'utf-8');
-      } else {
-        fs.copyFileSync(srcPath, destPath);
-      }
-
-      const stat = fs.statSync(srcPath);
-      if (stat.mode & 0o111) {
-        fs.chmodSync(destPath, stat.mode);
-      }
-    }
+    try { fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8'); } catch { /* ignore */ }
   }
 }
 
 // ─── Sync status ──────────────────────────────────────────────────────────────
 
 /**
- * Check if a plugin is synced to a version by inspecting the version home.
- * Checks skills, commands, agent defs, bin, hook commands, and permissions.
+ * Check if a plugin is synced to a version. True when the plugin lives at the
+ * native marketplace install path. Legacy dual-dash entries are not counted —
+ * they're treated as stale and migrated away on the next sync.
  */
 export function isPluginSynced(
   plugin: DiscoveredPlugin,
   agent: AgentId,
   versionHome: string
 ): boolean {
-  const prefix = `${plugin.name}--`;
-
-  // Check 1: plugin skill directories
-  if (plugin.skills.length > 0) {
-    const skillsDir = path.join(versionHome, `.${agent}`, 'skills');
-    if (fs.existsSync(skillsDir)) {
-      for (const skillName of plugin.skills) {
-        if (fs.existsSync(path.join(skillsDir, `${prefix}${skillName}`))) {
-          return true;
-        }
-      }
-    }
-  }
-
-  // Check 2: plugin command files
-  if (plugin.commands.length > 0 && (agent === 'claude' || agent === 'openclaw')) {
-    const agentConfig = AGENTS[agent];
-    const commandsDir = path.join(versionHome, `.${agent}`, agentConfig.commandsSubdir);
-    if (fs.existsSync(commandsDir)) {
-      for (const cmdName of plugin.commands) {
-        if (fs.existsSync(path.join(commandsDir, `${prefix}${cmdName}.md`))) {
-          return true;
-        }
-      }
-    }
-  }
-
-  // Check 3: plugin agent definition files
-  if (plugin.agentDefs.length > 0 && agent === 'claude') {
-    const agentsDir = path.join(versionHome, `.${agent}`, 'agents');
-    if (fs.existsSync(agentsDir)) {
-      for (const agentDefName of plugin.agentDefs) {
-        if (fs.existsSync(path.join(agentsDir, `${prefix}${agentDefName}.md`))) {
-          return true;
-        }
-      }
-    }
-  }
-
-  // Check 4: plugin bin directory
-  if (plugin.bin.length > 0 && agent === 'claude') {
-    const binDir = path.join(versionHome, `.${agent}`, 'plugin-bin', plugin.name);
-    if (fs.existsSync(binDir)) {
-      return true;
-    }
-  }
-
-  // Check 5: plugin hooks registered in settings.json (commands referencing plugin root)
-  if (plugin.hooks.length > 0 && agent === 'claude') {
-    const settingsPath = path.join(versionHome, `.${agent}`, 'settings.json');
-    if (fs.existsSync(settingsPath)) {
-      try {
-        const content = fs.readFileSync(settingsPath, 'utf-8');
-        if (content.includes(plugin.root)) {
-          return true;
-        }
-      } catch { /* ignore */ }
-    }
-  }
-
-  // Check 6: plugin permissions in settings.json
-  if (agent === 'claude') {
-    const settingsPath = path.join(versionHome, `.${agent}`, 'settings.json');
-    if (fs.existsSync(settingsPath)) {
-      try {
-        const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-        const allow = settings.permissions?.allow || [];
-        if (allow.some((rule: string) => rule.includes(plugin.root))) {
-          return true;
-        }
-        // Check MCP servers
-        const mcpServers = settings.mcpServers as Record<string, unknown> | undefined;
-        if (mcpServers) {
-          const hasNamespacedServer = Object.keys(mcpServers).some(k => k.startsWith(prefix));
-          if (hasNamespacedServer) return true;
-        }
-      } catch { /* ignore */ }
-    }
-  }
-
-  return false;
+  if (!PLUGINS_CAPABLE_AGENTS.includes(agent)) return false;
+  return isInstalledInMarketplace(plugin.name, agent, versionHome);
 }
 
 // ─── Removal ─────────────────────────────────────────────────────────────────
@@ -961,106 +551,114 @@ export function removePluginFromVersion(
     mcp: 0,
   };
 
-  const prefix = `${pluginName}--`;
+  // 1. Remove the plugin from the marketplace install dir + disable it.
+  const removed = removePluginFromMarketplace(pluginName, agent, versionHome);
+  if (removed) {
+    result.skills.push(pluginName);
+  }
+  disablePluginInSettings(pluginName, agent, versionHome);
 
-  // 1. Remove synced skill dirs
-  const skillsDir = path.join(versionHome, `.${agent}`, 'skills');
+  // 2. Refresh marketplace.json so it reflects what's left under plugins/.
+  syncMarketplaceManifest(agent, versionHome);
+
+  // 3. If we just removed the last plugin, drop the marketplace dir and the
+  //    known_marketplaces.json entry too.
+  if (marketplaceIsEmpty(agent, versionHome)) {
+    removeEmptyMarketplaceDir(agent, versionHome);
+    unregisterMarketplace(agent, versionHome);
+  }
+
+  // 4. Strip any legacy dual-dash entries from prior agents-cli versions.
+  cleanLegacyFlatLayout(pluginName, pluginRoot, agent, versionHome, result);
+
+  return result;
+}
+
+/**
+ * Strip dual-dash flat-layout entries left behind by older agents-cli sync runs.
+ * Mutates `result` to record what was removed.
+ */
+function cleanLegacyFlatLayout(
+  pluginName: string,
+  pluginRoot: string,
+  agent: AgentId,
+  versionHome: string,
+  result: { skills: string[]; commands: string[]; agentDefs: string[]; bin: string[]; hooks: string[]; permissions: number; mcp: number }
+): void {
+  const prefix = `${pluginName}--`;
+  const agentRoot = path.join(versionHome, `.${agent}`);
+
+  const skillsDir = path.join(agentRoot, 'skills');
   if (fs.existsSync(skillsDir)) {
     for (const entry of fs.readdirSync(skillsDir, { withFileTypes: true })) {
       if (!entry.isDirectory() || !entry.name.startsWith(prefix)) continue;
       try {
         fs.rmSync(path.join(skillsDir, entry.name), { recursive: true, force: true });
         result.skills.push(entry.name);
-      } catch { /* skip on error */ }
+      } catch { /* skip */ }
     }
   }
 
-  // 2. Remove synced command files
   if (agent === 'claude' || agent === 'openclaw') {
-    const agentConfig = AGENTS[agent];
-    const commandsDir = path.join(versionHome, `.${agent}`, agentConfig.commandsSubdir);
+    const commandsDir = path.join(agentRoot, AGENTS[agent]?.commandsSubdir ?? 'commands');
     if (fs.existsSync(commandsDir)) {
       for (const entry of fs.readdirSync(commandsDir, { withFileTypes: true })) {
-        if (!entry.isFile()) continue;
-        if (!entry.name.startsWith(prefix) || !entry.name.endsWith('.md')) continue;
+        if (!entry.isFile() || !entry.name.startsWith(prefix) || !entry.name.endsWith('.md')) continue;
         try {
           fs.unlinkSync(path.join(commandsDir, entry.name));
           result.commands.push(entry.name);
-        } catch { /* skip on error */ }
+        } catch { /* skip */ }
       }
     }
   }
 
-  // 3. Remove synced agent def files
-  if (agent === 'claude') {
-    const agentsDir = path.join(versionHome, `.${agent}`, 'agents');
-    if (fs.existsSync(agentsDir)) {
-      for (const entry of fs.readdirSync(agentsDir, { withFileTypes: true })) {
-        if (!entry.isFile()) continue;
-        if (!entry.name.startsWith(prefix) || !entry.name.endsWith('.md')) continue;
-        try {
-          fs.unlinkSync(path.join(agentsDir, entry.name));
-          result.agentDefs.push(entry.name);
-        } catch { /* skip on error */ }
-      }
-    }
-  }
-
-  // 4. Remove plugin-bin directory
-  if (agent === 'claude') {
-    const binDir = path.join(versionHome, `.${agent}`, 'plugin-bin', pluginName);
-    if (fs.existsSync(binDir)) {
+  const agentsDir = path.join(agentRoot, 'agents');
+  if (fs.existsSync(agentsDir)) {
+    for (const entry of fs.readdirSync(agentsDir, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.startsWith(prefix) || !entry.name.endsWith('.md')) continue;
       try {
-        fs.rmSync(binDir, { recursive: true, force: true });
-        result.bin.push(binDir);
-      } catch { /* skip on error */ }
+        fs.unlinkSync(path.join(agentsDir, entry.name));
+        result.agentDefs.push(entry.name);
+      } catch { /* skip */ }
     }
   }
 
-  if (agent !== 'claude') {
-    return result;
+  const binDir = path.join(agentRoot, 'plugin-bin', pluginName);
+  if (fs.existsSync(binDir)) {
+    try {
+      fs.rmSync(binDir, { recursive: true, force: true });
+      result.bin.push(binDir);
+    } catch { /* skip */ }
   }
 
-  // 5 + 6 + 7: edit settings.json — strip hooks, permissions, mcpServers matching plugin
-  const settingsPath = path.join(versionHome, `.${agent}`, 'settings.json');
-  if (!fs.existsSync(settingsPath)) return result;
+  const settingsPath = path.join(agentRoot, 'settings.json');
+  if (!fs.existsSync(settingsPath)) return;
 
   let settings: Record<string, unknown>;
-  try {
-    settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-  } catch {
-    return result;
-  }
+  try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')); } catch { return; }
 
   let changed = false;
 
-  // Strip hooks referencing plugin root
   const hooksConfig = settings.hooks as Record<string, unknown> | undefined;
   if (hooksConfig && typeof hooksConfig === 'object') {
     for (const [event, entries] of Object.entries(hooksConfig)) {
       if (!Array.isArray(entries)) continue;
-      const eventEntries = entries as Array<{
-        matcher?: string;
-        hooks?: Array<{ type: string; command: string; timeout?: number }>;
-      }>;
-
-      for (const group of eventEntries) {
+      const groups = entries as Array<{ matcher?: string; hooks?: Array<{ command: string }> }>;
+      for (const group of groups) {
         if (!Array.isArray(group.hooks)) continue;
-        const originalLen = group.hooks.length;
+        const orig = group.hooks.length;
         group.hooks = group.hooks.filter(h => {
           const matches = typeof h.command === 'string' && h.command.includes(pluginRoot);
           if (matches) result.hooks.push(`${event}: ${h.command}`);
           return !matches;
         });
-        if (group.hooks.length !== originalLen) changed = true;
+        if (group.hooks.length !== orig) changed = true;
       }
-
-      const kept = eventEntries.filter(g => Array.isArray(g.hooks) && g.hooks.length > 0);
-      if (kept.length !== eventEntries.length) {
+      const kept = groups.filter(g => Array.isArray(g.hooks) && g.hooks.length > 0);
+      if (kept.length !== groups.length) {
         hooksConfig[event] = kept;
         changed = true;
       }
-
       if (Array.isArray(hooksConfig[event]) && (hooksConfig[event] as unknown[]).length === 0) {
         delete hooksConfig[event];
         changed = true;
@@ -1068,14 +666,13 @@ export function removePluginFromVersion(
     }
   }
 
-  // Strip permissions referencing plugin root
   const perms = settings.permissions as { allow?: string[]; deny?: string[] } | undefined;
   if (perms && typeof perms === 'object') {
     for (const key of ['allow', 'deny'] as const) {
       const list = perms[key];
       if (!Array.isArray(list)) continue;
-      const kept = list.filter(rule => {
-        const matches = typeof rule === 'string' && rule.includes(pluginRoot);
+      const kept = list.filter(r => {
+        const matches = typeof r === 'string' && r.includes(pluginRoot);
         if (matches) result.permissions += 1;
         return !matches;
       });
@@ -1086,40 +683,40 @@ export function removePluginFromVersion(
     }
   }
 
-  // Strip namespaced MCP servers added by this plugin
-  const mcpServers = settings.mcpServers as Record<string, unknown> | undefined;
-  if (mcpServers && typeof mcpServers === 'object') {
-    for (const serverName of Object.keys(mcpServers)) {
-      if (serverName.startsWith(prefix)) {
-        delete mcpServers[serverName];
+  const mcp = settings.mcpServers as Record<string, unknown> | undefined;
+  if (mcp && typeof mcp === 'object') {
+    for (const key of Object.keys(mcp)) {
+      if (key.startsWith(prefix)) {
+        delete mcp[key];
         result.mcp += 1;
         changed = true;
       }
     }
   }
 
-  // Strip bin path from pluginBinPaths
   if (Array.isArray(settings.pluginBinPaths)) {
-    const binDir = path.join(versionHome, `.${agent}`, 'plugin-bin', pluginName);
-    const before = settings.pluginBinPaths.length;
-    settings.pluginBinPaths = (settings.pluginBinPaths as string[]).filter(p => p !== binDir);
+    const targetBin = path.join(agentRoot, 'plugin-bin', pluginName);
+    const before = (settings.pluginBinPaths as string[]).length;
+    settings.pluginBinPaths = (settings.pluginBinPaths as string[]).filter(p => p !== targetBin);
     if ((settings.pluginBinPaths as string[]).length !== before) changed = true;
+    if ((settings.pluginBinPaths as string[]).length === 0) {
+      delete settings.pluginBinPaths;
+      changed = true;
+    }
   }
 
   if (changed) {
-    try {
-      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
-    } catch { /* ignore write errors */ }
+    try { fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8'); } catch { /* ignore */ }
   }
-
-  return result;
 }
 
 // ─── Orphan cleanup ───────────────────────────────────────────────────────────
 
 /**
- * Remove orphaned plugin skill directories from a version home.
- * Soft-deletes to ~/.agents/.trash/plugins/.
+ * Remove orphaned plugin entries from a version home. An entry is "orphan" if
+ * its plugin name is not in the active plugin set. Soft-deletes the affected
+ * marketplace plugin dir to ~/.agents/.trash/plugins/. Also cleans up any
+ * legacy dual-dash skills/ directories from older agents-cli versions.
  */
 export function cleanOrphanedPluginSkills(
   agent: AgentId,
@@ -1128,17 +725,42 @@ export function cleanOrphanedPluginSkills(
   version?: string
 ): string[] {
   const removed: string[] = [];
+
+  // 1. Walk the native marketplace install dir and trash entries no longer active.
+  const mktPluginsDir = path.join(marketplaceRoot(agent, versionHome), 'plugins');
+  if (fs.existsSync(mktPluginsDir)) {
+    for (const entry of fs.readdirSync(mktPluginsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+      if (activePluginNames.has(entry.name)) continue;
+      try {
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const trashDir = path.join(getTrashPluginsDir(), agent, version || 'unknown', entry.name);
+        const trashDest = path.join(trashDir, stamp);
+        fs.mkdirSync(trashDir, { recursive: true, mode: 0o700 });
+        fs.renameSync(path.join(mktPluginsDir, entry.name), trashDest);
+        disablePluginInSettings(entry.name, agent, versionHome);
+        removed.push(entry.name);
+      } catch { /* skip on error */ }
+    }
+    // Keep manifest in sync with on-disk state and drop the marketplace if empty.
+    if (removed.length > 0) {
+      syncMarketplaceManifest(agent, versionHome);
+      if (marketplaceIsEmpty(agent, versionHome)) {
+        removeEmptyMarketplaceDir(agent, versionHome);
+        unregisterMarketplace(agent, versionHome);
+      }
+    }
+  }
+
+  // 2. Sweep legacy dual-dash skills directories from older agents-cli versions.
   const skillsDir = path.join(versionHome, `.${agent}`, 'skills');
-  if (!fs.existsSync(skillsDir)) return removed;
-
-  const entries = fs.readdirSync(skillsDir, { withFileTypes: true });
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const dashIdx = entry.name.indexOf('--');
-    if (dashIdx === -1) continue;
-
-    const pluginName = entry.name.slice(0, dashIdx);
-    if (!activePluginNames.has(pluginName)) {
+  if (fs.existsSync(skillsDir)) {
+    for (const entry of fs.readdirSync(skillsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const dashIdx = entry.name.indexOf('--');
+      if (dashIdx === -1) continue;
+      const pluginName = entry.name.slice(0, dashIdx);
+      if (activePluginNames.has(pluginName)) continue;
       try {
         const stamp = new Date().toISOString().replace(/[:.]/g, '-');
         const trashDir = path.join(getTrashPluginsDir(), agent, version || 'unknown', entry.name);
@@ -1149,6 +771,7 @@ export function cleanOrphanedPluginSkills(
       } catch { /* skip on error */ }
     }
   }
+
   return removed;
 }
 
@@ -1162,26 +785,34 @@ export interface VersionPluginDiff {
 
 export function diffVersionPlugins(agent: AgentId, version: string): VersionPluginDiff {
   const versionHome = getVersionHomePath(agent, version);
-  const skillsDir = path.join(versionHome, `.${agent}`, 'skills');
+  const activePlugins = new Set(discoverPlugins().map(p => p.name));
   const orphans: string[] = [];
 
-  if (!fs.existsSync(skillsDir)) {
-    return { agent, version, orphans };
-  }
-
-  const activePlugins = new Set(discoverPlugins().map(p => p.name));
-  for (const entry of fs.readdirSync(skillsDir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const dashIdx = entry.name.indexOf('--');
-    if (dashIdx === -1) continue;
-
-    const pluginName = entry.name.slice(0, dashIdx);
-    if (!activePlugins.has(pluginName)) {
-      orphans.push(entry.name);
+  const mktPluginsDir = path.join(marketplaceRoot(agent, versionHome), 'plugins');
+  if (fs.existsSync(mktPluginsDir)) {
+    for (const entry of fs.readdirSync(mktPluginsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+      if (!activePlugins.has(entry.name)) {
+        orphans.push(entry.name);
+      }
     }
   }
 
-  return { agent, version, orphans: orphans.sort() };
+  // Also surface legacy dual-dash skill dirs as orphans during migration period.
+  const skillsDir = path.join(versionHome, `.${agent}`, 'skills');
+  if (fs.existsSync(skillsDir)) {
+    for (const entry of fs.readdirSync(skillsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const dashIdx = entry.name.indexOf('--');
+      if (dashIdx === -1) continue;
+      const pluginName = entry.name.slice(0, dashIdx);
+      if (!activePlugins.has(pluginName)) {
+        orphans.push(entry.name);
+      }
+    }
+  }
+
+  return { agent, version, orphans: Array.from(new Set(orphans)).sort() };
 }
 
 export function iterPluginsCapableVersions(filter?: { agent?: AgentId; version?: string }): Array<{ agent: AgentId; version: string }> {
