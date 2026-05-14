@@ -84,6 +84,20 @@ When to use:
   - Team onboarding: share rules via 'agents rules add gh:team/standards'
   - Project setup: add project-specific rules with '--scope project'
   - Version testing: install different rule sets per version to A/B test approaches
+
+Project rules & @-imports:
+  Project rules live in <repo>/.agents/rules/. On every agent launch, the shim compiles
+  them into <repo>/AGENTS.md (with CLAUDE.md, GEMINI.md, .cursorrules symlinked to it).
+  A hand-authored AGENTS.md is preserved — the compile pipeline only overwrites files
+  it owns (those starting with the auto-compile header). Delete the file to migrate.
+
+  @path imports inside AGENTS.md/CLAUDE.md are resolved at session start by the agent
+  itself, not by agents-cli. Support is per-agent:
+    Inlined natively:  claude, gemini
+    Literal text:      codex, cursor, opencode, copilot, amp, kiro, goose, roo
+
+  For rules that need to work across all agents, inline the content rather than using
+  @-imports — the second group will load '@path/to/file.md' as a literal string.
 `);
 
   rulesCmd
