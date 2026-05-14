@@ -57,6 +57,7 @@ interface ExecCommandActionOptions {
   secrets: string[];
   noAutoSecrets?: boolean;
   json?: boolean;
+  quiet?: boolean;
   headless?: boolean;
   interactive?: boolean;
   sessionId?: string;
@@ -113,6 +114,7 @@ export function registerRunCommand(program: Command): void {
       []
     )
     .option('--json', 'Stream events as JSON lines (for parsing by other tools)')
+    .option('--quiet', 'Suppress preamble (rotation banner, "Running:" line). Useful when piping JSON events to a parser.', false)
     .option('--headless', 'Non-interactive mode (auto-enabled when prompt provided)', false)
     .option('-i, --interactive', 'Force interactive mode even when a prompt is provided')
     .option('--session-id <id>', 'Resume a previous conversation (Claude only)')
@@ -327,15 +329,17 @@ Examples:
             const resolved = await resolveRunVersion(agent, strategy, cwd);
             if (resolved.version) {
               version = resolved.version;
-              if (resolved.rotation) {
+              if (resolved.rotation && !options.quiet) {
                 const banner = formatRotationBanner(resolved.rotation, strategy);
                 process.stderr.write(chalk.gray(banner + '\n'));
               }
-            } else {
+            } else if (!options.quiet) {
               process.stderr.write(chalk.yellow(`[agents] strategy ${strategy} found no usable ${agent} version; falling back to defaults\n`));
             }
           } catch (err) {
-            process.stderr.write(chalk.yellow(`[agents] strategy ${strategy} skipped: ${(err as Error).message}\n`));
+            if (!options.quiet) {
+              process.stderr.write(chalk.yellow(`[agents] strategy ${strategy} skipped: ${(err as Error).message}\n`));
+            }
           }
         }
       }
@@ -471,7 +475,9 @@ Examples:
       }
 
       const cmd = buildExecCommand(execOptions);
-      process.stderr.write(chalk.gray(`Running: ${cmd.join(' ')}\n\n`));
+      if (!options.quiet) {
+        process.stderr.write(chalk.gray(`Running: ${cmd.join(' ')}\n\n`));
+      }
 
       try {
         let exitCode: number;

@@ -16,10 +16,10 @@ import { randomUUID } from 'crypto';
 import { resolveAgentsDir } from './persistence.js';
 import { normalizeEvents, AgentType } from './parsers.js';
 import { debug } from './debug.js';
-import { buildReasoningFlags } from '../models.js';
 import { setGeminiAutoUpdateDisabled, updateGeminiSettings } from '../gemini-settings.js';
 import type { AgentId } from '../types.js';
 import { getAgentsDir as getSystemAgentsDir } from '../state.js';
+import { AGENTS } from '../agents.js';
 
 let lastMemoryWarnAt = 0;
 
@@ -179,108 +179,13 @@ export function captureProcessStartTime(pid: number): string | null {
   }
 }
 
-// Base commands for plan mode (read-only). applyEditMode / applyFullMode
-// rewrite these for write-capable modes. Each agent's read-only flag MUST be
-// here so a plan-mode teammate truly cannot write — even if the teammate
-// prompt tries to ignore the instruction. See agents.test.ts for the contract.
-export const AGENT_COMMANDS: Record<AgentType, string[]> = {
-  codex: ['codex', 'exec', '--sandbox', 'read-only', '{prompt}', '--json'],
-  cursor: ['cursor-agent', '-p', '--output-format', 'stream-json', '{prompt}'],
-  gemini: ['gemini', '{prompt}', '--output-format', 'stream-json', '--approval-mode', 'plan'],
-  claude: ['claude', '-p', '--verbose', '{prompt}', '--output-format', 'stream-json', '--permission-mode', 'plan'],
-  opencode: ['opencode', 'run', '--format', 'json', '{prompt}'],
-};
+/** Agent types the team runner supports. */
+const TEAM_AGENT_TYPES: AgentType[] = ['codex', 'cursor', 'gemini', 'claude', 'opencode'];
 
 /**
- * Rewrite a plan-mode command into edit mode (writes inside cwd allowed,
- * approval prompts may still appear). Pure function — exported for tests.
- */
-export function applyEditMode(agentType: AgentType, cmd: string[]): string[] {
-  const editCmd: string[] = [...cmd];
-
-  switch (agentType) {
-    case 'codex': {
-      // Swap --sandbox read-only -> --sandbox workspace-write so the codex
-      // sandbox actually permits writes. --full-auto then disables approvals.
-      const sandboxIndex = editCmd.indexOf('--sandbox');
-      if (sandboxIndex !== -1 && sandboxIndex + 1 < editCmd.length) {
-        editCmd[sandboxIndex + 1] = 'workspace-write';
-      }
-      editCmd.push('--full-auto');
-      break;
-    }
-
-    case 'cursor':
-      editCmd.push('-f');
-      break;
-
-    case 'gemini': {
-      const approvalIndex = editCmd.indexOf('--approval-mode');
-      if (approvalIndex !== -1) {
-        editCmd.splice(approvalIndex, 2);
-      }
-      editCmd.push('--yolo');
-      break;
-    }
-
-    case 'claude': {
-      const permModeIndex = editCmd.indexOf('--permission-mode');
-      if (permModeIndex !== -1 && permModeIndex + 1 < editCmd.length) {
-        editCmd[permModeIndex + 1] = 'acceptEdits';
-      }
-      break;
-    }
-  }
-
-  return editCmd;
-}
-
-/**
- * Rewrite a plan-mode command into full mode (writes + approval gates
- * bypassed). Pure function — exported for tests.
- */
-export function applyFullMode(agentType: AgentType, cmd: string[]): string[] {
-  const fullCmd: string[] = [...cmd];
-
-  switch (agentType) {
-    case 'codex': {
-      const sandboxIndex = fullCmd.indexOf('--sandbox');
-      if (sandboxIndex !== -1 && sandboxIndex + 1 < fullCmd.length) {
-        fullCmd[sandboxIndex + 1] = 'workspace-write';
-      }
-      fullCmd.push('--full-auto');
-      break;
-    }
-
-    case 'cursor':
-      fullCmd.push('-f');
-      break;
-
-    case 'gemini': {
-      const approvalIndex = fullCmd.indexOf('--approval-mode');
-      if (approvalIndex !== -1) {
-        fullCmd.splice(approvalIndex, 2);
-      }
-      fullCmd.push('--yolo');
-      break;
-    }
-
-    case 'claude': {
-      const permModeIndex = fullCmd.indexOf('--permission-mode');
-      if (permModeIndex !== -1) {
-        fullCmd.splice(permModeIndex, 2);
-      }
-      fullCmd.push('--dangerously-skip-permissions');
-      break;
-    }
-  }
-
-  return fullCmd;
-}
-
-/**
- * Reasoning-intensity knob wired into buildReasoningFlags.
- * Does not select a model; use --model separately to pin a specific model per teammate.
+ * Reasoning-intensity knob. Passed through to `agents run --effort`, which
+ * translates it into per-agent reasoning flags (claude --effort, codex
+ * model_reasoning_effort override). Mode (plan/edit/full) is a separate knob.
  */
 export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'auto';
 
@@ -416,12 +321,11 @@ export async function ensureGeminiPlanMode(): Promise<void> {
 
 /** Check whether the CLI binary for a given agent type exists in PATH. Returns [available, pathOrError]. */
 export function checkCliAvailable(agentType: AgentType): [boolean, string | null] {
-  const cmdTemplate = AGENT_COMMANDS[agentType];
-  if (!cmdTemplate) {
+  const executable = AGENTS[agentType as AgentId]?.cliCommand;
+  if (!executable) {
     return [false, `Unknown agent type: ${agentType}`];
   }
 
-  const executable = cmdTemplate[0];
   try {
     const whichPath = execSync(`which ${executable}`, { encoding: 'utf-8' }).trim();
     return [true, whichPath];
@@ -433,7 +337,7 @@ export function checkCliAvailable(agentType: AgentType): [boolean, string | null
 /** Check availability of all known agent CLIs. Returns a map of agent type to install status. */
 export function checkAllClis(): Record<string, { installed: boolean; path: string | null; error: string | null }> {
   const results: Record<string, { installed: boolean; path: string | null; error: string | null }> = {};
-  for (const agentType of Object.keys(AGENT_COMMANDS) as AgentType[]) {
+  for (const agentType of TEAM_AGENT_TYPES) {
     const [available, pathOrError] = checkCliAvailable(agentType);
     if (available) {
       results[agentType] = { installed: true, path: pathOrError, error: null };
@@ -1306,11 +1210,9 @@ export class AgentManager {
       resolvedModel,
       agent.cwd,
       agent.agentId,
-      effort
+      effort,
+      agent.version,
     );
-    if (agent.version && cmd.length > 0) {
-      cmd[0] = `${cmd[0]}@${agent.version}`;
-    }
 
     debug(`Launching ${agent.agentType} agent ${agent.agentId} [${agent.mode}]: ${cmd.slice(0, 3).join(' ')}...`);
 
@@ -1395,6 +1297,13 @@ export class AgentManager {
     return launched;
   }
 
+  /**
+   * Build the argv to spawn for a teammate. Delegates to `agents run` so the
+   * agent's CLI flags, version routing, mode handling (plan/edit/full), model
+   * injection, and reasoning-intensity flags are owned by a single canonical
+   * exec path (src/lib/exec.ts). The team runner just supplies prompt + mode
+   * and reads stream-json events off stdout.
+   */
   private buildCommand(
     agentType: AgentType,
     prompt: string,
@@ -1402,107 +1311,56 @@ export class AgentManager {
     model: string | null,
     cwd: string | null = null,
     sessionId: string | null = null,
-    effort: EffortLevel = 'medium'
+    effort: EffortLevel = 'medium',
+    version: string | null = null,
   ): string[] {
-    const cmdTemplate = AGENT_COMMANDS[agentType];
-    if (!cmdTemplate) {
-      throw new Error(`Unknown agent type: ${agentType}`);
-    }
-
-    const isEditMode = mode === 'edit';
-
-    // Build the full prompt with prefix (for plan mode) and suffix
+    // Compose the prompt: a plan-mode prefix for Claude (clarifying headless
+    // plan-mode restrictions) and a universal summary suffix. These are
+    // team-specific prompt scaffolding — `agents run` does not apply them.
     let fullPrompt = prompt + PROMPT_SUFFIX;
-
-    // For Claude in plan mode, add prefix explaining headless plan mode restrictions
-    if (agentType === 'claude' && !isEditMode) {
+    if (agentType === 'claude' && mode !== 'edit') {
       fullPrompt = CLAUDE_PLAN_MODE_PREFIX + fullPrompt;
     }
 
-    let cmd = cmdTemplate.map(part => part.replace('{prompt}', fullPrompt));
+    const target = version ? `${agentType}@${version}` : agentType;
+    const agentsCli = process.argv[1];
 
-    if (agentType === 'claude') {
-      // Grant access to the working directory.
-      if (cwd) {
-        cmd.push('--add-dir', cwd);
-      }
+    const cmd: string[] = [
+      process.execPath,
+      agentsCli,
+      'run',
+      target,
+      fullPrompt,
+      '--mode', mode,
+      '--effort', effort,
+      '--json',
+      '--headless',
+      '--quiet',
+    ];
 
-      // Pin Claude's session UUID to our agent_id so the session file lands
-      // at ~/.claude/projects/.../<agent_id>.jsonl — unified identity.
-      if (sessionId) {
-        cmd.push('--session-id', sessionId);
-      }
-      // Note: we deliberately do NOT pass --settings here. The agents-cli
-      // shim exports CLAUDE_CONFIG_DIR scoped to the version being spawned,
-      // which makes Claude read settings.json, commands/, skills/, hooks/,
-      // and MCP config from that version's home. Passing a fixed
-      // ~/.claude/settings.json would override that and bind settings to the
-      // *default* version rather than the one this teammate is running.
+    if (model) cmd.push('--model', model);
+    if (cwd) cmd.push('--cwd', cwd);
+
+    // Pin Claude's session UUID to our agent_id so its session file lands at
+    // ~/.claude/projects/.../<agent_id>.jsonl — unified identity for status polling.
+    if (agentType === 'claude' && sessionId) {
+      cmd.push('--session-id', sessionId);
     }
 
+    // Claude: grant access to the teammate's working directory.
+    if (agentType === 'claude' && cwd) {
+      cmd.push('--add-dir', cwd);
+    }
+
+    // Codex's workspace-write sandbox blocks writes outside cwd. Factory
+    // teammates need to run further `agents teams add` commands, which
+    // write to ~/.agents/. Grant that root so subprocess-issued
+    // `agents teams add` calls hit the real store.
     if (agentType === 'codex') {
-      // Codex's workspace-write sandbox blocks writes outside cwd. Factory
-      // teammates need to run further `agents teams add` commands,
-      // which write to ~/.agents/. Grant that root so subprocess-issued
-      // `agents teams add` calls hit the real store instead of the tmp
-      // fallback (which the supervisor does not watch).
       cmd.push('--add-dir', getSystemAgentsDir());
     }
 
-    // Add model flag for each agent type only when the teammate has a pinned
-    // model. When null, the agent's CLI picks its own default.
-    if (model) {
-      if (agentType === 'codex') {
-        const execIndex = cmd.indexOf('exec');
-        const sandboxIndex = cmd.indexOf('--sandbox');
-        const insertIndex = sandboxIndex !== -1 ? sandboxIndex : execIndex + 1;
-        cmd.splice(insertIndex, 0, '--model', model);
-      } else if (agentType === 'cursor') {
-        cmd.push('--model', model);
-      } else if (agentType === 'gemini' || agentType === 'claude') {
-        cmd.push('--model', model);
-      } else if (agentType === 'opencode') {
-        cmd.push('--model', model);
-      }
-    }
-
-    if (agentType === 'opencode') {
-      const opencodeAgent = mode === 'edit' || mode === 'full' ? 'build' : 'plan';
-      const promptIndex = cmd.indexOf(fullPrompt);
-      if (promptIndex !== -1) {
-        cmd.splice(promptIndex + 1, 0, '--agent', opencodeAgent);
-      }
-    }
-
-    // Inject reasoning-intensity flags for agents that support them. Claude
-    // gets --effort appended; Codex gets `-c model_reasoning_effort=...`
-    // inserted before `exec` so it's parsed as a global config override.
-    const reasoningFlags = buildReasoningFlags(agentType as AgentId, effort);
-    if (reasoningFlags.length > 0) {
-      if (agentType === 'codex') {
-        const execIndex = cmd.indexOf('exec');
-        const insertIndex = execIndex !== -1 ? execIndex : 1;
-        cmd.splice(insertIndex, 0, ...reasoningFlags);
-      } else {
-        cmd.push(...reasoningFlags);
-      }
-    }
-
-    if (mode === 'full') {
-      cmd = this.applyFullMode(agentType, cmd);
-    } else if (isEditMode) {
-      cmd = this.applyEditMode(agentType, cmd);
-    }
-
     return cmd;
-  }
-
-  private applyEditMode(agentType: AgentType, cmd: string[]): string[] {
-    return applyEditMode(agentType, cmd);
-  }
-
-  private applyFullMode(agentType: AgentType, cmd: string[]): string[] {
-    return applyFullMode(agentType, cmd);
   }
 
   async get(agentId: string): Promise<AgentProcess | null> {

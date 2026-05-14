@@ -11,7 +11,6 @@ export {
   AgentProcess,
   AgentStatus,
   VALID_TASK_TYPES,
-  AGENT_COMMANDS,
   computePathLCA,
   checkAllClis,
   checkCliAvailable,
