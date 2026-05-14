@@ -430,4 +430,50 @@ describe('runMigration', () => {
       expect(proc.stderr.toString('utf-8')).toContain('mystery-leftover');
     });
   });
+
+  describe('plugins/ — user-authored resource at user-root (issue #20)', () => {
+    it('does NOT move ~/.agents/plugins/ into ~/.agents/.cache/plugins/', () => {
+      const pluginDir = path.join(userDir, 'plugins', 'rush', '.claude-plugin');
+      fs.mkdirSync(pluginDir, { recursive: true });
+      fs.writeFileSync(path.join(pluginDir, 'plugin.json'), '{"name":"rush","version":"1.0.0"}');
+      fs.writeFileSync(path.join(userDir, 'plugins', 'rush', 'SKILL.md'), 'user-authored');
+
+      runRealMigration();
+
+      expect(fs.readFileSync(path.join(userDir, 'plugins', 'rush', 'SKILL.md'), 'utf-8')).toBe('user-authored');
+      expect(fs.readFileSync(path.join(userDir, 'plugins', 'rush', '.claude-plugin', 'plugin.json'), 'utf-8'))
+        .toBe('{"name":"rush","version":"1.0.0"}');
+      expect(fs.existsSync(path.join(userDir, '.cache', 'plugins', 'rush'))).toBe(false);
+    });
+
+    it('moves cached plugins back to user-root for users upgrading from the broken layout', () => {
+      const cachedPlugin = path.join(userDir, '.cache', 'plugins', 'duck');
+      fs.mkdirSync(cachedPlugin, { recursive: true });
+      fs.writeFileSync(path.join(cachedPlugin, 'SKILL.md'), 'cached-content');
+
+      runRealMigration();
+
+      expect(fs.readFileSync(path.join(userDir, 'plugins', 'duck', 'SKILL.md'), 'utf-8')).toBe('cached-content');
+      expect(fs.existsSync(path.join(userDir, '.cache', 'plugins', 'duck'))).toBe(false);
+    });
+
+    it('preserves the user-root copy when both locations exist (user wins)', () => {
+      const userPlugin = path.join(userDir, 'plugins', 'rush');
+      const cachedPlugin = path.join(userDir, '.cache', 'plugins', 'rush');
+      fs.mkdirSync(userPlugin, { recursive: true });
+      fs.mkdirSync(cachedPlugin, { recursive: true });
+      fs.writeFileSync(path.join(userPlugin, 'SKILL.md'), 'user-version');
+      fs.writeFileSync(path.join(cachedPlugin, 'SKILL.md'), 'cached-version');
+      fs.writeFileSync(path.join(cachedPlugin, 'OLD.md'), 'cached-only');
+
+      runRealMigration();
+
+      // User-root copy is untouched.
+      expect(fs.readFileSync(path.join(userPlugin, 'SKILL.md'), 'utf-8')).toBe('user-version');
+      expect(fs.existsSync(path.join(userPlugin, 'OLD.md'))).toBe(false);
+      // Cache copy is left intact so the user can recover anything they missed.
+      expect(fs.readFileSync(path.join(cachedPlugin, 'SKILL.md'), 'utf-8')).toBe('cached-version');
+      expect(fs.readFileSync(path.join(cachedPlugin, 'OLD.md'), 'utf-8')).toBe('cached-only');
+    });
+  });
 });

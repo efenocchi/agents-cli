@@ -1,10 +1,12 @@
 /**
  * Plugin discovery, validation, and syncing.
  *
- * Plugins are bundles in ~/.agents/.cache/plugins/ that package skills, hooks,
+ * Plugins are bundles in ~/.agents/plugins/ that package skills, hooks,
  * commands, agents, bin scripts, MCP servers, and settings under a single
- * manifest (plugin.json). This module discovers plugins, validates their
- * manifests, and syncs their contents into agent version homes.
+ * manifest (plugin.json). They are user-authored resources, sitting alongside
+ * skills/, commands/, hooks/, etc. — git-tracked as source of truth. This
+ * module discovers plugins, validates their manifests, and syncs their
+ * contents into agent version homes.
  */
 
 import * as fs from 'fs';
@@ -21,7 +23,7 @@ const USER_CONFIG_FILE = '.user-config.json';
 const SOURCE_FILE = '.source';
 
 /**
- * Discover all plugins in ~/.agents/.cache/plugins/.
+ * Discover all plugins in ~/.agents/plugins/.
  * A valid plugin has a .claude-plugin/plugin.json manifest.
  */
 export function discoverPlugins(): DiscoveredPlugin[] {
@@ -1239,7 +1241,7 @@ export function parseInstallSpec(spec: string): { name: string | null; source: s
 
 /**
  * Install a plugin from a git URL or local path.
- * Clones/copies to ~/.agents/.cache/plugins/<name>/.
+ * Clones/copies to ~/.agents/plugins/<name>/.
  * Returns the installed plugin name and root path.
  */
 export async function installPlugin(spec: string): Promise<{ name: string; root: string; isNew: boolean }> {

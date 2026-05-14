@@ -81,7 +81,9 @@ const TRASH_DIR = path.join(HISTORY_DIR, 'trash');
 const SHIMS_DIR = path.join(CACHE_DIR, 'shims');
 const BIN_DIR = path.join(CACHE_DIR, 'bin');
 const PACKAGES_DIR = path.join(CACHE_DIR, 'packages');
-const PLUGINS_DIR = path.join(CACHE_DIR, 'plugins');
+// Plugins are user-authored resources, alongside skills/, commands/, hooks/.
+// They live at the user-root so they're git-tracked as source of truth.
+const PLUGINS_DIR = path.join(USER_AGENTS_DIR, 'plugins');
 const CLOUD_DIR = path.join(CACHE_DIR, 'cloud');
 const DRIVE_DIR = path.join(CACHE_DIR, 'drive');
 const TERMINALS_DIR = path.join(CACHE_DIR, 'terminals');
@@ -316,7 +318,7 @@ export function getBinDir(): string { return BIN_DIR; }
 /** Path to config backups (~/.agents/.history/backups/). */
 export function getBackupsDir(): string { return BACKUPS_DIR; }
 
-/** Path to plugin bundles (~/.agents/.cache/plugins/). */
+/** Path to plugin bundles (~/.agents/plugins/) — user-authored resource. */
 export function getPluginsDir(): string { return PLUGINS_DIR; }
 
 /** Path to synced remote session data (~/.agents/.cache/drive/). */

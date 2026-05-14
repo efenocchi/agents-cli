@@ -676,13 +676,60 @@ function migrateRuntimeToHistory(): void {
 }
 
 /**
+ * Restore plugins from the cache bucket back to the user-root.
+ *
+ * Earlier releases moved ~/.agents/plugins/ → ~/.agents/.cache/plugins/ as part
+ * of `migrateRuntimeToCache`. That was wrong: plugins are user-authored
+ * resources (alongside skills/, commands/, hooks/) and belong at the user-root
+ * so they're git-tracked. See issue #20.
+ *
+ * For each ~/.agents/.cache/plugins/<name>/ that the user already has at
+ * ~/.agents/plugins/<name>/, the cache copy is left alone — the user-root copy
+ * wins. For plugins only present in the cache, the directory is moved back to
+ * the user-root. Idempotent.
+ */
+function migratePluginsBackToUserRoot(): void {
+  const cachePlugins = path.join(CACHE_DIR, 'plugins');
+  const userPlugins = path.join(USER_DIR, 'plugins');
+  if (!fs.existsSync(cachePlugins)) return;
+
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(cachePlugins, { withFileTypes: true });
+  } catch { return; }
+
+  try {
+    fs.mkdirSync(userPlugins, { recursive: true, mode: 0o700 });
+  } catch { return; }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const src = path.join(cachePlugins, entry.name);
+    const dest = path.join(userPlugins, entry.name);
+    if (fs.existsSync(dest)) continue;
+    try {
+      fs.renameSync(src, dest);
+    } catch {
+      try {
+        copyDirSkipExisting(src, dest);
+        fs.rmSync(src, { recursive: true, force: true });
+      } catch { /* best-effort */ }
+    }
+  }
+
+  // Drop the cache plugins dir if we emptied it.
+  try {
+    if (fs.readdirSync(cachePlugins).length === 0) fs.rmdirSync(cachePlugins);
+  } catch { /* best-effort */ }
+}
+
+/**
  * Move regenerable runtime data into ~/.agents/.cache/.
  *
  * Sources cleared:
  *   ~/.agents/shims/         -> ~/.agents/.cache/shims/
  *   ~/.agents/bin/           -> ~/.agents/.cache/bin/
  *   ~/.agents/packages/      -> ~/.agents/.cache/packages/
- *   ~/.agents/plugins/       -> ~/.agents/.cache/plugins/
  *   ~/.agents/cloud/         -> ~/.agents/.cache/cloud/
  *   ~/.agents/drive/         -> ~/.agents/.cache/drive/
  *   ~/.agents/terminals/     -> ~/.agents/.cache/terminals/
@@ -707,7 +754,10 @@ function migrateRuntimeToCache(): void {
   moveDirOnce(path.join(USER_DIR, 'shims'), path.join(CACHE_DIR, 'shims'));
   moveDirOnce(path.join(USER_DIR, 'bin'), path.join(CACHE_DIR, 'bin'));
   moveDirOnce(path.join(USER_DIR, 'packages'), path.join(CACHE_DIR, 'packages'));
-  moveDirOnce(path.join(USER_DIR, 'plugins'), path.join(CACHE_DIR, 'plugins'));
+  // ~/.agents/plugins/ is intentionally NOT migrated — it is user-authored
+  // content (git-tracked), alongside skills/, commands/, hooks/. The reverse
+  // migration `migratePluginsBackToUserRoot` reclaims any plugins/ that prior
+  // releases moved into ~/.agents/.cache/plugins/. See issue #20.
   moveDirOnce(path.join(USER_DIR, 'cloud'), path.join(CACHE_DIR, 'cloud'));
   moveDirOnce(path.join(USER_DIR, 'drive'), path.join(CACHE_DIR, 'drive'));
   // terminals/ stays at the top level: the agents-cli IDE extension publishes
@@ -1282,6 +1332,10 @@ export async function runMigration(): Promise<void> {
   // Bucket moves: collapse runtime state into ~/.agents/.history and ~/.agents/.cache.
   migrateRuntimeToHistory();
   migrateRuntimeToCache();
+  // Restore plugins (user-authored) from cache back to user-root. Runs AFTER
+  // migrateRuntimeToCache so any legacy plugins/ still at the user-root from
+  // very-old layouts have already been handled.
+  migratePluginsBackToUserRoot();
 
   // System-repo sweep: move every remaining operational dir into its canonical
   // user-bucket location, then drop known-dead artifacts and warn about
