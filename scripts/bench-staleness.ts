@@ -45,6 +45,16 @@ const iters   = Number(flags.iters ?? '50');
 function ns(): bigint { return process.hrtime.bigint(); }
 function us(d: bigint): number { return Number(d) / 1000; }
 
+const fmt = (v: number) => v < 1000 ? `${v.toFixed(1)}µs` : `${(v / 1000).toFixed(2)}ms`;
+
+/** Time a function once with no warmup — measures the cold path. */
+function benchCold(label: string, fn: () => void): void {
+  const t = ns();
+  fn();
+  const cold = us(ns() - t);
+  console.log(`  ${label.padEnd(36)} cold=${fmt(cold)}`);
+}
+
 function bench(label: string, fn: () => void, n = iters): void {
   // warmup
   fn(); fn(); fn();
@@ -60,7 +70,6 @@ function bench(label: string, fn: () => void, n = iters): void {
   const median = samples[Math.floor(n * 0.5)];
   const p95 = samples[Math.floor(n * 0.95)];
   const mean = samples.reduce((s, v) => s + v, 0) / n;
-  const fmt = (v: number) => v < 1000 ? `${v.toFixed(1)}µs` : `${(v / 1000).toFixed(2)}ms`;
   console.log(
     `  ${label.padEnd(36)} ` +
     `min=${fmt(min).padEnd(8)} ` +
@@ -97,9 +106,20 @@ bench('  build', () => { m = buildManifest(agent, version, cwd); });
 saveManifest(agent, version, m!);
 console.log();
 
-// 2. isStale (warm, clean) — the hot path we care about most
-console.log('isStale (warm, clean — nothing has changed):');
+// 2a. isStale cold — first call in a fresh process. This is what the
+// 50-concurrent-agent burst case pays for each process. The layer
+// memoization is cold here; subsequent calls within the same process get
+// the warm path measured below.
+console.log('isStale (cold — first call in a fresh process):');
 const loaded = loadManifest(agent, version)!;
+// Reset module-level layer cache before the cold measurement.
+const { clearLayerCache } = await import('../src/lib/staleness/layers.js');
+clearLayerCache();
+benchCold('  isStale (cold first call)', () => { isStale(loaded, agent, version, cwd); });
+console.log();
+
+// 2b. isStale (warm, clean) — subsequent calls in the same process
+console.log('isStale (warm, clean — within same process):');
 bench('  isStale (clean)', () => { isStale(loaded, agent, version, cwd); });
 console.log();
 

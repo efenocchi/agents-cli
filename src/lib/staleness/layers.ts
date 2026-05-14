@@ -32,8 +32,34 @@ export interface Layer {
   alias?: string;
 }
 
+// ─── Per-process memoization ─────────────────────────────────────────────────
+//
+// `firstWinsLayers(cwd)` and `hookLayers()` get called from every checker for
+// every resource — easily 50+ times per `isStale` call. Each call invokes
+// `getProjectAgentsDir(cwd)` (walks up the filesystem) and `getEnabledExtraRepos()`
+// (reads agents.yaml). Memoizing at process scope eliminates the redundancy.
+//
+// Safety: in a CLI invocation, neither cwd nor the user/system base dirs
+// change mid-process, so the cache is always correct. Tests that exercise
+// different HOMEs/cwds run in separate subprocesses (per `_harness.ts`), so
+// the module's process-scope cache resets between scenarios.
+//
+// `clearLayerCache()` is exposed for tests or long-running daemons that need
+// to force re-discovery.
+
+const firstWinsCache = new Map<string, Layer[]>();
+let hookLayersCache: Layer[] | null = null;
+
+export function clearLayerCache(): void {
+  firstWinsCache.clear();
+  hookLayersCache = null;
+}
+
 /** All layers a "first-wins with project" resource consults, in precedence order. */
 export function firstWinsLayers(cwd: string): Layer[] {
+  const cached = firstWinsCache.get(cwd);
+  if (cached) return cached;
+
   const layers: Layer[] = [];
   const project = getProjectAgentsDir(cwd);
   if (project) layers.push({ scope: 'project', base: project });
@@ -42,17 +68,21 @@ export function firstWinsLayers(cwd: string): Layer[] {
   for (const extra of getEnabledExtraRepos()) {
     layers.push({ scope: 'extra', base: extra.dir, alias: extra.alias });
   }
+  firstWinsCache.set(cwd, layers);
   return layers;
 }
 
 /** Hooks-only: layers excluding project (security exclusion). */
 export function hookLayers(): Layer[] {
+  if (hookLayersCache) return hookLayersCache;
+
   const layers: Layer[] = [];
   layers.push({ scope: 'user',   base: getUserAgentsDir() });
   layers.push({ scope: 'system', base: getAgentsDir() });
   for (const extra of getEnabledExtraRepos()) {
     layers.push({ scope: 'extra', base: extra.dir, alias: extra.alias });
   }
+  hookLayersCache = layers;
   return layers;
 }
 
