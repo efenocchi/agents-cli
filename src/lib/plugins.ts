@@ -72,6 +72,9 @@ export function buildDiscoveredPlugin(pluginRoot: string, manifest: PluginManife
     commands: discoverPluginCommands(pluginRoot),
     agentDefs: discoverPluginAgentDefs(pluginRoot),
     bin: discoverPluginBin(pluginRoot),
+    mcpServers: discoverPluginMcpServers(pluginRoot),
+    lspServers: discoverPluginLspServers(pluginRoot),
+    monitors: discoverPluginMonitors(pluginRoot),
     hasMcp: fs.existsSync(path.join(pluginRoot, '.mcp.json')),
     hasSettings: pluginHasNonPermissionSettings(pluginRoot),
   };
@@ -176,6 +179,43 @@ export function discoverPluginBin(pluginRoot: string): string[] {
   if (!fs.existsSync(binDir)) return [];
 
   return fs.readdirSync(binDir).filter(f => !f.startsWith('.'));
+}
+
+/** Discover MCP server names from .mcp.json at the plugin root. */
+export function discoverPluginMcpServers(pluginRoot: string): string[] {
+  const mcpFile = path.join(pluginRoot, '.mcp.json');
+  if (!fs.existsSync(mcpFile)) return [];
+  try {
+    const parsed = JSON.parse(fs.readFileSync(mcpFile, 'utf-8')) as { mcpServers?: Record<string, unknown> };
+    return parsed.mcpServers ? Object.keys(parsed.mcpServers) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Discover LSP server keys from .lsp.json at the plugin root. */
+export function discoverPluginLspServers(pluginRoot: string): string[] {
+  const lspFile = path.join(pluginRoot, '.lsp.json');
+  if (!fs.existsSync(lspFile)) return [];
+  try {
+    const parsed = JSON.parse(fs.readFileSync(lspFile, 'utf-8')) as Record<string, unknown>;
+    return Object.keys(parsed);
+  } catch {
+    return [];
+  }
+}
+
+/** Discover monitor names from monitors/monitors.json. */
+export function discoverPluginMonitors(pluginRoot: string): string[] {
+  const monitorsFile = path.join(pluginRoot, 'monitors', 'monitors.json');
+  if (!fs.existsSync(monitorsFile)) return [];
+  try {
+    const parsed = JSON.parse(fs.readFileSync(monitorsFile, 'utf-8')) as Array<{ name?: string }>;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map(m => m.name).filter((n): n is string => typeof n === 'string');
+  } catch {
+    return [];
+  }
 }
 
 /** Return true if settings.json contains non-permission keys worth merging. */

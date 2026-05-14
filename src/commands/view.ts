@@ -710,14 +710,19 @@ async function showAgentResources(agentId: AgentId, requestedVersion: string): P
       const versionStr = agentData.version ? ` (${agentData.version})` : '';
       const agentHeader = home ? termLink(agentData.agentName, home) : agentData.agentName;
       console.log(`  ${chalk.bold(agentHeader)}${chalk.gray(versionStr)}:`);
+      const pluralize = (n: number, singular: string) => `${n} ${singular}${n === 1 ? '' : 's'}`;
       for (const p of plugins) {
         const linkedName = termLink(p.name, linkTarget(p.root));
         const parts: string[] = [];
-        if (p.skills.length > 0) parts.push(`${p.skills.length} skill${p.skills.length === 1 ? '' : 's'}`);
-        if (p.commands.length > 0) parts.push(`${p.commands.length} command${p.commands.length === 1 ? '' : 's'}`);
-        if (p.hooks.length > 0) parts.push(`${p.hooks.length} hook${p.hooks.length === 1 ? '' : 's'}`);
-        if (p.agentDefs.length > 0) parts.push(`${p.agentDefs.length} subagent${p.agentDefs.length === 1 ? '' : 's'}`);
-        if (p.hasMcp) parts.push('mcp');
+        if (p.skills.length > 0) parts.push(pluralize(p.skills.length, 'skill'));
+        if (p.commands.length > 0) parts.push(pluralize(p.commands.length, 'command'));
+        if (p.agentDefs.length > 0) parts.push(pluralize(p.agentDefs.length, 'subagent'));
+        if (p.hooks.length > 0) parts.push(pluralize(p.hooks.length, 'hook'));
+        if (p.mcpServers.length > 0) parts.push(`${p.mcpServers.length} MCP`);
+        if (p.lspServers.length > 0) parts.push(`${p.lspServers.length} LSP`);
+        if (p.monitors.length > 0) parts.push(pluralize(p.monitors.length, 'monitor'));
+        if (p.bin.length > 0) parts.push(pluralize(p.bin.length, 'bin'));
+        if (p.hasSettings) parts.push('settings');
         const contents = parts.length > 0 ? chalk.gray(` (${parts.join(', ')})`) : '';
         console.log(`    ${chalk.cyan(linkedName)}${contents} ${chalk.cyan('[user]')}`);
       }
