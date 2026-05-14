@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.19.0
+## 1.18.3
 
 **Plugins** ([#22](https://github.com/phnx-labs/agents-cli/issues/22))
 
