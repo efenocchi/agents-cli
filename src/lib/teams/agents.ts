@@ -202,7 +202,7 @@ const CLAUDE_PLAN_MODE_PREFIX = `You are running in HEADLESS PLAN MODE. This mod
 
 `;
 
-const VALID_MODES = ['plan', 'edit', 'full'] as const;
+const VALID_MODES = ['plan', 'edit', 'full', 'auto'] as const;
 type Mode = typeof VALID_MODES[number];
 
 function normalizeModeValue(modeValue: string | null | undefined): Mode | null {

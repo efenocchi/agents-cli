@@ -139,6 +139,7 @@ export const AGENT_COMMANDS: Record<AgentId, AgentCommandTemplate> = {
       plan: ['--permission-mode', 'plan'],
       edit: ['--permission-mode', 'acceptEdits'],
       full: ['--dangerously-skip-permissions'],
+      auto: ['--permission-mode', 'auto'],
     },
     jsonFlags: ['--output-format', 'stream-json', '--verbose'],
     modelFlag: '--model',
