@@ -258,7 +258,9 @@ describe('AgentProcess: remoteSessionId extraction', () => {
       const mgr = new AgentManager(50, base);
       // First teammate: no deps.
       const a = await mgr.spawn('t', 'claude', 'x', null, 'plan', 'low', null, null, null, 'a');
-      expect(a.status).toBe('running');
+      // Status is 'running' when claude is on PATH; 'failed' when the binary is absent
+      // (e.g. CI). Either is fine — this test is about cycle detection, not launch.
+      expect(['running', 'failed']).toContain(a.status);
       // Note: in a real run we'd launch a process; test uses spawn without
       // worrying about processes since we're about to assert on staging only.
       // Mark a as pending with after=[b] so the cycle check has something to
