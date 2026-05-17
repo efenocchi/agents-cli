@@ -6,9 +6,12 @@ import { fileURLToPath } from 'url';
 import { registerCommandGroups } from '../lib/help.js';
 
 // Help groups — mirror `agents browser` so the mental model carries over.
-// More groups land as we add subcommands.
+// For this first chunk we ship two commands; the structure leaves room
+// for the future "drive the page" / "capture evidence" groups without
+// re-shuffling.
 const COMPUTER_HELP_GROUPS = [
   { title: 'Session lifecycle', names: ['status'] },
+  { title: 'Capture evidence', names: ['screenshot'] },
 ] as const;
 
 export function registerComputerCommand(program: Command): void {
@@ -22,6 +25,7 @@ export function registerComputerCommand(program: Command): void {
 
 export function registerComputerSubcommands(program: Command): void {
   registerStatusCommand(program);
+  registerScreenshotCommand(program);
   registerCommandGroups(program, COMPUTER_HELP_GROUPS);
 }
 
@@ -156,6 +160,78 @@ function registerStatusCommand(program: Command): void {
           console.error('Open System Settings > Privacy & Security > Accessibility and add:');
           console.error(`  ${path.resolve(helperPath, '..', '..', '..')}`);
         }
+      } finally {
+        await client.close();
+      }
+    });
+}
+
+function registerScreenshotCommand(program: Command): void {
+  program
+    .command('screenshot')
+    .description('Capture a JPEG of the frontmost window of a bundle id (default: frontmost app)')
+    .option('--bundle <id>', 'Bundle id to capture (default: bundle id of frontmost app)')
+    .option('--out <path>', 'Output JPEG path', './computer-screenshot.jpg')
+    .option('--quality <n>', 'JPEG quality 1-100', (v) => parseInt(v, 10), 85)
+    .action(async (opts: { bundle?: string; out: string; quality: number }) => {
+      const helperPath = resolveHelperPath();
+      if (!helperPath) reportMissingHelper();
+
+      const quality = Math.max(1, Math.min(100, opts.quality || 85));
+
+      const client = new HelperClient(helperPath);
+      try {
+        // Step 1: list_apps to get the candidate set.
+        const apps = await client.call('list_apps');
+        if (apps.error) {
+          console.error(`error: ${apps.error.code}: ${apps.error.message}`);
+          process.exit(1);
+        }
+        const list = (apps.result?.apps as Array<{
+          pid: number;
+          name: string;
+          bundle_id: string;
+          active: boolean;
+          excluded: boolean;
+        }>) || [];
+
+        // Resolve the target bundle id.
+        let target: typeof list[number] | undefined;
+        if (opts.bundle) {
+          target = list.find((a) => a.bundle_id === opts.bundle);
+          if (!target) {
+            console.error(`bundle not running: ${opts.bundle}`);
+            process.exit(1);
+          }
+        } else {
+          target = list.find((a) => a.active);
+          if (!target) {
+            console.error('no active app found');
+            process.exit(1);
+          }
+        }
+        if (target.excluded) {
+          console.error(`bundle is excluded by deny-list: ${target.bundle_id}`);
+          process.exit(1);
+        }
+
+        // Step 2: screenshot.
+        const shot = await client.call('screenshot', { pid: target.pid, quality });
+        if (shot.error) {
+          console.error(`error: ${shot.error.code}: ${shot.error.message}`);
+          process.exit(1);
+        }
+        const b64 = shot.result?.image_data as string | undefined;
+        const width = shot.result?.width as number | undefined;
+        const height = shot.result?.height as number | undefined;
+        if (!b64) {
+          console.error('helper returned no image_data');
+          process.exit(1);
+        }
+        const buf = Buffer.from(b64, 'base64');
+        const outPath = path.resolve(opts.out);
+        fs.writeFileSync(outPath, buf);
+        console.log(`saved: ${outPath} (${width ?? '?'}x${height ?? '?'}, ${buf.byteLength} bytes)`);
       } finally {
         await client.close();
       }
