@@ -23,6 +23,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as yaml from 'yaml';
+import { ensureLockTarget, atomicWriteFileSync, withFileLock } from './fs-atomic.js';
 import type { Meta, RegistryType } from './types.js';
 import { SEEDED_REGISTRIES } from './types.js';
 
@@ -477,6 +478,34 @@ export function createDefaultMeta(): Meta {
 }
 
 let metaCache: { mtime: number; meta: Meta } | null = null;
+let metaLockDepth = 0;
+
+function withMetaLock<T>(fn: () => T): T {
+  ensureAgentsDir();
+  if (metaLockDepth > 0) {
+    metaLockDepth++;
+    try {
+      return fn();
+    } finally {
+      metaLockDepth--;
+    }
+  }
+  ensureLockTarget(META_FILE, META_HEADER + yaml.stringify(createDefaultMeta()), 0o700);
+  return withFileLock(META_FILE, () => {
+    metaLockDepth = 1;
+    try {
+      return fn();
+    } finally {
+      metaLockDepth = 0;
+    }
+  });
+}
+
+function writeMetaUnlocked(meta: Meta): void {
+  const content = META_HEADER + yaml.stringify(meta);
+  atomicWriteFileSync(META_FILE, content);
+  metaCache = null;
+}
 
 function applyRegistrySeeds(meta: Meta): boolean {
   const seeded = new Set(meta.seededPresets || []);
@@ -611,18 +640,19 @@ export function readMeta(): Meta {
 
 /** Serialize and write agents.yaml to the user repo, invalidating the in-memory cache. */
 export function writeMeta(meta: Meta): void {
-  ensureAgentsDir();
-  const content = META_HEADER + yaml.stringify(meta);
-  fs.writeFileSync(META_FILE, content, 'utf-8');
-  metaCache = null;
+  withMetaLock(() => writeMetaUnlocked(meta));
 }
 
-/** Shallow-merge updates into agents.yaml and return the new state. */
-export function updateMeta(updates: Partial<Meta>): Meta {
-  const meta = readMeta();
-  const newMeta = { ...meta, ...updates };
-  writeMeta(newMeta);
-  return newMeta;
+/** Update agents.yaml under lock and return the new state. */
+export function updateMeta(updates: Partial<Meta> | ((meta: Meta) => Meta)): Meta {
+  return withMetaLock(() => {
+    const meta = readMeta();
+    const newMeta = typeof updates === 'function'
+      ? updates(meta)
+      : { ...meta, ...updates };
+    writeMetaUnlocked(newMeta);
+    return newMeta;
+  });
 }
 
 /** Derive a filesystem-safe local clone path for a package source URL. */
