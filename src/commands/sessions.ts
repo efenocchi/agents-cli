@@ -860,7 +860,7 @@ async function runCloudSessions(query: string | undefined, options: SessionsOpti
   const cachedSpinner = options.json ? null : ora('Fetching session...').start();
   let cachedPath: string;
   try {
-    cachedPath = await ensureCloudSessionCached(meta.id, meta.filePath);
+    cachedPath = await ensureCloudSessionCached(meta.id);
   } catch (err: any) {
     cachedSpinner?.stop();
     console.error(chalk.red(`Failed to fetch session: ${err?.message || err}`));
@@ -1470,7 +1470,7 @@ function formatAbsoluteTime(isoTimestamp: string): string {
 }
 
 function padRight(s: string, width: number): string {
-  return s.length >= width ? s + ' ' : s + ' '.repeat(width - s.length);
+  return s.length >= width ? s : s + ' '.repeat(width - s.length);
 }
 
 function truncate(s: string, max: number): string {
