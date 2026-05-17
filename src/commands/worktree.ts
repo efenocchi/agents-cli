@@ -10,8 +10,11 @@
  *   agents worktree release   <terminal-id>   -> removes if clean + merged
  *   agents worktree prune                     -> removes every clean+merged one
  *
- * Worktrees live at <repo>/.agents/worktrees/<terminal-id>, on a branch
+ * Worktrees live at <repo>/.history/worktrees/<terminal-id>, on a branch
  * named agent/<terminal-id>. The branch starts at HEAD of the parent repo.
+ * .history/ mirrors the agents-cli runtime-state convention at ~/.agents/.history/
+ * but scoped to the repo. .agents/ is reserved for project resources
+ * (skills, hooks, commands) per the agents-cli DotAgents repo layout.
  */
 import type { Command } from 'commander';
 import chalk from 'chalk';
@@ -23,7 +26,7 @@ import * as path from 'path';
 
 const execFileAsync = promisify(execFile);
 
-const WORKTREE_SUBDIR = path.join('.agents', 'worktrees');
+const WORKTREE_SUBDIR = path.join('.history', 'worktrees');
 const BRANCH_PREFIX = 'agent/';
 
 function die(msg: string, code = 1): never {
@@ -190,7 +193,7 @@ export function registerWorktreeCommands(program: Command): void {
   const wt = program
     .command('worktree')
     .description('Provision, release, and prune per-terminal git worktrees for agent isolation.')
-    .addHelpText('after', `\nWorktrees live at <repo>/.agents/worktrees/<terminal-id> on branch agent/<terminal-id>.\n\nExamples:\n  agents worktree provision CC-1747509823-3\n  agents worktree release CC-1747509823-3\n  agents worktree prune --dry-run\n`);
+    .addHelpText('after', `\nWorktrees live at <repo>/.history/worktrees/<terminal-id> on branch agent/<terminal-id>.\n\nExamples:\n  agents worktree provision CC-1747509823-3\n  agents worktree release CC-1747509823-3\n  agents worktree prune --dry-run\n`);
 
   wt.command('provision <terminal-id>')
     .description('Create (or reuse) an isolated worktree for an agent terminal. Prints the absolute path.')
@@ -222,7 +225,7 @@ export function registerWorktreeCommands(program: Command): void {
     });
 
   wt.command('prune')
-    .description('Try to release every agent worktree under .agents/worktrees/. Skips dirty or unpushed ones.')
+    .description('Try to release every agent worktree under .history/worktrees/. Skips dirty or unpushed ones.')
     .option('--root <path>', 'Repo root (defaults to current working directory)')
     .option('--dry-run', 'Report what would be removed without touching anything')
     .action(async (opts: { root?: string; dryRun?: boolean }) => {
