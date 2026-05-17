@@ -461,6 +461,32 @@ function renderFileGroup(lines: string[], groups: Map<string, string[]>, absPath
   }
 }
 
+// ── Recent activity renderer ──────────────────────────────────────────────────
+
+/** Render a single Recent Activity line as `<kind-tag> <label>`, colored by kind. */
+function renderActivityLine(item: {
+  kind: 'edit' | 'cmd' | 'agent' | 'error' | 'msg';
+  label: string;
+  absPath?: string;
+}): string {
+  const MAX = 90;
+  const trim = (s: string): string => (s.length <= MAX ? s : s.slice(0, MAX - 1) + '…');
+  switch (item.kind) {
+    case 'edit': {
+      const linked = item.absPath ? linkPath(item.absPath, item.label) : item.label;
+      return chalk.cyan('Edit ') + ' ' + linked;
+    }
+    case 'cmd':
+      return chalk.yellow('Bash ') + ' ' + chalk.gray(trim(item.label));
+    case 'agent':
+      return chalk.magenta('Agent') + ' ' + trim(item.label);
+    case 'error':
+      return chalk.red('Error') + ' ' + chalk.gray(trim(item.label));
+    case 'msg':
+      return chalk.green('Msg  ') + ' ' + chalk.gray('"' + trim(item.label) + '"');
+  }
+}
+
 // ── Main summary renderer ─────────────────────────────────────────────────────
 
 /**
@@ -493,6 +519,12 @@ export function renderSummary(events: SessionEvent[], cwd?: string): string {
   // Errors
   const errors: Array<{ tool: string; cmd?: string; content?: string }> = [];
 
+  // Recent activity: chronological timeline of interesting events (edits, commands,
+  // subagent spawns, errors, assistant messages). Rendered as the first content
+  // section so the top of the recap reflects what happened most recently.
+  type ActivityKind = 'edit' | 'cmd' | 'agent' | 'error' | 'msg';
+  const recentActivity: Array<{ kind: ActivityKind; label: string; ts: number; absPath?: string }> = [];
+
   // Assistant message count (used to decide whether the session produced any narration)
   let assistantCount = 0;
 
@@ -516,13 +548,17 @@ export function renderSummary(events: SessionEvent[], cwd?: string): string {
             planFilePath = p;
           } else {
             (isInsideCwd(p) || !cwd ? filesModifiedAbs : filesModifiedExternal).add(p);
+            recentActivity.push({ kind: 'edit', label: relativeToCwd(p, cwd), ts, absPath: p });
           }
         }
       }
 
       if (event.command) {
         const cmd = event.command.replace(/\n/g, ' ').trim();
-        if (cmd) cmdList.push({ cmd, ts });
+        if (cmd) {
+          cmdList.push({ cmd, ts });
+          recentActivity.push({ kind: 'cmd', label: cmd, ts });
+        }
       }
 
       // Plan items: TodoWrite items + TaskCreate descriptions (project's task tracker)
@@ -542,18 +578,26 @@ export function renderSummary(events: SessionEvent[], cwd?: string): string {
 
       // Subagent spawns
       if ((tool === 'Agent' || tool === 'Task') && (args.description || args.prompt)) {
-        subagents.push({
-          description: String(args.description || args.prompt || '').slice(0, 120),
-          subagentType: String(args.subagent_type || ''),
-        });
+        const description = String(args.description || args.prompt || '').slice(0, 120);
+        const subagentType = String(args.subagent_type || '');
+        subagents.push({ description, subagentType });
+        const typeSuffix = subagentType ? ` (${subagentType})` : '';
+        recentActivity.push({ kind: 'agent', label: description + typeSuffix, ts });
       }
 
     } else if (event.type === 'error') {
-      errors.push({
+      const err = {
         tool: event.tool || 'unknown',
         cmd: event.args?.command ? String(event.args.command).slice(0, 80) : undefined,
         content: event.content?.slice(0, 120),
-      });
+      };
+      errors.push(err);
+      const errLabel = err.cmd
+        ? `${err.tool} "${err.cmd.slice(0, 60)}"`
+        : err.content
+          ? `${err.tool}: ${err.content.slice(0, 60)}`
+          : err.tool;
+      recentActivity.push({ kind: 'error', label: errLabel, ts });
 
     } else if (event.type === 'message') {
       if (event.role === 'user') {
@@ -567,6 +611,8 @@ export function renderSummary(events: SessionEvent[], cwd?: string): string {
       } else if (event.role === 'assistant' && event.content) {
         lastAssistantMessage = event.content;
         assistantCount++;
+        const preview = event.content.replace(/\s+/g, ' ').trim().slice(0, 100);
+        if (preview) recentActivity.push({ kind: 'msg', label: preview, ts });
       }
 
     } else if (event.type === 'attachment') {
@@ -618,7 +664,19 @@ export function renderSummary(events: SessionEvent[], cwd?: string): string {
 
   if (firstUserMessage || attachments.length > 0) lines.push('');
 
-  // 2. Plan
+  // 2. Recent Activity (first content section — chronological tail of the
+  // session so the top of the recap reflects what happened most recently).
+  if (recentActivity.length > 0) {
+    const RECENT_LIMIT = 7;
+    const tail = recentActivity.slice(-RECENT_LIMIT);
+    lines.push(chalk.bold('Recent Activity') + chalk.gray(` (last ${tail.length} of ${recentActivity.length})`));
+    for (const item of tail) {
+      lines.push('  ' + renderActivityLine(item));
+    }
+    lines.push('');
+  }
+
+  // 3. Plan
   if (todoItems.length > 0 || exitPlanContent || planFilePath) {
     lines.push(chalk.bold('Plan'));
     if (planFilePath) {
@@ -637,7 +695,8 @@ export function renderSummary(events: SessionEvent[], cwd?: string): string {
     lines.push('');
   }
 
-  // 3. Subagents
+  // 4. Subagents (describe attempts — grouped with Plan and Errors above the
+  // file/command deltas because they speak to *what was tried*, not the final state).
   if (subagents.length > 0) {
     lines.push(chalk.bold('Subagents') + chalk.gray(` (${subagents.length})`));
     for (const s of subagents) {
@@ -647,42 +706,9 @@ export function renderSummary(events: SessionEvent[], cwd?: string): string {
     lines.push('');
   }
 
-  // 4. Modified files
-  if (filesModifiedAbs.size > 0) {
-    lines.push(chalk.bold('Modified') + chalk.gray(` (${filesModifiedAbs.size})`));
-    const groups = groupByParentDir(filesModifiedAbs, cwd);
-    renderFileGroup(lines, groups, modifiedAbsMap);
-    lines.push('');
-  }
-
-  // 4b. External edits (files edited outside the project root — typically /tmp)
-  // Filter out plan files (already shown in Plan section)
-  const externalNonPlan = [...filesModifiedExternal].filter(p => !(p.includes('.claude/plans/') && p.endsWith('.md')));
-  if (externalNonPlan.length > 0) {
-    const externalList = externalNonPlan.sort();
-    const home = process.env.HOME ?? '';
-    const display = externalList.slice(0, 3).map(p => home && p.startsWith(home) ? p.replace(home, '~') : p);
-    const more = externalList.length > 3 ? chalk.gray(` +${externalList.length - 3} more`) : '';
-    lines.push(chalk.gray(`External edits (${externalList.length}): ${display.join(', ')}${more}`));
-    lines.push('');
-  }
-
-  // 5. Read files
-  if (filesReadAbs.size > 0) {
-    if (filesReadAbs.size <= 5) {
-      lines.push(chalk.bold('Read') + chalk.gray(` (${filesReadAbs.size})`));
-      const groups = groupByParentDir(filesReadAbs, cwd);
-      renderFileGroup(lines, groups, readAbsMap);
-    } else {
-      lines.push(chalk.bold('Read') + chalk.gray(` ${filesReadAbs.size} other files`));
-    }
-    lines.push('');
-  }
-
-  // 6. Commands
-  renderCommandsSection(cmdList, lines);
-
-  // 7. Errors
+  // 5. Errors (moved up from the bottom: it describes failed attempts, not the
+  // session's final state. Sitting at the bottom previously made early errors
+  // look recent, which confused readers.)
   if (errors.length > 0) {
     const first = errors[0];
     const firstDesc = first.cmd
@@ -696,6 +722,41 @@ export function renderSummary(events: SessionEvent[], cwd?: string): string {
     );
     lines.push('');
   }
+
+  // 6. Modified files
+  if (filesModifiedAbs.size > 0) {
+    lines.push(chalk.bold('Modified') + chalk.gray(` (${filesModifiedAbs.size})`));
+    const groups = groupByParentDir(filesModifiedAbs, cwd);
+    renderFileGroup(lines, groups, modifiedAbsMap);
+    lines.push('');
+  }
+
+  // 6b. External edits (files edited outside the project root — typically /tmp)
+  // Filter out plan files (already shown in Plan section)
+  const externalNonPlan = [...filesModifiedExternal].filter(p => !(p.includes('.claude/plans/') && p.endsWith('.md')));
+  if (externalNonPlan.length > 0) {
+    const externalList = externalNonPlan.sort();
+    const home = process.env.HOME ?? '';
+    const display = externalList.slice(0, 3).map(p => home && p.startsWith(home) ? p.replace(home, '~') : p);
+    const more = externalList.length > 3 ? chalk.gray(` +${externalList.length - 3} more`) : '';
+    lines.push(chalk.gray(`External edits (${externalList.length}): ${display.join(', ')}${more}`));
+    lines.push('');
+  }
+
+  // 7. Read files
+  if (filesReadAbs.size > 0) {
+    if (filesReadAbs.size <= 5) {
+      lines.push(chalk.bold('Read') + chalk.gray(` (${filesReadAbs.size})`));
+      const groups = groupByParentDir(filesReadAbs, cwd);
+      renderFileGroup(lines, groups, readAbsMap);
+    } else {
+      lines.push(chalk.bold('Read') + chalk.gray(` ${filesReadAbs.size} other files`));
+    }
+    lines.push('');
+  }
+
+  // 8. Commands
+  renderCommandsSection(cmdList, lines);
 
   // 9. Final message
   if (lastAssistantMessage) {
