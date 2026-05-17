@@ -739,4 +739,93 @@ describe('renderSummary', () => {
     expect(out).toContain('src/lib/render.ts');
     expect(out).not.toContain('/project/src/lib/render.ts');
   });
+
+  // ── Recent Activity & section ordering ──────────────────────────────────────
+  // These cover the lineage fix: temporally-near events appear in a chronological
+  // tail at the top, and Errors live above Modified/Read/Commands rather than at
+  // the bottom (where they used to look misleadingly recent).
+
+  it('renders Recent Activity as the first content section', () => {
+    const events: SessionEvent[] = [
+      makeEvent({ role: 'user', content: 'do the thing' }),
+      makeEvent({ type: 'tool_use', tool: 'Edit', args: { file_path: '/p/src/a.ts' }, path: '/p/src/a.ts' }),
+      makeEvent({ type: 'tool_use', tool: 'Bash', command: 'bun test' }),
+    ];
+    const out = renderSummary(events, '/p');
+    const promptIdx = out.indexOf('Prompt:');
+    const recentIdx = out.indexOf('Recent Activity');
+    const modifiedIdx = out.indexOf('Modified');
+    expect(promptIdx).toBeGreaterThanOrEqual(0);
+    expect(recentIdx).toBeGreaterThan(promptIdx);
+    expect(modifiedIdx).toBeGreaterThan(recentIdx);
+  });
+
+  it('Recent Activity shows only the last 7 items in chronological order', () => {
+    const events: SessionEvent[] = [];
+    for (let i = 0; i < 10; i++) {
+      events.push(makeEvent({ type: 'tool_use', tool: 'Bash', command: `cmd-${i}`, timestamp: `2024-01-01T00:00:${String(i).padStart(2, '0')}Z` }));
+    }
+    const out = renderSummary(events);
+    expect(out).toContain('Recent Activity');
+    expect(out).toContain('last 7 of 10');
+    const recentBlock = out.slice(out.indexOf('Recent Activity'), out.indexOf('Commands'));
+    // First 3 commands shouldn't appear in the chronological tail
+    expect(recentBlock).not.toContain('cmd-0');
+    expect(recentBlock).not.toContain('cmd-1');
+    expect(recentBlock).not.toContain('cmd-2');
+    // Last 7 should appear, in order: cmd-3 before cmd-9
+    const idx3 = recentBlock.indexOf('cmd-3');
+    const idx9 = recentBlock.indexOf('cmd-9');
+    expect(idx3).toBeGreaterThan(-1);
+    expect(idx9).toBeGreaterThan(idx3);
+  });
+
+  it('Recent Activity mixes edits, commands, agents, errors, and messages', () => {
+    const events: SessionEvent[] = [
+      makeEvent({ type: 'tool_use', tool: 'Edit', args: { file_path: '/p/a.ts' }, path: '/p/a.ts', timestamp: '2024-01-01T00:00:01Z' }),
+      makeEvent({ type: 'tool_use', tool: 'Bash', command: 'echo hi', timestamp: '2024-01-01T00:00:02Z' }),
+      makeEvent({ type: 'tool_use', tool: 'Agent', args: { description: 'Explore the repo', subagent_type: 'Explore' }, timestamp: '2024-01-01T00:00:03Z' }),
+      makeEvent({ type: 'error', tool: 'Bash', args: { command: 'broken' }, content: 'exit 1', timestamp: '2024-01-01T00:00:04Z' }),
+      makeEvent({ role: 'assistant', content: 'all done now', timestamp: '2024-01-01T00:00:05Z' }),
+    ];
+    const out = renderSummary(events, '/p');
+    const recentBlock = out.slice(out.indexOf('Recent Activity'), out.indexOf('Modified'));
+    expect(recentBlock).toContain('Edit');
+    expect(recentBlock).toContain('a.ts');
+    expect(recentBlock).toContain('Bash');
+    expect(recentBlock).toContain('echo hi');
+    expect(recentBlock).toContain('Agent');
+    expect(recentBlock).toContain('Explore the repo');
+    expect(recentBlock).toContain('Error');
+    expect(recentBlock).toContain('Msg');
+    expect(recentBlock).toContain('all done now');
+  });
+
+  it('Errors section sits above Modified/Read/Commands, not at the bottom', () => {
+    const events: SessionEvent[] = [
+      makeEvent({ type: 'error', tool: 'Bash', args: { command: 'bun test' }, content: 'exit 1' }),
+      makeEvent({ type: 'tool_use', tool: 'Edit', args: { file_path: '/p/src/a.ts' }, path: '/p/src/a.ts' }),
+      makeEvent({ type: 'tool_use', tool: 'Bash', command: 'git status' }),
+    ];
+    const out = renderSummary(events, '/p');
+    const errorsIdx = out.indexOf('Errors');
+    const modifiedIdx = out.indexOf('Modified');
+    const commandsIdx = out.indexOf('Commands');
+    expect(errorsIdx).toBeGreaterThan(-1);
+    expect(errorsIdx).toBeLessThan(modifiedIdx);
+    expect(errorsIdx).toBeLessThan(commandsIdx);
+  });
+
+  it('keeps Final message at the bottom for full markdown rendering', () => {
+    const events: SessionEvent[] = [
+      makeEvent({ type: 'tool_use', tool: 'Bash', command: 'git status' }),
+      makeEvent({ role: 'assistant', content: 'The work is complete.' }),
+    ];
+    const out = renderSummary(events);
+    // Final message text should appear AFTER the Commands section
+    const commandsIdx = out.indexOf('Commands');
+    const finalIdx = out.lastIndexOf('The work is complete.');
+    expect(commandsIdx).toBeGreaterThan(-1);
+    expect(finalIdx).toBeGreaterThan(commandsIdx);
+  });
 });
