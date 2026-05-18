@@ -196,8 +196,13 @@ export function unregisterMarketplace(agent: AgentId, versionHome: string): void
 export function enablePluginInSettings(
   pluginName: string,
   agent: AgentId,
-  versionHome: string
+  versionHome: string,
+  options: { allowExecSurfaces?: boolean } = {}
 ): void {
+  if (!options.allowExecSurfaces && marketplacePluginHasExecSurfaces(pluginName, agent, versionHome)) {
+    return;
+  }
+
   const sPath = settingsPath(agent, versionHome);
   let settings: Record<string, unknown> = {};
   if (fs.existsSync(sPath)) {
@@ -218,6 +223,32 @@ export function enablePluginInSettings(
 
   fs.mkdirSync(path.dirname(sPath), { recursive: true });
   fs.writeFileSync(sPath, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
+}
+
+function marketplacePluginHasExecSurfaces(pluginName: string, agent: AgentId, versionHome: string): boolean {
+  const root = path.join(marketplaceRoot(agent, versionHome), 'plugins', pluginName);
+  if (fs.existsSync(path.join(root, '.mcp.json'))) return true;
+  for (const dir of ['bin', 'scripts', 'permissions']) {
+    if (fs.existsSync(path.join(root, dir))) return true;
+  }
+  const hooksFile = path.join(root, 'hooks', 'hooks.json');
+  if (fs.existsSync(hooksFile)) return true;
+  const hooksDir = path.join(root, 'hooks');
+  if (fs.existsSync(hooksDir)) {
+    try {
+      if (fs.readdirSync(hooksDir).some((entry) => !entry.startsWith('.'))) return true;
+    } catch {
+      return true;
+    }
+  }
+  const settingsFile = path.join(root, 'settings.json');
+  if (!fs.existsSync(settingsFile)) return false;
+  try {
+    const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf-8')) as Record<string, unknown>;
+    return Object.keys(settings).some((key) => key !== 'permissions') || 'permissions' in settings;
+  } catch {
+    return true;
+  }
 }
 
 /**

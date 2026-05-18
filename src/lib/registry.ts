@@ -19,6 +19,24 @@ import type {
 import { DEFAULT_REGISTRIES } from './types.js';
 import { readMeta, writeMeta } from './state.js';
 
+const UNSAFE_PACKAGE_SPEC_CHARS = /[;&|`$\s\x00-\x1f\x7f]/;
+const NPM_SPEC_PATTERN = /^(@[a-z0-9][a-z0-9-_.]*\/)?[a-z0-9][a-z0-9-_.]*(@[A-Za-z0-9._+-]+)?$/;
+const PYPI_SPEC_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*(\[[A-Za-z0-9,_-]+\])?(==[A-Za-z0-9._-]+)?$/;
+
+export function validatedNpmSpec(spec: string): string {
+  if (spec.length > 214 || UNSAFE_PACKAGE_SPEC_CHARS.test(spec) || !NPM_SPEC_PATTERN.test(spec)) {
+    throw new Error(`Invalid npm package spec: ${spec}`);
+  }
+  return spec;
+}
+
+export function validatedPyPISpec(spec: string): string {
+  if (UNSAFE_PACKAGE_SPEC_CHARS.test(spec) || !PYPI_SPEC_PATTERN.test(spec)) {
+    throw new Error(`Invalid PyPI package spec: ${spec}`);
+  }
+  return spec;
+}
+
 /** Get all registries of a given type, merging defaults with user overrides. */
 export function getRegistries(type: RegistryType): Record<string, RegistryConfig> {
   const meta = readMeta();

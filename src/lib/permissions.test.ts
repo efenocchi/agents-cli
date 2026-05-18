@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { buildPermissionsFromGroups, convertDenyToCodexRules } from './permissions.js';
+import { buildPermissionsFromGroups, containsBroadGrants, convertDenyToCodexRules } from './permissions.js';
 
 const tempDirs: string[] = [];
 
@@ -30,5 +30,29 @@ describe('permission path handling', () => {
 
     expect(rules).toContain('"git", "\\"status\\""');
     expect(rules).not.toContain('"git", ""status""');
+  });
+});
+
+describe('containsBroadGrants', () => {
+  it('flags Bash(*) permission packs as broad grants', () => {
+    const result = containsBroadGrants({
+      name: 'broad',
+      allow: ['Bash(*)'],
+      deny: [],
+    });
+
+    expect(result?.broad).toEqual(['Bash(*)']);
+    expect(result?.reason).toContain('approval_policy=never');
+  });
+
+  it('allows narrow permission packs', () => {
+    const result = containsBroadGrants({
+      name: 'narrow',
+      allow: ['Bash(git status:*)'],
+      deny: [],
+      additionalDirectories: ['src'],
+    });
+
+    expect(result).toBeNull();
   });
 });

@@ -4,6 +4,7 @@ import * as path from 'path';
 import { pathToFileURL } from 'url';
 import { spawnSync } from 'child_process';
 import { afterEach, describe, expect, it } from 'vitest';
+import { parseMcpServerConfig } from './mcp.js';
 
 const tempDirs: string[] = [];
 
@@ -38,6 +39,24 @@ afterEach(() => {
 });
 
 describe('MCP sync execution', () => {
+  it('rejects YAML configs whose args are not string arrays', () => {
+    const home = makeTempHome();
+    const configPath = path.join(home, 'bad.yaml');
+    fs.writeFileSync(
+      configPath,
+      [
+        'name: bad',
+        'transport: stdio',
+        'command: npx',
+        'args: "-y bad"',
+        '',
+      ].join('\n'),
+      'utf-8'
+    );
+
+    expect(() => parseMcpServerConfig(configPath)).toThrow('args must be a string array');
+  });
+
   it('installs Codex MCP servers with argv, not a shell command string', async () => {
     const home = makeTempHome();
     const version = '0.1.0';

@@ -35,6 +35,7 @@ import {
   computePermissionsDiff,
   mergePermissionSets,
   saveDefaultPermissionSet,
+  containsBroadGrants,
 } from '../lib/permissions.js';
 import {
   listInstalledVersions,
@@ -52,6 +53,13 @@ import {
   printWithPager,
   requireInteractiveSelection,
 } from './utils.js';
+
+export function shouldRefuseBroadPermissions(
+  permissions: ReturnType<typeof discoverPermissionsFromRepo>,
+  allowBroadPermissions: boolean
+): boolean {
+  return !allowBroadPermissions && permissions.some((perm) => containsBroadGrants(perm.set) !== null);
+}
 
 /** Register the `agents permissions` command tree (list, add, remove, view). */
 export function registerPermissionsCommands(program: Command): void {
@@ -265,6 +273,7 @@ When to use:
     .option('--names <list>', 'Permission set names from ~/.agents/permissions/ (comma-separated)')
     .option('--all', 'Apply to all installed versions instead of just defaults')
     .option('--replace', 'Replace managed permission block instead of merging (drops rules no longer in the set)')
+    .option('--allow-broad-permissions', 'Allow permission packs that significantly weaken sandboxing')
     .option('-y, --yes', 'Skip all prompts and confirmations')
     .addHelpText('after', `
 Examples:
@@ -584,6 +593,23 @@ Examples:
             const desc = perm.set.description ? ` - ${perm.set.description}` : '';
             console.log(`  ${chalk.cyan(perm.name)}${desc}`);
             console.log(`    ${chalk.gray(`${perm.set.allow.length} allow, ${perm.set.deny?.length || 0} deny rules`)}`);
+          }
+
+          const broadGrants = permissions
+            .map((perm) => ({ name: perm.name, grants: containsBroadGrants(perm.set) }))
+            .filter((entry): entry is { name: string; grants: { broad: string[]; reason: string } } => entry.grants !== null);
+
+          if (broadGrants.length > 0) {
+            console.error(chalk.yellow('\nWARNING: this permission pack contains broad grants that significantly weaken agent sandboxing:'));
+            for (const entry of broadGrants) {
+              for (const rule of entry.grants.broad) {
+                console.error(`  ${entry.name}: ${rule}: ${entry.grants.reason}`);
+              }
+            }
+            if (shouldRefuseBroadPermissions(permissions, options.allowBroadPermissions === true)) {
+              console.error(chalk.red('Refusing to install. Re-run with --allow-broad-permissions if you trust this permission pack.'));
+              process.exit(1);
+            }
           }
 
           // Confirm installation
