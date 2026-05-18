@@ -42,7 +42,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleExecutable</key>
     <string>ComputerHelper</string>
     <key>CFBundleIdentifier</key>
-    <string>dev.swarmify.computer-helper</string>
+    <string>com.phnx-labs.computer-helper</string>
     <key>CFBundleName</key>
     <string>Computer Helper</string>
     <key>CFBundlePackageType</key>
@@ -69,8 +69,8 @@ if [ -z "$SIGN_ID" ]; then
     SIGN_ID="-"
 fi
 echo "  signing with: $SIGN_ID"
-codesign --force --deep --options runtime --sign "$SIGN_ID" --identifier dev.swarmify.computer-helper "$APP" 2>&1 | sed 's/^/  /'
-codesign --force --options runtime --sign "$SIGN_ID" --identifier dev.swarmify.computer-helper "$DEST" 2>&1 | sed 's/^/  /'
+codesign --force --deep --options runtime --sign "$SIGN_ID" --identifier com.phnx-labs.computer-helper "$APP" 2>&1 | sed 's/^/  /'
+codesign --force --options runtime --sign "$SIGN_ID" --identifier com.phnx-labs.computer-helper "$DEST" 2>&1 | sed 's/^/  /'
 
 echo "built: $DEST"
 echo "built: $APP"
