@@ -9,6 +9,7 @@ import {
   resolveHelperApp,
   resolveHelperExec,
   resolveSocketPath,
+  resolveLogPath,
   describeTransport,
 } from '../lib/computer-rpc.js';
 
@@ -175,9 +176,8 @@ function registerInstallHelperCommand(program: Command): void {
       }
 
       const home = os.homedir();
-      const agentsDir = path.join(home, '.agents');
-      const socketPath = path.join(agentsDir, 'computer-helper.sock');
-      const logPath = path.join(agentsDir, 'computer-helper.log');
+      const socketPath = resolveSocketPath();
+      const logPath = resolveLogPath();
       const plistPath = path.join(home, 'Library', 'LaunchAgents', `${HELPER_LABEL}.plist`);
 
       console.log(`source:  ${srcApp}`);
@@ -214,8 +214,12 @@ function registerInstallHelperCommand(program: Command): void {
         process.exit(1);
       }
 
-      // 3. Ensure ~/.agents/ exists.
-      fs.mkdirSync(agentsDir, { recursive: true });
+      // 3. Ensure socket + log parent dirs exist. ~/.agents/.cache/helpers/
+      // is the canonical home for helper-subprocess scratch (matches the
+      // browser daemon's ~/.agents/.cache/helpers/browser.sock). logs/ is
+      // the runtime log bucket.
+      fs.mkdirSync(path.dirname(socketPath), { recursive: true });
+      fs.mkdirSync(path.dirname(logPath), { recursive: true });
 
       // 4. Write plist with HOME paths resolved (launchd does not expand ~).
       const execInsideApp = path.join(HELPER_APP_DEST, 'Contents', 'MacOS', 'ComputerHelper');
