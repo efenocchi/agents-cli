@@ -20,6 +20,7 @@ import { isPromptCancelled, isInteractiveTerminal } from './utils.js';
 import { AGENTS, getUnmanagedAgentInstalls, countSessionFiles, agentLabel } from '../lib/agents.js';
 import { setGlobalDefault } from '../lib/versions.js';
 import { ensureShimCurrent, switchHomeFileSymlinks, isShimsInPath, addShimsToPath, getPathSetupInstructions } from '../lib/shims.js';
+import { setHelpSections } from '../lib/help.js';
 
 const HOME = os.homedir();
 
@@ -219,33 +220,30 @@ export async function ensureInitialized(program: Command): Promise<void> {
 
 /** Register the `agents setup` command. */
 export function registerSetupCommand(program: Command): void {
-  program
+  const setupCmd = program
     .command('setup')
-    .description('Set up agents-cli for the first time. Clones a config repo and installs agent CLIs.')
-    .option('-f, --force', 'Re-run setup even if ~/.agents-system/ already exists (use with caution)')
-    .addHelpText('after', `
-Examples:
-  # First-time setup (clones the system repo into ~/.agents-system/)
-  agents setup
+    .description('First-time setup. Clones a config repo and installs agent CLIs.')
+    .option('-f, --force', 'Re-run setup even if ~/.agents-system/ already exists (use with caution)');
 
-  # Re-run setup after corruption
-  agents setup --force
+  setHelpSections(setupCmd, {
+    examples: `
+      # First-time setup (clones the system repo into ~/.agents-system/)
+      agents setup
 
-When to use:
-  - First time running agents-cli: this is your starting point
-  - Onboarding a new machine: restore the system repo and installed CLIs
-  - Repairing ~/.agents-system/ after accidental deletion or corruption
+      # Re-run after corruption or to repair ~/.agents-system/
+      agents setup --force
+    `,
+    notes: `
+      What it does:
+        1. Clones the system repo into ~/.agents-system/
+        2. Installs agent CLIs based on agents.yaml in that repo
+        3. Syncs commands, skills, hooks, and MCP servers to each version
 
-What it does:
-  1. Clones the system repo into ~/.agents-system/
-  2. Installs agent CLIs based on agents.yaml in that repo
-  3. Syncs commands, skills, hooks, and MCP servers to each version
+      Non-interactive alternative: agents pull
+    `,
+  });
 
-Non-interactive alternative:
-  Skip 'setup' and run:
-    agents pull
-`)
-    .action(async (options) => {
+  setupCmd.action(async (options) => {
       try {
         await runSetup(program, options);
       } catch (err) {
