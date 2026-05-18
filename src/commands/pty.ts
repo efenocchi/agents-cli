@@ -21,64 +21,71 @@ import chalk from 'chalk';
 import { ptyRequest, unescapeInput } from '../lib/pty-client.js';
 import { isPtyServerRunning, runPtyServer, getPtyPidPath, getPtyLogPath } from '../lib/pty-server.js';
 import * as fs from 'fs';
+import { setHelpSections } from '../lib/help.js';
 
 /** Register the `agents pty` command tree. */
 export function registerPtyCommands(program: Command): void {
   const pty = program
     .command('pty')
-    .description('Drive interactive terminal programs from AI agents. Use this for REPLs, TUIs, or anything needing a real terminal.')
-    .addHelpText('after', `
-Typical session workflow:
-  # Start a new terminal session (returns a session ID)
-  SID=$(agents pty start)
+    .description('Drive interactive terminal programs from AI agents. Use this for REPLs, TUIs, or anything needing a real terminal.');
 
-  # Run a command (non-blocking, returns immediately)
-  agents pty exec $SID "python3"
+  setHelpSections(pty, {
+    examples: `
+      # Start a session (returns a session ID)
+      SID=$(agents pty start)
 
-  # Wait a moment, then see what's on screen (clean text, no ANSI)
-  sleep 1 && agents pty screen $SID
+      # Run a command (non-blocking)
+      agents pty exec $SID "python3"
 
-  # Send input (supports escape sequences: \\n \\t \\e \\xHH)
-  agents pty write $SID "print('hello')\\n"
+      # Wait, then see what's on screen (clean text, no ANSI)
+      sleep 1 && agents pty screen $SID
 
-  # Read the output again
-  agents pty screen $SID
+      # Type input (supports escapes: \\n \\t \\e \\xHH)
+      agents pty write $SID "print('hello')\\n"
 
-  # Clean up when done
-  agents pty stop $SID
+      # Read again
+      agents pty screen $SID
 
-Use cases:
-  - Drive REPLs (python, node, irb) from agent code
-  - Automate TUI programs (npm init, interactive wizards)
-  - Test CLI tools that require a real PTY
-  - Run the 'agents' CLI itself from another agent
+      # Clean up
+      agents pty stop $SID
+    `,
+    notes: `
+      Use cases:
+        - Drive REPLs (python, node, irb) from agent code
+        - Automate TUI programs (npm init, interactive wizards)
+        - Test CLI tools that require a real PTY
+        - Run the 'agents' CLI itself from another agent
 
-The PTY server auto-starts on first use and runs in the background.
-Use 'agents pty server status' to check health.
-`);
+      The PTY server auto-starts on first use and runs in the background.
+      Health: 'agents pty server status'.
+    `,
+  });
 
   // --- Session lifecycle ---
 
-  pty
+  const startCmd = pty
     .command('start')
     .description('Start a new PTY session and return its ID. The session persists until you stop it.')
     .option('-r, --rows <n>', 'Terminal height in rows', '24')
     .option('-c, --cols <n>', 'Terminal width in columns', '120')
     .option('-s, --shell <shell>', 'Shell to launch (defaults to $SHELL, e.g., zsh, bash)')
     .option('-d, --cwd <dir>', 'Working directory for the shell')
-    .option('--json', 'Output full session metadata as JSON')
-    .addHelpText('after', `
-Examples:
-  # Start a session and capture its ID
-  SID=$(agents pty start)
+    .option('--json', 'Output full session metadata as JSON');
 
-  # Start a Python REPL in a specific directory
-  agents pty start --shell python3 --cwd /tmp
+  setHelpSections(startCmd, {
+    examples: `
+      # Start a session and capture its ID
+      SID=$(agents pty start)
 
-  # Start a wider terminal for TUI programs
-  agents pty start --cols 160 --rows 40
-`)
-    .action(async (opts) => {
+      # Start a Python REPL in a specific directory
+      agents pty start --shell python3 --cwd /tmp
+
+      # Start a wider terminal for TUI programs
+      agents pty start --cols 160 --rows 40
+    `,
+  });
+
+  startCmd.action(async (opts) => {
       const params: Record<string, any> = {
         rows: parseInt(opts.rows, 10),
         cols: parseInt(opts.cols, 10),
@@ -99,23 +106,26 @@ Examples:
       }
     });
 
-  pty
+  const execCmd = pty
     .command('exec <id> <command>')
     .description('Send a command to a PTY session. Returns immediately (non-blocking). Use screen or read to see output.')
     .option('--wait <ms>', 'Wait this many milliseconds then return the screen (convenience for quick commands)', '0')
-    .option('--json', 'Output as JSON')
-    .addHelpText('after', `
-Examples:
-  # Run a command and return immediately
-  agents pty exec $SID "ls -la"
+    .option('--json', 'Output as JSON');
 
-  # Run a command and wait 500ms to see output
-  agents pty exec $SID "git status" --wait 500
+  setHelpSections(execCmd, {
+    examples: `
+      # Run a command and return immediately
+      agents pty exec $SID "ls -la"
 
-  # Start a long-running process (returns right away)
-  agents pty exec $SID "npm run dev"
-`)
-    .action(async (id, command, opts) => {
+      # Run a command and wait 500ms to see output
+      agents pty exec $SID "git status" --wait 500
+
+      # Start a long-running process (returns right away)
+      agents pty exec $SID "npm run dev"
+    `,
+  });
+
+  execCmd.action(async (id, command, opts) => {
       const res = await ptyRequest('exec', id, { command });
       if (!res.ok) {
         console.error(chalk.red(res.error));
@@ -137,20 +147,23 @@ Examples:
       }
     });
 
-  pty
+  const readCmd = pty
     .command('read <id>')
     .description('Read raw output from the PTY (includes ANSI codes). Use screen for clean text instead.')
     .option('-m, --ms <ms>', 'Wait up to this many milliseconds for new output (50-5000)', '200')
-    .option('--json', 'Output as JSON')
-    .addHelpText('after', `
-Examples:
-  # Read pending output (wait up to 200ms)
-  agents pty read $SID
+    .option('--json', 'Output as JSON');
 
-  # Read with longer wait for slow commands
-  agents pty read $SID --ms 1000
-`)
-    .action(async (id, opts) => {
+  setHelpSections(readCmd, {
+    examples: `
+      # Read pending output (wait up to 200ms)
+      agents pty read $SID
+
+      # Read with longer wait for slow commands
+      agents pty read $SID --ms 1000
+    `,
+  });
+
+  readCmd.action(async (id, opts) => {
       const ms = parseInt(opts.ms, 10);
       const res = await ptyRequest('read', id, { ms });
       if (!res.ok) {
@@ -165,29 +178,32 @@ Examples:
       }
     });
 
-  pty
+  const writeCmd = pty
     .command('write <id> <input>')
     .description('Send keystrokes to the PTY (like typing into the terminal). Processes escape sequences by default.')
     .option('--raw', 'Send input literally without processing \\n \\t \\e \\xHH escape codes')
-    .option('--json', 'Output as JSON')
-    .addHelpText('after', `
-Examples:
-  # Send Enter key
-  agents pty write $SID "\\n"
+    .option('--json', 'Output as JSON');
 
-  # Type a command and press Enter
-  agents pty write $SID "ls -la\\n"
+  setHelpSections(writeCmd, {
+    examples: `
+      # Send Enter key
+      agents pty write $SID "\\n"
 
-  # Send Ctrl-C (interrupt signal)
-  agents pty write $SID "\\x03"
+      # Type a command and press Enter
+      agents pty write $SID "ls -la\\n"
 
-  # Send Escape key
-  agents pty write $SID "\\e"
+      # Send Ctrl-C (interrupt signal)
+      agents pty write $SID "\\x03"
 
-  # Send literal backslash-n (not newline)
-  agents pty write $SID "\\\\n" --raw
-`)
-    .action(async (id, input, opts) => {
+      # Send Escape key
+      agents pty write $SID "\\e"
+
+      # Send literal backslash-n (not newline)
+      agents pty write $SID "\\\\n" --raw
+    `,
+  });
+
+  writeCmd.action(async (id, input, opts) => {
       const processed = opts.raw ? input : unescapeInput(input);
       const res = await ptyRequest('write', id, { input: processed });
       if (!res.ok) {
@@ -200,21 +216,25 @@ Examples:
       }
     });
 
-  pty
+  const screenCmd = pty
     .command('screen <id>')
     .description('Render the terminal screen as clean text (no ANSI codes). This is what a human sees looking at the terminal.')
-    .option('--json', 'Output as JSON (includes cursor position and dimensions)')
-    .addHelpText('after', `
-Examples:
-  # See what's currently on screen
-  agents pty screen $SID
+    .option('--json', 'Output as JSON (includes cursor position and dimensions)');
 
-  # Get screen with cursor position as JSON
-  agents pty screen $SID --json
+  setHelpSections(screenCmd, {
+    examples: `
+      # See what's currently on screen
+      agents pty screen $SID
 
-Use this (not read) when you want clean text for an LLM to parse.
-`)
-    .action(async (id, opts) => {
+      # Get screen with cursor position as JSON
+      agents pty screen $SID --json
+    `,
+    notes: `
+      Use this (not read) when you want clean text for an LLM to parse.
+    `,
+  });
+
+  screenCmd.action(async (id, opts) => {
       const res = await ptyRequest('screen', id);
       if (!res.ok) {
         console.error(chalk.red(res.error));
@@ -228,21 +248,24 @@ Use this (not read) when you want clean text for an LLM to parse.
       }
     });
 
-  pty
+  const signalCmd = pty
     .command('signal <id> [signal]')
-    .description('Send a POSIX signal to the running process. Defaults to INT (Ctrl-C).')
-    .addHelpText('after', `
-Examples:
-  # Send Ctrl-C (interrupt)
-  agents pty signal $SID INT
+    .description('Send a POSIX signal to the running process. Defaults to INT (Ctrl-C).');
 
-  # Terminate gracefully
-  agents pty signal $SID TERM
+  setHelpSections(signalCmd, {
+    examples: `
+      # Send Ctrl-C (interrupt)
+      agents pty signal $SID INT
 
-  # Force kill
-  agents pty signal $SID KILL
-`)
-    .action(async (id, signal) => {
+      # Terminate gracefully
+      agents pty signal $SID TERM
+
+      # Force kill
+      agents pty signal $SID KILL
+    `,
+  });
+
+  signalCmd.action(async (id, signal) => {
       const res = await ptyRequest('signal', id, { signal: signal || 'INT' });
       if (!res.ok) {
         console.error(chalk.red(res.error));
@@ -268,14 +291,18 @@ Examples:
       console.log(`${res.cols}x${res.rows}`);
     });
 
-  pty
+  const stopCmd = pty
     .command('stop <id>')
-    .description('Stop a PTY session and clean up. The session ID becomes invalid.')
-    .addHelpText('after', `
-Example:
-  agents pty stop $SID
-`)
-    .action(async (id) => {
+    .description('Stop a PTY session and clean up. The session ID becomes invalid.');
+
+  setHelpSections(stopCmd, {
+    examples: `
+      # Stop a session by ID
+      agents pty stop $SID
+    `,
+  });
+
+  stopCmd.action(async (id) => {
       const res = await ptyRequest('stop', id);
       if (!res.ok) {
         console.error(chalk.red(res.error));
@@ -285,15 +312,19 @@ Example:
 
   // --- Session listing ---
 
-  pty
+  const listCmd = pty
     .command('list')
     .description('List all active PTY sessions (running or idle).')
-    .option('--json', 'Output as JSON')
-    .addHelpText('after', `
-Example:
-  agents pty list
-`)
-    .action(async (opts) => {
+    .option('--json', 'Output as JSON');
+
+  setHelpSections(listCmd, {
+    examples: `
+      # List all active sessions
+      agents pty list
+    `,
+  });
+
+  listCmd.action(async (opts) => {
       const res = await ptyRequest('list');
       if (!res.ok) {
         console.error(chalk.red(res.error));
