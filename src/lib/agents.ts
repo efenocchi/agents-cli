@@ -194,11 +194,12 @@ export const AGENTS: Record<AgentId, AgentConfig> = {
     commandsSubdir: 'prompts',
     skillsDir: path.join(HOME, '.codex', 'skills'),
     hooksDir: 'hooks',
+    pluginManifestDir: '.codex-plugin',
     instructionsFile: 'AGENTS.md',
     format: 'markdown',
     variableSyntax: '$ARGUMENTS',
     supportsHooks: true,
-    capabilities: { hooks: { since: '0.116.0' }, mcp: true, allowlist: false, skills: true, commands: { until: '0.117.0' }, plugins: false },
+    capabilities: { hooks: { since: '0.116.0' }, mcp: true, allowlist: false, skills: true, commands: { until: '0.117.0' }, plugins: { since: '0.128.0' } },
   },
   gemini: {
     id: 'gemini',

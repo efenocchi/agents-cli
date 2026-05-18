@@ -32,6 +32,7 @@ export interface AgentConfig {
   commandsSubdir: string;
   skillsDir: string;
   hooksDir: string;
+  pluginManifestDir?: string;
   instructionsFile: string;
   format: 'markdown' | 'toml';
   variableSyntax: string;

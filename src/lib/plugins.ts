@@ -16,6 +16,7 @@ import type { AgentId, DiscoveredPlugin, PluginManifest } from './types.js';
 import { getPluginsDir, getTrashPluginsDir } from './state.js';
 import { listInstalledVersions, getVersionHomePath } from './versions.js';
 import { AGENTS, PLUGINS_CAPABLE_AGENTS } from './agents.js';
+import { shouldInstallCommandAsSkill, installCommandSkillToVersion } from './command-skills.js';
 import {
   copyPluginToMarketplace,
   syncMarketplaceManifest,
@@ -379,7 +380,7 @@ export function syncPluginToVersion(
   plugin: DiscoveredPlugin,
   agent: AgentId,
   versionHome: string,
-  options: { allowExecSurfaces?: boolean } = {}
+  options: { allowExecSurfaces?: boolean; version?: string } = {}
 ): {
   success: boolean;
   skills: string[];
@@ -418,12 +419,38 @@ export function syncPluginToVersion(
     expandUserConfigInDir(installDir, userConfig);
   }
 
+  // 2b. Write agent-native manifest dir alongside .claude-plugin/ when the agent
+  //     expects a different directory name (e.g. Codex uses .codex-plugin/).
+  const agentManifestDir = AGENTS[agent].pluginManifestDir;
+  if (agentManifestDir && agentManifestDir !== PLUGIN_MANIFEST_DIR) {
+    const srcManifest = path.join(installDir, PLUGIN_MANIFEST_DIR, PLUGIN_MANIFEST_FILE);
+    if (fs.existsSync(srcManifest)) {
+      const destManifestDir = path.join(installDir, agentManifestDir);
+      fs.mkdirSync(destManifestDir, { recursive: true });
+      fs.copyFileSync(srcManifest, path.join(destManifestDir, PLUGIN_MANIFEST_FILE));
+    }
+  }
+
   // 3-5. Synthesize manifest, register marketplace, enable plugin.
   syncMarketplaceManifest(agent, versionHome);
   registerMarketplace(agent, versionHome);
   enablePluginInSettings(plugin.name, agent, versionHome, {
     allowExecSurfaces: options.allowExecSurfaces === true,
   });
+
+  // 5b. Convert plugin commands/ to skills for agents that dropped command support
+  //     (Codex >= 0.117.0). Skill name is prefixed with plugin name to avoid
+  //     collision with standalone command skills.
+  if (options.version && shouldInstallCommandAsSkill(agent, options.version) && plugin.commands.length > 0) {
+    const agentDir = path.join(versionHome, `.${AGENTS[agent].id}`);
+    const skillSourceDirs = [path.join(agentDir, 'skills')];
+    for (const cmd of plugin.commands) {
+      const srcPath = path.join(plugin.root, 'commands', `${cmd}.md`);
+      if (fs.existsSync(srcPath)) {
+        installCommandSkillToVersion(agentDir, `${plugin.name}-${cmd}`, srcPath, skillSourceDirs);
+      }
+    }
+  }
 
   // 6. Migrate legacy dual-dash flat layout from previous versions of agents-cli.
   migrateLegacyFlatLayout(plugin, agent, versionHome);

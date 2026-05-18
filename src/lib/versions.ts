@@ -2047,7 +2047,7 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
       const plugin = pluginMap.get(name);
       if (!plugin || !pluginSupportsAgent(plugin, agent)) continue;
 
-      const pluginResult = syncPluginToVersion(plugin, agent, versionHome);
+      const pluginResult = syncPluginToVersion(plugin, agent, versionHome, { version });
       if (pluginResult.success) {
         result.plugins.push(name);
       }
