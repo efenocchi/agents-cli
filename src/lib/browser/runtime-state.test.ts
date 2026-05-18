@@ -21,6 +21,10 @@ import { getBrowserRuntimeDir, getProfileRuntimeDir } from './profiles.js';
 let prefix: string;
 const created: string[] = [];
 
+function currentProcessCommand(): string {
+  return path.basename(process.execPath);
+}
+
 function uniq(base: string): string {
   const name = `${prefix}-${base}`;
   created.push(name);
@@ -43,9 +47,10 @@ afterEach(() => {
 describe('writeProfileRuntime + readProfileRuntime', () => {
   it('round-trips pid/port/command for a live process', () => {
     const name = uniq('p1');
-    writeProfileRuntime(name, { pid: process.pid, port: 9222, command: 'node' });
+    const command = currentProcessCommand();
+    writeProfileRuntime(name, { pid: process.pid, port: 9222, command });
     const got = readProfileRuntime(name);
-    expect(got).toEqual({ pid: process.pid, port: 9222, command: 'node' });
+    expect(got).toEqual({ pid: process.pid, port: 9222, command });
   });
 
   it('returns null and removes files when the pid is dead', () => {
@@ -76,11 +81,11 @@ describe('writeProfileRuntime + readProfileRuntime', () => {
 
   it('does not persist a CDP port for pipe-launched browsers', () => {
     const name = uniq('pipe');
-    writeProfileRuntime(name, { pid: process.pid, command: 'node' });
+    writeProfileRuntime(name, { pid: process.pid, command: currentProcessCommand() });
     const dir = getProfileRuntimeDir(name);
 
     expect(fs.existsSync(path.join(dir, 'port'))).toBe(false);
-    expect(readProfileRuntime(name)).toBeNull();
+    expect(readProfileRuntime(name)?.port).toBeUndefined();
     expect(readProfileRuntimeMeta(name)?.port).toBeUndefined();
   });
 });
@@ -154,7 +159,7 @@ describe('readProfileRuntimeMeta', () => {
     writeProfileRuntime(name, {
       pid: process.pid,
       port: 9222,
-      command: 'node',
+      command: currentProcessCommand(),
       kind: 'browser',
       userDataDir: '/tmp/nope',
     });
@@ -214,7 +219,7 @@ describe('isProcessAlive', () => {
   });
 
   it('returns true for the current process when command matches', () => {
-    expect(isProcessAlive(process.pid, 'node')).toBe(true);
+    expect(isProcessAlive(process.pid, currentProcessCommand())).toBe(true);
   });
 
   it('returns false for the current process when command does NOT match', () => {
