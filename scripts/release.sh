@@ -21,7 +21,7 @@
 set -euo pipefail
 
 PHNX_PKG="@phnx-labs/agents-cli"
-SWARMIFY_PKG="@companion/agents-cli"
+SWARMIFY_PKG="${SHIM_PACKAGE:-@swarmify/agents-cli}"
 
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
