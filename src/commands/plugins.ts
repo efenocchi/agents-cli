@@ -25,6 +25,12 @@ import {
   loadUserConfig,
   saveUserConfig,
   checkPluginDependencies,
+  hasPluginExecSurfaces,
+  inspectPluginCapabilities,
+  pluginCapabilityLabels,
+  parseInstallSpec,
+  syncPluginToVersion,
+  type PluginCapabilities,
 } from '../lib/plugins.js';
 import {
   listInstalledVersions,
@@ -57,6 +63,10 @@ function formatPath(p: string): string {
     return '~' + p.slice(home.length);
   }
   return p;
+}
+
+export function shouldRefusePluginInstall(capabilities: PluginCapabilities, allowExecSurfaces: boolean): boolean {
+  return hasPluginExecSurfaces(capabilities) && !allowExecSurfaces;
 }
 
 /** Register the `agents plugins` command tree. */
@@ -475,6 +485,7 @@ Examples:
   pluginsCmd
     .command('install <spec>')
     .description('Install a plugin from a git URL or local path (format: name@source or source)')
+    .option('--allow-exec-surfaces', 'Allow installing plugins that ship executable surfaces')
     .addHelpText('after', `
 Examples:
   # Install from a git URL
@@ -486,15 +497,17 @@ Examples:
   # Named install from a local path
   agents plugins install rush-toolkit@~/Projects/rush-toolkit
 `)
-    .action(async (spec: string) => {
+    .action(async (spec: string, options) => {
       console.log(chalk.gray(`Installing plugin from: ${spec}`));
 
       let name: string;
       let root: string;
+      let capabilities: PluginCapabilities;
       try {
         const result = await installPlugin(spec);
         name = result.name;
         root = result.root;
+        capabilities = result.capabilities;
       } catch (err) {
         console.log(chalk.red(`Install failed: ${(err as Error).message}`));
         process.exit(1);
@@ -503,6 +516,18 @@ Examples:
       const plugin = getPlugin(name);
       if (!plugin) {
         console.log(chalk.red(`Installed but could not load plugin '${name}'`));
+        process.exit(1);
+      }
+      capabilities = inspectPluginCapabilities(root);
+
+      if (shouldRefusePluginInstall(capabilities, options.allowExecSurfaces === true)) {
+        const source = parseInstallSpec(spec).source;
+        console.error(chalk.red('Install refused: plugin ships executable surfaces:'));
+        for (const label of pluginCapabilityLabels(capabilities)) {
+          console.error(`  ${label}`);
+        }
+        console.error(`This plugin ships executable surfaces. Re-run with --allow-exec-surfaces if you trust the source: ${source}@HEAD`);
+        fs.rmSync(root, { recursive: true, force: true });
         process.exit(1);
       }
 
@@ -535,8 +560,10 @@ Examples:
         const targetVersions = defaultVer ? [defaultVer] : [versions[versions.length - 1]];
 
         for (const version of targetVersions) {
-          const syncResult = syncResourcesToVersion(agentId, version, { plugins: [name] });
-          if (syncResult.plugins.length > 0) {
+          const didSync = options.allowExecSurfaces === true
+            ? syncPluginToVersion(plugin, agentId, getVersionHomePath(agentId, version), { allowExecSurfaces: true }).success
+            : syncResourcesToVersion(agentId, version, { plugins: [name] }).plugins.length > 0;
+          if (didSync) {
             console.log(chalk.green(`  Synced to ${agentLabel(agentId)}@${version}`));
             synced++;
           }

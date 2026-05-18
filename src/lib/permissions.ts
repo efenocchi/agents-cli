@@ -32,6 +32,43 @@ export const PERMISSIONS_CAPABLE_AGENTS: AgentId[] = ['claude', 'codex', 'openco
 /** Filename used for Codex Starlark deny-rules generated from permission groups. */
 export const CODEX_RULES_FILENAME = 'agents-deny.rules';
 
+export type ParsedRules = PermissionSet;
+
+export function containsBroadGrants(rules: ParsedRules): { broad: string[]; reason: string } | null {
+  const broad: string[] = [];
+  const reasons = new Set<string>();
+
+  for (const perm of rules.allow) {
+    if (BLANKET_BASH_FORMS.has(perm)) {
+      broad.push(perm);
+      reasons.add('allows any bash command and maps Codex to approval_policy=never');
+      continue;
+    }
+    const parsed = parseCanonicalPattern(perm);
+    if (!parsed) continue;
+    if (parsed.tool === 'bash' && (parsed.pattern === '*' || parsed.pattern === '**')) {
+      broad.push(perm);
+      reasons.add('allows any bash command and maps Codex to approval_policy=never');
+    } else if (parsed.tool === 'bash' && parsed.pattern.startsWith('/') && parsed.pattern.includes('*')) {
+      broad.push(perm);
+      reasons.add('allows wildcard absolute bash paths');
+    } else if ((parsed.tool === 'write' || parsed.tool === 'read') && (parsed.pattern === '*' || parsed.pattern === '**')) {
+      broad.push(perm);
+      reasons.add(`allows broad ${parsed.tool} filesystem access`);
+    }
+  }
+
+  for (const dir of rules.additionalDirectories || []) {
+    if (dir.startsWith('/') || dir.startsWith('~/') || dir === '~' || dir.split(/[\\/]/).includes('..')) {
+      broad.push(`additionalDirectories:${dir}`);
+      reasons.add('adds a broad or parent-traversing sandbox directory');
+    }
+  }
+
+  if (broad.length === 0) return null;
+  return { broad, reason: Array.from(reasons).join('; ') };
+}
+
 /**
  * Convert canonical deny rules to Codex Starlark .rules format.
  * E.g. "Bash(git reset:*)" -> prefix_rule(pattern=["git", "reset"], decision="forbidden")

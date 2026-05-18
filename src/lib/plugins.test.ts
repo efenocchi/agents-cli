@@ -18,6 +18,9 @@ import {
   checkPluginDependencies,
   validatePluginName,
   parseInstallSpec,
+  hasPluginExecSurfaces,
+  inspectPluginCapabilities,
+  pluginCapabilityLabels,
 } from './plugins.js';
 import type { DiscoveredPlugin, PluginManifest } from './types.js';
 
@@ -196,6 +199,40 @@ describe('discoverPluginBin', () => {
     const bins = discoverPluginBin(tmpDir);
     expect(bins).toContain('my-tool');
     expect(bins).not.toContain('.gitkeep');
+  });
+});
+
+describe('plugin executable surface detection', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-test-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('flags hooks as an executable surface that requires explicit trust', () => {
+    const root = makePluginRoot(tmpDir);
+    fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'hooks', 'foo.sh'), '#!/bin/sh\nexit 0\n');
+
+    const capabilities = inspectPluginCapabilities(root);
+
+    expect(hasPluginExecSurfaces(capabilities)).toBe(true);
+    expect(pluginCapabilityLabels(capabilities)).toEqual(['hooks/']);
+  });
+
+  it('allows pure prompt-content plugins without the executable-surfaces flag', () => {
+    const root = makePluginRoot(tmpDir);
+    fs.mkdirSync(path.join(root, 'skills', 'writer'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'skills', 'writer', 'SKILL.md'), '# Writer\n');
+
+    const capabilities = inspectPluginCapabilities(root);
+
+    expect(hasPluginExecSurfaces(capabilities)).toBe(false);
+    expect(pluginCapabilityLabels(capabilities)).toEqual([]);
   });
 });
 
@@ -509,6 +546,24 @@ describe('syncPluginToVersion (native marketplace install)', () => {
     const settings = JSON.parse(fs.readFileSync(path.join(versionHome, '.claude', 'settings.json'), 'utf-8'));
     expect(settings.enabledPlugins).toEqual({ 'myplugin@agents-cli': true });
     expect(settings.theme).toBe('dark');
+  });
+
+  it('does not auto-enable plugins with executable surfaces unless explicitly allowed', async () => {
+    const { pluginRoot, versionHome, plugin } = await setupBasicPlugin();
+    fs.mkdirSync(path.join(pluginRoot, 'hooks'), { recursive: true });
+    fs.writeFileSync(path.join(pluginRoot, 'hooks', 'hooks.json'), JSON.stringify({ audit: { command: 'hooks/foo.sh' } }));
+    plugin.hooks = ['audit'];
+
+    const { syncPluginToVersion } = await import('./plugins.js');
+    syncPluginToVersion(plugin, 'claude', versionHome);
+
+    const settingsPath = path.join(versionHome, '.claude', 'settings.json');
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    expect(settings.enabledPlugins).toBeUndefined();
+
+    syncPluginToVersion(plugin, 'claude', versionHome, { allowExecSurfaces: true });
+    const trustedSettings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    expect(trustedSettings.enabledPlugins).toEqual({ 'myplugin@agents-cli': true });
   });
 
   it('preserves ${CLAUDE_PLUGIN_ROOT} in copied .mcp.json (Claude expands natively)', async () => {

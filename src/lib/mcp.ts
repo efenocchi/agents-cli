@@ -16,6 +16,7 @@ import { execFileSync } from 'child_process';
 import * as os from 'os';
 import type { AgentId } from './types.js';
 import { getMcpDir, getUserMcpDir, getProjectAgentsDir, getVersionsDir } from './state.js';
+import { getBinaryPath, getVersionHomePath } from './versions.js';
 import { MCP_CAPABLE_AGENTS, AGENTS } from './agents.js';
 import { setGeminiAutoUpdateDisabled, updateGeminiSettings } from './gemini-settings.js';
 
@@ -40,6 +41,18 @@ export interface InstalledMcpServer {
   scope?: 'user' | 'project';
 }
 
+export interface McpCommandSpec {
+  command: string;
+  args: string[];
+}
+
+export interface McpTargetOperationResult {
+  agentId: AgentId;
+  version?: string;
+  success: boolean;
+  error?: string;
+}
+
 /**
  * Parse an MCP server config from a YAML file.
  */
@@ -48,31 +61,59 @@ export function parseMcpServerConfig(filePath: string): McpYamlConfig | null {
     return null;
   }
 
+  let parsed: unknown;
   try {
     const content = fs.readFileSync(filePath, 'utf-8');
-    const parsed = yaml.parse(content);
-
-    if (!parsed || typeof parsed !== 'object') {
-      return null;
-    }
-
-    // Validate required fields
-    if (!parsed.name || !parsed.transport) {
-      return null;
-    }
-
-    // Validate transport-specific fields
-    if (parsed.transport === 'stdio' && !parsed.command) {
-      return null;
-    }
-    if (parsed.transport === 'http' && !parsed.url) {
-      return null;
-    }
-
-    return parsed as McpYamlConfig;
+    parsed = yaml.parse(content);
   } catch {
     return null;
   }
+
+  return validateMcpYamlConfig(parsed);
+}
+
+function validateMcpYamlConfig(parsed: unknown): McpYamlConfig | null {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return null;
+  }
+  const config = parsed as Record<string, unknown>;
+  if (typeof config.name !== 'string' || config.name.length === 0) return null;
+  if (config.transport !== 'stdio' && config.transport !== 'http') return null;
+
+  const result: McpYamlConfig = {
+    name: config.name,
+    transport: config.transport,
+  };
+
+  if (config.transport === 'stdio') {
+    if (config.command === undefined || config.command === '') return null;
+    if (typeof config.command !== 'string') {
+      throw new Error(`Invalid MCP config '${config.name}': command must be a string`);
+    }
+    result.command = config.command;
+    if (config.args !== undefined) {
+      if (!Array.isArray(config.args) || !config.args.every((arg) => typeof arg === 'string')) {
+        throw new Error(`Invalid MCP config '${config.name}': args must be a string array`);
+      }
+      result.args = config.args;
+    }
+    if (config.env !== undefined) {
+      if (!isStringRecord(config.env)) {
+        throw new Error(`Invalid MCP config '${config.name}': env must be a string map`);
+      }
+      result.env = config.env;
+    }
+  } else {
+    if (typeof config.url !== 'string' || config.url.length === 0) return null;
+    result.url = config.url;
+  }
+
+  return result;
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  return Object.values(value).every((item) => typeof item === 'string');
 }
 
 /**
@@ -189,6 +230,55 @@ function installMcpViaCodex(binaryPath: string, server: InstalledMcpServer, vers
     });
   }
   // Note: Codex may not support HTTP MCPs
+}
+
+export async function registerMcpCommandToTargets(
+  targets: { directAgents: AgentId[]; versionSelections: Map<AgentId, string[]> },
+  name: string,
+  commandSpec: McpCommandSpec,
+  scope: 'user' | 'project' = 'user',
+  transport: string = 'stdio'
+): Promise<McpTargetOperationResult[]> {
+  const results: McpTargetOperationResult[] = [];
+
+  for (const agentId of targets.directAgents) {
+    const result = registerMcpCommand(agentId, name, commandSpec, scope, transport);
+    results.push({ agentId, success: result.success, error: result.error });
+  }
+
+  for (const [agentId, versions] of targets.versionSelections) {
+    for (const version of versions) {
+      const result = registerMcpCommand(agentId, name, commandSpec, scope, transport, {
+        home: getVersionHomePath(agentId, version),
+        binary: getBinaryPath(agentId, version),
+      });
+      results.push({ agentId, version, success: result.success, error: result.error });
+    }
+  }
+
+  return results;
+}
+
+function registerMcpCommand(
+  agentId: AgentId,
+  name: string,
+  commandSpec: McpCommandSpec,
+  scope: 'user' | 'project',
+  transport: string,
+  options: { home?: string; binary?: string } = {}
+): { success: boolean; error?: string } {
+  try {
+    const bin = options.binary || AGENTS[agentId].cliCommand;
+    const commandArgs = [commandSpec.command, ...commandSpec.args];
+    const args = agentId === 'claude'
+      ? ['mcp', 'add', '--transport', transport, '--scope', scope, name, '--', ...commandArgs]
+      : ['mcp', 'add', name, '--', ...commandArgs];
+    const env = options.home ? { ...process.env, HOME: options.home } : process.env;
+    execFileSync(bin, args, { stdio: 'pipe', timeout: 30000, env });
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: (err as Error).message };
+  }
 }
 
 /**

@@ -35,6 +35,24 @@ const PLUGIN_MANIFEST_FILE = 'plugin.json';
 const USER_CONFIG_FILE = '.user-config.json';
 const SOURCE_FILE = '.source';
 
+export interface PluginCapabilities {
+  hasHooks: boolean;
+  hasMcp: boolean;
+  hasBin: boolean;
+  hasScripts: boolean;
+  hasSettings: boolean;
+  hasPermissions: boolean;
+}
+
+export const PLUGIN_EXEC_SURFACE_LABELS: Record<keyof PluginCapabilities, string> = {
+  hasHooks: 'hooks/',
+  hasMcp: '.mcp.json',
+  hasBin: 'bin/',
+  hasScripts: 'scripts/',
+  hasSettings: 'settings.json',
+  hasPermissions: 'permissions/',
+};
+
 /**
  * Discover all plugins in ~/.agents/plugins/.
  * A valid plugin has a .claude-plugin/plugin.json manifest.
@@ -78,6 +96,29 @@ export function buildDiscoveredPlugin(pluginRoot: string, manifest: PluginManife
     hasMcp: fs.existsSync(path.join(pluginRoot, '.mcp.json')),
     hasSettings: pluginHasNonPermissionSettings(pluginRoot),
   };
+}
+
+export function inspectPluginCapabilities(pluginRoot: string): PluginCapabilities {
+  const manifest = loadPluginManifest(pluginRoot);
+  const plugin = manifest ? buildDiscoveredPlugin(pluginRoot, manifest) : null;
+  return {
+    hasHooks: (plugin?.hooks.length || 0) > 0 || pluginHasDirectoryEntries(pluginRoot, 'hooks'),
+    hasMcp: fs.existsSync(path.join(pluginRoot, '.mcp.json')),
+    hasBin: (plugin?.bin.length || 0) > 0,
+    hasScripts: (plugin?.scripts.length || 0) > 0,
+    hasSettings: pluginHasNonPermissionSettings(pluginRoot),
+    hasPermissions: pluginHasPermissionsPath(pluginRoot),
+  };
+}
+
+export function hasPluginExecSurfaces(capabilities: PluginCapabilities): boolean {
+  return Object.values(capabilities).some(Boolean);
+}
+
+export function pluginCapabilityLabels(capabilities: PluginCapabilities): string[] {
+  return (Object.keys(PLUGIN_EXEC_SURFACE_LABELS) as Array<keyof PluginCapabilities>)
+    .filter((key) => capabilities[key])
+    .map((key) => PLUGIN_EXEC_SURFACE_LABELS[key]);
 }
 
 /**
@@ -337,7 +378,8 @@ export function checkPluginDependencies(manifest: PluginManifest): string[] {
 export function syncPluginToVersion(
   plugin: DiscoveredPlugin,
   agent: AgentId,
-  versionHome: string
+  versionHome: string,
+  options: { allowExecSurfaces?: boolean } = {}
 ): {
   success: boolean;
   skills: string[];
@@ -379,7 +421,9 @@ export function syncPluginToVersion(
   // 3-5. Synthesize manifest, register marketplace, enable plugin.
   syncMarketplaceManifest(agent, versionHome);
   registerMarketplace(agent, versionHome);
-  enablePluginInSettings(plugin.name, agent, versionHome);
+  enablePluginInSettings(plugin.name, agent, versionHome, {
+    allowExecSurfaces: options.allowExecSurfaces === true,
+  });
 
   // 6. Migrate legacy dual-dash flat layout from previous versions of agents-cli.
   migrateLegacyFlatLayout(plugin, agent, versionHome);
@@ -399,13 +443,29 @@ export function syncPluginToVersion(
 }
 
 function pluginHasPermissions(plugin: DiscoveredPlugin): boolean {
-  const settingsPath = path.join(plugin.root, 'settings.json');
+  return pluginHasPermissionsPath(plugin.root);
+}
+
+function pluginHasPermissionsPath(pluginRoot: string): boolean {
+  const permissionsDir = path.join(pluginRoot, 'permissions');
+  if (fs.existsSync(permissionsDir)) return true;
+  const settingsPath = path.join(pluginRoot, 'settings.json');
   if (!fs.existsSync(settingsPath)) return false;
   try {
     const parsed = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as {
       permissions?: { allow?: string[]; deny?: string[] };
     };
     return !!(parsed.permissions?.allow?.length || parsed.permissions?.deny?.length);
+  } catch {
+    return false;
+  }
+}
+
+function pluginHasDirectoryEntries(pluginRoot: string, dirName: string): boolean {
+  const dir = path.join(pluginRoot, dirName);
+  if (!fs.existsSync(dir)) return false;
+  try {
+    return fs.readdirSync(dir).some((entry) => !entry.startsWith('.'));
   } catch {
     return false;
   }
@@ -933,7 +993,7 @@ export function parseInstallSpec(spec: string): { name: string | null; source: s
  * Clones/copies to ~/.agents/plugins/<name>/.
  * Returns the installed plugin name and root path.
  */
-export async function installPlugin(spec: string): Promise<{ name: string; root: string; isNew: boolean }> {
+export async function installPlugin(spec: string): Promise<{ name: string; root: string; isNew: boolean; capabilities: PluginCapabilities }> {
   const { name: specName, source } = parseInstallSpec(spec);
 
   // Resolve local path (handle ~)
@@ -987,11 +1047,12 @@ export async function installPlugin(spec: string): Promise<{ name: string; root:
     fs.rmSync(targetRoot, { recursive: true, force: true });
     throw new Error(`Installed source has no valid .claude-plugin/plugin.json`);
   }
+  const capabilities = inspectPluginCapabilities(targetRoot);
 
   // Persist source for future updates
   fs.writeFileSync(path.join(targetRoot, SOURCE_FILE), JSON.stringify({ source, isGit: !isLocalPath }), 'utf-8');
 
-  return { name: manifest.name, root: targetRoot, isNew };
+  return { name: manifest.name, root: targetRoot, isNew, capabilities };
 }
 
 /**

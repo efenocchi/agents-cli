@@ -15,10 +15,9 @@ import {
   ALL_AGENT_IDS,
   MCP_CAPABLE_AGENTS,
   getAllCliStates,
-  registerMcpToTargets,
   agentLabel,
 } from '../lib/agents.js';
-import type { AgentId, RegistryType } from '../lib/types.js';
+import type { AgentId, McpPackage, RegistryType } from '../lib/types.js';
 import { DEFAULT_REGISTRIES } from '../lib/types.js';
 import {
   getRegistries,
@@ -26,6 +25,8 @@ import {
   removeRegistry,
   search as searchRegistries,
   resolvePackage,
+  validatedNpmSpec,
+  validatedPyPISpec,
 } from '../lib/registry.js';
 import { cloneRepo } from '../lib/git.js';
 import {
@@ -57,6 +58,18 @@ import {
   requireInteractiveSelection,
 } from './utils.js';
 import { itemPicker } from '../lib/picker.js';
+import { registerMcpCommandToTargets, type McpCommandSpec } from '../lib/mcp.js';
+
+export function buildMcpPackageCommand(pkg: McpPackage): McpCommandSpec {
+  const packageName = pkg.name || pkg.registry_name;
+  if (pkg.runtime === 'node') {
+    return { command: 'npx', args: ['-y', validatedNpmSpec(packageName)] };
+  }
+  if (pkg.runtime === 'python') {
+    return { command: 'uvx', args: [validatedPyPISpec(packageName)] };
+  }
+  throw new Error(`Unsupported MCP runtime: ${pkg.runtime}. Supported: node, python.`);
+}
 
 /**
  * Picker fallback for `registry enable/config [name]`.
@@ -464,14 +477,12 @@ When to use:
             }
           }
 
-          // Determine command based on runtime
-          let command: string;
-          if (pkg.runtime === 'node') {
-            command = `npx -y ${pkg.name || pkg.registry_name}`;
-          } else if (pkg.runtime === 'python') {
-            command = `uvx ${pkg.name || pkg.registry_name}`;
-          } else {
-            command = pkg.name || pkg.registry_name;
+          let commandSpec: McpCommandSpec;
+          try {
+            commandSpec = buildMcpPackageCommand(pkg);
+          } catch (err) {
+            console.log(chalk.red((err as Error).message));
+            process.exit(1);
           }
 
           const cliStates = await getAllCliStates();
@@ -488,7 +499,7 @@ When to use:
           }
 
           console.log(chalk.bold('\nInstalling to agents...'));
-          const results = await registerMcpToTargets(targets, entry.name, command, 'user');
+          const results = await registerMcpCommandToTargets(targets, entry.name, commandSpec, 'user');
           for (const result of results) {
             const label = result.version ? `${agentLabel(result.agentId)}@${result.version}` : agentLabel(result.agentId);
             if (result.success) {
