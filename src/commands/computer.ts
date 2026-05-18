@@ -15,7 +15,8 @@ import {
 
 // Help groups — mirror `agents browser` so the mental model carries over.
 const COMPUTER_HELP_GROUPS = [
-  { title: 'Session lifecycle', names: ['status', 'install-helper'] },
+  { title: 'Installation', names: ['install-helper'] },
+  { title: 'Daemon lifecycle', names: ['start', 'stop', 'status'] },
   { title: 'Capture evidence', names: ['screenshot'] },
 ] as const;
 
@@ -29,9 +30,11 @@ export function registerComputerCommand(program: Command): void {
 }
 
 export function registerComputerSubcommands(program: Command): void {
+  registerInstallHelperCommand(program);
+  registerStartCommand(program);
+  registerStopCommand(program);
   registerStatusCommand(program);
   registerScreenshotCommand(program);
-  registerInstallHelperCommand(program);
   registerCommandGroups(program, COMPUTER_HELP_GROUPS);
 }
 
@@ -43,11 +46,27 @@ function reportMissingHelper(): never {
 function registerStatusCommand(program: Command): void {
   program
     .command('status')
-    .description('Report Accessibility trust + helper identity')
+    .description('Report install state, daemon state, and Accessibility trust')
     .action(async () => {
-      const transport = describeTransport();
-      if (transport.kind === 'none') reportMissingHelper();
+      const socketPath = resolveSocketPath();
+      const installed = fs.existsSync(HELPER_APP_DEST);
+      const socketUp = fs.existsSync(socketPath);
 
+      console.log(`installed: ${installed ? 'yes' : 'no'} (${HELPER_APP_DEST})`);
+      console.log(`daemon:    ${socketUp ? 'running' : 'stopped'}`);
+
+      if (!installed) {
+        console.log('');
+        console.log('Run:  agents computer install-helper');
+        return;
+      }
+      if (!socketUp) {
+        console.log('');
+        console.log('Run:  agents computer start');
+        return;
+      }
+
+      // Daemon is up — probe trust state.
       const client = openComputerClient();
       try {
         const r = await client.call('trust_status');
@@ -57,17 +76,11 @@ function registerStatusCommand(program: Command): void {
         }
         const trusted = Boolean(r.result?.trusted);
         const helperPid = r.result?.pid;
-        const helperPath = r.result?.path as string | undefined;
-        console.log(`trust: ${trusted ? 'granted' : 'denied'}`);
-        console.log(`transport: ${transport.kind} (${transport.path})`);
-        if (helperPath) console.log(`helper: ${helperPath}`);
-        if (typeof helperPid === 'number') console.log(`pid: ${helperPid}`);
+        console.log(`trust:     ${trusted ? 'granted' : 'denied'}`);
+        if (typeof helperPid === 'number') console.log(`pid:       ${helperPid}`);
         if (!trusted) {
-          const appPath = helperPath ? path.resolve(helperPath, '..', '..', '..') : HELPER_APP_DEST;
-          console.error('');
-          console.error('Accessibility is not granted to ComputerHelper.app.');
-          console.error('Open System Settings > Privacy & Security > Accessibility and add:');
-          console.error(`  ${appPath}`);
+          console.log('');
+          console.log('Grant Accessibility + Screen Recording in System Settings, then `agents computer start` again.');
         }
       } finally {
         await client.close();
@@ -167,7 +180,7 @@ const HELPER_LABEL = HELPER_BUNDLE_ID;
 function registerInstallHelperCommand(program: Command): void {
   program
     .command('install-helper')
-    .description('Install ComputerHelper.app to /Applications/, register launchd daemon, open Unix socket')
+    .description('Install ComputerHelper.app to /Applications/ (does NOT activate the daemon — run `start` to enable)')
     .action(async () => {
       const srcApp = resolveHelperApp();
       if (!srcApp || !fs.existsSync(srcApp)) {
@@ -214,14 +227,14 @@ function registerInstallHelperCommand(program: Command): void {
         process.exit(1);
       }
 
-      // 3. Ensure socket + log parent dirs exist. ~/.agents/.cache/helpers/
-      // is the canonical home for helper-subprocess scratch (matches the
-      // browser daemon's ~/.agents/.cache/helpers/browser.sock). logs/ is
-      // the runtime log bucket.
+      // 3. Ensure socket + log parent dirs exist.
       fs.mkdirSync(path.dirname(socketPath), { recursive: true });
       fs.mkdirSync(path.dirname(logPath), { recursive: true });
 
-      // 4. Write plist with HOME paths resolved (launchd does not expand ~).
+      // 4. Write the LaunchAgent plist but DO NOT bootstrap it. The user
+      // explicitly opts into running the daemon via `agents computer start`.
+      // Screen Recording + Accessibility are scary permissions; we don't
+      // want an always-on listener that can drive any app the user could.
       const execInsideApp = path.join(HELPER_APP_DEST, 'Contents', 'MacOS', 'ComputerHelper');
       const plistContent = renderLaunchAgentPlist({
         label: HELPER_LABEL,
@@ -231,72 +244,92 @@ function registerInstallHelperCommand(program: Command): void {
       });
       fs.mkdirSync(path.dirname(plistPath), { recursive: true });
       fs.writeFileSync(plistPath, plistContent);
-      console.log(`wrote plist: ${plistPath}`);
+      console.log(`wrote plist: ${plistPath} (NOT activated)`);
 
-      // 5. Load via launchctl. UID-keyed gui/ domain so it runs at login.
+      console.log('');
+      console.log('Helper installed (inactive).');
+      console.log('');
+      console.log(`  app:    ${HELPER_APP_DEST}`);
+      console.log(`  plist:  ${plistPath}`);
+      console.log('');
+      console.log('Next steps:');
+      console.log('  1. Grant TCC permissions (one-time):');
+      console.log('     System Settings > Privacy & Security > Accessibility       — add Computer Helper.app');
+      console.log('     System Settings > Privacy & Security > Screen Recording    — add Computer Helper.app');
+      console.log('  2. When you want to use it:  agents computer start');
+      console.log('  3. When you are done:         agents computer stop');
+    });
+}
+
+function registerStartCommand(program: Command): void {
+  program
+    .command('start')
+    .description('Activate the helper daemon (loads launchd, opens socket)')
+    .action(async () => {
+      const home = os.homedir();
+      const plistPath = path.join(home, 'Library', 'LaunchAgents', `${HELPER_LABEL}.plist`);
+      const socketPath = resolveSocketPath();
+      const logPath = resolveLogPath();
+
+      if (!fs.existsSync(plistPath)) {
+        console.error(`plist not found at ${plistPath}`);
+        console.error('run: agents computer install-helper');
+        process.exit(1);
+      }
+      if (!fs.existsSync(HELPER_APP_DEST)) {
+        console.error(`helper app not found at ${HELPER_APP_DEST}`);
+        console.error('run: agents computer install-helper');
+        process.exit(1);
+      }
+
       const uid = process.getuid?.();
       if (typeof uid !== 'number') {
-        console.error('cannot resolve uid (process.getuid unavailable)');
+        console.error('cannot resolve uid');
         process.exit(1);
       }
       const domain = `gui/${uid}`;
 
-      // Bootout first to clear any prior registration. Ignore failure
-      // (most common when nothing is loaded yet).
+      // Bootout first to clear any prior registration. Best-effort.
       try {
         execFileSync('/bin/launchctl', ['bootout', domain, plistPath], { stdio: 'pipe' });
-        console.log('launchctl bootout: ok (cleared prior registration)');
       } catch {
         // expected when not previously loaded
       }
 
       try {
-        execFileSync('/bin/launchctl', ['bootstrap', domain, plistPath], { stdio: 'inherit' });
-        console.log('launchctl bootstrap: ok');
+        execFileSync('/bin/launchctl', ['bootstrap', domain, plistPath], { stdio: 'pipe' });
       } catch (err) {
         console.error(`launchctl bootstrap failed: ${(err as Error).message}`);
-        console.error('the plist may be malformed or the label already in use.');
         process.exit(1);
       }
 
-      // Kickstart -k: force restart so we pick up the new binary even if a
-      // previous instance is still running.
+      // Force restart so we pick up the latest binary.
       try {
-        execFileSync('/bin/launchctl', ['kickstart', '-k', `${domain}/${HELPER_LABEL}`], { stdio: 'inherit' });
-        console.log('launchctl kickstart: ok');
+        execFileSync('/bin/launchctl', ['kickstart', '-k', `${domain}/${HELPER_LABEL}`], { stdio: 'pipe' });
       } catch (err) {
         console.error(`launchctl kickstart failed: ${(err as Error).message}`);
         process.exit(1);
       }
 
-      // 6. Wait up to 5s for the socket to appear.
+      // Wait up to 5s for the socket.
       const deadline = Date.now() + 5000;
-      let socketReady = false;
       while (Date.now() < deadline) {
-        if (fs.existsSync(socketPath)) {
-          socketReady = true;
-          break;
-        }
+        if (fs.existsSync(socketPath)) break;
         await sleep(100);
       }
-      if (!socketReady) {
+      if (!fs.existsSync(socketPath)) {
         console.error(`socket did not appear at ${socketPath} within 5s`);
         console.error(`check ${logPath} for helper startup errors`);
         process.exit(1);
       }
-      console.log(`socket up: ${socketPath}`);
 
-      // 7. Probe trust_status through the socket.
+      // Probe trust through the socket.
       let trustStr = 'unknown';
       try {
         const client = openComputerClient();
         try {
           const r = await client.call('trust_status');
-          if (r.error) {
-            trustStr = `error (${r.error.code})`;
-          } else {
-            trustStr = r.result?.trusted ? 'granted' : 'denied';
-          }
+          trustStr = r.error ? `error (${r.error.code})` : (r.result?.trusted ? 'granted' : 'denied');
         } finally {
           await client.close();
         }
@@ -304,24 +337,45 @@ function registerInstallHelperCommand(program: Command): void {
         trustStr = `error (${(err as Error).message})`;
       }
 
-      console.log('');
-      console.log('Helper installed.');
-      console.log('');
-      console.log(`  app:    ${HELPER_APP_DEST}`);
-      console.log(`  socket: ${socketPath}`);
-      console.log(`  log:    ${logPath}`);
-      console.log(`  trust:  ${trustStr}`);
-      console.log('');
-      if (trustStr !== 'granted') {
-        console.log('One-time setup (only needed if trust is \'denied\'):');
-        console.log('  1. Open: System Settings > Privacy & Security > Accessibility');
-        console.log('  2. Click the + button, navigate to /Applications/');
-        console.log(`  3. Add: ${HELPER_APP_NAME}`);
-        console.log('  4. Toggle it ON');
+      console.log(`daemon: running`);
+      console.log(`socket: ${socketPath}`);
+      console.log(`trust:  ${trustStr}`);
+      if (trustStr === 'denied') {
         console.log('');
-        console.log('After granting, run: agents computer status');
-      } else {
-        console.log('Trust already granted. Try: agents computer status');
+        console.log('Grant Accessibility + Screen Recording to Computer Helper.app, then run `agents computer start` again.');
+      }
+    });
+}
+
+function registerStopCommand(program: Command): void {
+  program
+    .command('stop')
+    .description('Deactivate the helper daemon (bootout, removes socket)')
+    .action(async () => {
+      const home = os.homedir();
+      const plistPath = path.join(home, 'Library', 'LaunchAgents', `${HELPER_LABEL}.plist`);
+      const socketPath = resolveSocketPath();
+
+      const uid = process.getuid?.();
+      if (typeof uid !== 'number') {
+        console.error('cannot resolve uid');
+        process.exit(1);
+      }
+      const domain = `gui/${uid}`;
+
+      try {
+        execFileSync('/bin/launchctl', ['bootout', domain, plistPath], { stdio: 'pipe' });
+      } catch {
+        // already gone — fine
+      }
+
+      // launchd unlinks the socket when the daemon exits; helper also has an
+      // atexit unlink. Best-effort cleanup if either path didn't fire.
+      try { fs.unlinkSync(socketPath); } catch {}
+
+      console.log('daemon: stopped');
+      if (fs.existsSync(socketPath)) {
+        console.warn(`(socket still present at ${socketPath} — may belong to a different process)`);
       }
     });
 }
