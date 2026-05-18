@@ -29,6 +29,51 @@ func log(_ msg: String) {
     stderr.write("[computer-helper] \(msg)\n".data(using: .utf8)!)
 }
 
+// Allow-list policy. Mutated at startup (from disk) and on every SIGHUP.
+// File scope so RPC.swift can read it without an instance handle. The
+// helper boots with allow=[] which means every action gets rejected —
+// the safe default if the policy file is missing, unreadable, or empty.
+struct Policy {
+    var allow: Set<String> = []
+}
+
+var policy = Policy()
+
+// Resolve the policy file path. Env override mirrors the socket-path
+// override so tests can point us at a scratch file. Default lives next to
+// the socket under ~/.agents/.cache/helpers/.
+func resolvePolicyPath() -> String {
+    if let env = ProcessInfo.processInfo.environment["COMPUTER_HELPER_POLICY"], !env.isEmpty {
+        return env
+    }
+    return "\(NSHomeDirectory())/.agents/.cache/helpers/computer-policy.json"
+}
+
+// Load (or reload) the policy file. Errors are logged but never thrown:
+// the helper keeps running with whatever it last had, with the explicit
+// exception that "file missing" resets the allow list to empty so an
+// uninstall of permissions takes effect on SIGHUP.
+func loadPolicy() {
+    let path = resolvePolicyPath()
+    guard FileManager.default.fileExists(atPath: path) else {
+        log("policy file missing at \(path) — empty allow list (fail-safe)")
+        policy = Policy()
+        return
+    }
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
+        log("policy file unreadable at \(path) — keeping previous allow list (\(policy.allow.count) entries)")
+        return
+    }
+    guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let allow = json["allow"] as? [String] else {
+        log("policy file unparseable at \(path) — empty allow list (fail-safe)")
+        policy = Policy()
+        return
+    }
+    policy = Policy(allow: Set(allow))
+    log("policy loaded: \(allow.count) allowed bundle ids")
+}
+
 // Resolve socket path: --socket <path> argv, else env COMPUTER_HELPER_SOCKET.
 // If neither is set, fall back to stdio mode.
 func resolveSocketPath() -> String? {
@@ -82,6 +127,18 @@ func handleLine(_ line: Data) -> Data? {
 }
 
 log("started pid=\(getpid())")
+
+// Load the allow-list policy before accepting any RPC calls. SIGHUP from
+// the CLI's `agents computer reload` triggers a reload.
+loadPolicy()
+
+let sighupSource = DispatchSource.makeSignalSource(signal: SIGHUP, queue: .main)
+sighupSource.setEventHandler {
+    log("SIGHUP — reloading policy")
+    loadPolicy()
+}
+sighupSource.resume()
+signal(SIGHUP, SIG_IGN) // DispatchSource needs the libc handler ignored
 
 if let socketPath = resolveSocketPath() {
     // ---- Socket transport ----

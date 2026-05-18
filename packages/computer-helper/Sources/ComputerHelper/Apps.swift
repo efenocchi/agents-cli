@@ -11,14 +11,21 @@ enum Apps {
             guard app.activationPolicy == .regular else { continue }
             let pid = Int(app.processIdentifier)
             let bundleId = app.bundleIdentifier ?? ""
-            let excluded = DENY_BUNDLE_IDS.contains(bundleId)
+
+            // Drop apps the user has not authorized — the agent should not
+            // even see them in the listing. Hard-floor entries are dropped
+            // unconditionally. Suggest `agents computer status` so the user
+            // knows where to look if the list seems empty.
+            if HARD_FLOOR_DENY.contains(bundleId) { continue }
+            if !policy.allow.contains(bundleId) { continue }
+
             out.append([
                 "pid": pid,
                 "name": app.localizedName ?? "",
                 "bundle_id": bundleId,
                 "active": app.isActive,
                 "hidden": app.isHidden,
-                "excluded": excluded,
+                "excluded": false,
             ])
         }
         return ["apps": out]
@@ -33,6 +40,13 @@ enum Apps {
 
         if bundleId == nil && path == nil && name == nil {
             throw RPCError.invalid("pass one of: bundle_id, path, name")
+        }
+
+        // Reject path-traversal-shaped names. The candidatePaths interpolation
+        // below would otherwise let an attacker escape /Applications/ via
+        // "../../../usr/bin/whatever" or "../Library/Application Support/...".
+        if let n = name, n.contains("/") || n.contains("..") {
+            throw RPCError.invalid("name must not contain '/' or '..' — use bundle_id or path instead")
         }
 
         var url: URL?
@@ -74,6 +88,19 @@ enum Apps {
             throw RPCError.invalid("could not resolve app")
         }
 
+        // Resolve the bundle id of the target BEFORE launching, then gate
+        // against the hard floor + user allow list. Different from the other
+        // methods because the pid doesn't exist yet — we look up the bundle
+        // id from the resolved Info.plist instead.
+        let resolvedBundleId = resolveBundleId(forAppURL: appURL) ?? bundleId ?? ""
+        if HARD_FLOOR_DENY.contains(resolvedBundleId) {
+            throw RPCError.excluded(resolvedBundleId)
+        }
+        if !policy.allow.contains(resolvedBundleId) {
+            throw RPCError(code: "permission_denied",
+                           message: "\(resolvedBundleId.isEmpty ? "<unknown bundle>" : resolvedBundleId) not in allow list — add Computer(\(resolvedBundleId.isEmpty ? "<bundle-id>" : resolvedBundleId)) to a permissions group, then `agents computer reload`")
+        }
+
         // Synchronously launch and wait for the pid. NSWorkspace.openApplication
         // is async; use a semaphore so we return the pid to the caller.
         let semaphore = DispatchSemaphore(value: 0)
@@ -105,5 +132,16 @@ enum Apps {
             "name": app.localizedName ?? "",
             "bundle_id": app.bundleIdentifier ?? "",
         ]
+    }
+
+    // Resolve the bundle id of an .app at appURL without launching it. Reads
+    // CFBundleIdentifier from the Info.plist. Returns nil for non-.app URLs
+    // (raw executables) where the caller must rely on the explicit bundle_id
+    // input.
+    private static func resolveBundleId(forAppURL appURL: URL) -> String? {
+        if let bundle = Bundle(url: appURL), let bid = bundle.bundleIdentifier {
+            return bid
+        }
+        return nil
     }
 }

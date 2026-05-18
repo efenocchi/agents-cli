@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 struct RPCError: Error {
@@ -27,17 +28,43 @@ struct RPCError: Error {
     }
 }
 
-// Bundle IDs the helper refuses to operate on. Prevents agent self-pwn and
-// avoids automating sensitive system UIs.
-let DENY_BUNDLE_IDS: Set<String> = [
-    "com.apple.Terminal",
-    "com.googlecode.iterm2",
-    "ai.getrush.app",
-    "com.apple.systempreferences",
-    "com.apple.keychainaccess",
+// HARD floor — the helper refuses to operate on these bundle ids regardless
+// of what the user lists in `~/.agents/permissions/groups/`. These are TCC
+// escalation paths: driving them would let an attacker silently re-grant
+// other TCC permissions (Accessibility, Screen Recording) without the
+// user's knowledge. Everything else is user-controlled via Computer(...)
+// permission patterns — Terminal, iTerm, Keychain, the Rush app, etc. are
+// all USER-opinion now, not our opinion.
+let HARD_FLOOR_DENY: Set<String> = [
     "com.apple.tccd",
     "com.apple.SecurityAgent",
+    "com.apple.systempreferences",
 ]
+
+// Look up the bundle id for a pid, or "" if we can't see the process. Used
+// by both the hard-floor check and the allow-list check.
+func bundleIdForPid(_ pid: Int) -> String {
+    NSWorkspace.shared.runningApplications.first { Int($0.processIdentifier) == pid }?.bundleIdentifier ?? ""
+}
+
+// Centralized gate called by every action method that targets a pid. Two
+// stages:
+//   1. HARD_FLOOR_DENY — overrides any user allow rule, returns
+//      target_excluded so the caller knows this is a fixed policy.
+//   2. policy.allow — must contain the bundle id, else permission_denied.
+//
+// Fail-safe default: when the policy file is missing or unparseable the
+// helper boots with an empty allow set, so this check rejects everything.
+func ensurePidAllowed(_ pid: Int) throws {
+    let bundleId = bundleIdForPid(pid)
+    if HARD_FLOOR_DENY.contains(bundleId) {
+        throw RPCError.excluded(bundleId)
+    }
+    if !policy.allow.contains(bundleId) {
+        throw RPCError(code: "permission_denied",
+                       message: "pid \(pid) (\(bundleId.isEmpty ? "unknown bundle" : bundleId)) not in allow list — add Computer(\(bundleId.isEmpty ? "<bundle-id>" : bundleId)) to a permissions group, then `agents computer reload`")
+    }
+}
 
 final class Dispatcher {
     let cache: ElementCache
