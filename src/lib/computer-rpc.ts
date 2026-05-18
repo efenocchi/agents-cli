@@ -17,7 +17,7 @@ import { createConnection, type Socket } from 'net';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-import { getHelpersDir, getLogsDir } from './state.js';
+import { getHelpersDir, getLogsDir, getUserPermissionsDir, getPermissionsDir } from './state.js';
 
 export interface RPCResponse {
   id: number | null;
@@ -43,6 +43,87 @@ export function resolveSocketPath(): string {
 // bucket (matches the scheduler daemon's logs.jsonl convention).
 export function resolveLogPath(): string {
   return path.join(getLogsDir(), 'computer-helper.log');
+}
+
+// Policy file the helper reads at startup and on SIGHUP. Sibling of
+// computer.sock under ~/.agents/.cache/helpers/. Allow-list of bare bundle
+// ids (e.g. "com.apple.mail"), derived from Computer(...) patterns in
+// ~/.agents/permissions/groups/.
+export function resolvePolicyPath(): string {
+  return path.join(getHelpersDir(), 'computer-policy.json');
+}
+
+// Walk all permission group YAMLs (user dir wins on name collision) and
+// collect Computer(<bundle-id>) patterns from each group's `allow:` list.
+// Returns distinct bundle ids. Line-by-line regex extraction matches
+// buildPermissionsFromGroups: YAML parsers stumble on the nested quotes in
+// some rule values, but the strict pattern below catches our shape cleanly.
+export function loadComputerAllowList(): string[] {
+  const seenFiles = new Set<string>();
+  const allowed = new Set<string>();
+
+  for (const baseDir of [getUserPermissionsDir(), getPermissionsDir()]) {
+    const groupsDir = path.join(baseDir, 'groups');
+    if (!fs.existsSync(groupsDir)) continue;
+
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(groupsDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      if (!entry.name.endsWith('.yml') && !entry.name.endsWith('.yaml')) continue;
+
+      // User dir wins on filename collision.
+      const stem = entry.name.replace(/\.(yaml|yml)$/, '');
+      if (seenFiles.has(stem)) continue;
+      seenFiles.add(stem);
+
+      const filePath = path.join(groupsDir, entry.name);
+      let content: string;
+      try {
+        content = fs.readFileSync(filePath, 'utf-8');
+      } catch {
+        continue;
+      }
+
+      // Strict regex: optional whitespace, dash, quoted Computer(<id>).
+      // Only honors `allow:` lines — `deny:` Computer patterns would be a
+      // contradiction (everything is deny-by-default already).
+      let inAllow = false;
+      for (const rawLine of content.split('\n')) {
+        const line = rawLine.replace(/\r$/, '');
+        const sectionMatch = line.match(/^(\w+)\s*:\s*$/);
+        if (sectionMatch) {
+          inAllow = sectionMatch[1] === 'allow';
+          continue;
+        }
+        if (!inAllow) continue;
+        const ruleMatch = line.match(/^\s*-\s*"Computer\(([^)]+)\)"\s*$/);
+        if (ruleMatch) {
+          const bundleId = ruleMatch[1].trim();
+          if (bundleId.length > 0) allowed.add(bundleId);
+        }
+      }
+    }
+  }
+
+  return [...allowed].sort();
+}
+
+// Write the policy file the helper reads at startup and on SIGHUP.
+// Mode 0600 — same lockdown as the socket (lives in the user-owned cache
+// dir, but be explicit).
+export function writeComputerPolicy(allowedBundleIds: string[]): void {
+  const dir = getHelpersDir();
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  const policy = { allow: allowedBundleIds };
+  fs.writeFileSync(resolvePolicyPath(), JSON.stringify(policy, null, 2), { mode: 0o600 });
 }
 
 // Resolve the helper executable inside the dist .app bundle. Used by the
