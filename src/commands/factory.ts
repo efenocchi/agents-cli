@@ -23,11 +23,17 @@ import { homedir } from 'os';
 import { betaEnableHint, isBetaEnabled } from '../lib/beta.js';
 import { insertTask } from '../lib/cloud/store.js';
 
-const FACTORY_URL = process.env.FACTORY_FLOOR_URL ?? 'https://factory.example.com';
-
 function die(msg: string, code = 1): never {
   console.error(chalk.red(msg));
   process.exit(code);
+}
+
+function requireFactoryUrl(): string {
+  const url = process.env.FACTORY_FLOOR_URL;
+  if (!url) {
+    die('FACTORY_FLOOR_URL is not set. Point it at your Software Factory endpoint.');
+  }
+  return url;
 }
 
 function readRushToken(): string {
@@ -51,8 +57,9 @@ interface SubmitResponse {
 }
 
 async function postFactorySubmit(ref: string): Promise<SubmitResponse> {
+  const factoryUrl = requireFactoryUrl();
   const token = readRushToken();
-  const res = await fetch(`${FACTORY_URL}/factory/submit`, {
+  const res = await fetch(`${factoryUrl}/factory/submit`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,
