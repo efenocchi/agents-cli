@@ -9,7 +9,7 @@ import simpleGit, { SimpleGit } from 'simple-git';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getPackageLocalPath } from './state.js';
-import { DEFAULT_SYSTEM_REPO, MIRROR_SYSTEM_REPO, systemRepoSlug } from './types.js';
+import { DEFAULT_SYSTEM_REPO, systemRepoSlug } from './types.js';
 
 /**
  * Install hooks from `.githooks/` by symlinking each entry into `.git/hooks/`.
@@ -467,11 +467,9 @@ export async function isSystemRepoOrigin(dir: string): Promise<boolean> {
     const origin = remotes.find(r => r.name === 'origin');
     if (!origin?.refs?.fetch) return false;
 
-    // Check if origin points at the current or legacy system repo.
     const url = origin.refs.fetch.toLowerCase();
     const currentSlug = systemRepoSlug(DEFAULT_SYSTEM_REPO).toLowerCase();
-    const mirrorSlug = systemRepoSlug(MIRROR_SYSTEM_REPO).toLowerCase();
-    return url.includes(currentSlug) || url.includes(mirrorSlug);
+    return url.includes(currentSlug);
   } catch {
     /* not a git repo or no remotes */
     return false;
