@@ -23,6 +23,7 @@ import { promisify } from 'util';
 import * as fs from 'fs/promises';
 import * as fsSync from 'fs';
 import * as path from 'path';
+import { setHelpSections } from '../lib/help.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -192,8 +193,27 @@ async function listAgentWorktrees(root: string): Promise<string[]> {
 export function registerWorktreeCommands(program: Command): void {
   const wt = program
     .command('worktree')
-    .description('Provision, release, and prune per-terminal git worktrees for agent isolation.')
-    .addHelpText('after', `\nWorktrees live at <repo>/.history/worktrees/<terminal-id> on branch agent/<terminal-id>.\n\nExamples:\n  agents worktree provision CC-1747509823-3\n  agents worktree release CC-1747509823-3\n  agents worktree prune --dry-run\n`);
+    .description('Provision, release, and prune per-terminal git worktrees for agent isolation.');
+
+  setHelpSections(wt, {
+    examples: `
+      # Create (or reuse) an isolated worktree for an agent terminal — prints the path
+      agents worktree provision CC-1747509823-3
+
+      # Remove the worktree if it's clean and merged/pushed
+      agents worktree release CC-1747509823-3
+
+      # Preview what 'prune' would release across all agent worktrees
+      agents worktree prune --dry-run
+
+      # Release every agent worktree that's safe to remove
+      agents worktree prune
+    `,
+    notes: `
+      Worktrees live at <repo>/.history/worktrees/<terminal-id> on branch agent/<terminal-id>.
+      Use --force on 'release' to skip safety checks (DANGEROUS — discards unpushed work).
+    `,
+  });
 
   wt.command('provision <terminal-id>')
     .description('Create (or reuse) an isolated worktree for an agent terminal. Prints the absolute path.')
