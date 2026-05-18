@@ -53,7 +53,7 @@ const RULES_DOC_FILENAME = 'README.md';
 // at parse time so it can't reach an exec/shell boundary or get interpolated
 // into a generated bash alias. Must allow "latest" plus npm-dist-tag /
 // semver-shaped values (digits, dots, dashes, +, _).
-const VERSION_RE = /^(?:latest|[A-Za-z0-9._+-]{1,64})$/;
+const VERSION_RE = /^(?:latest|(?!.*\.\.)[A-Za-z0-9._+-]{1,64})$/;
 
 /**
  * Resource selection for syncing to a version.
@@ -95,6 +95,42 @@ export interface AvailableResources {
   promptcuts: boolean;
 }
 
+type ResourceBase = { scope: 'project' | 'user'; base: string };
+type ScopedMcpResource = { name: string; scope: 'project' | 'user' };
+
+function getResourceBases(cwd: string): ResourceBase[] {
+  const projectAgentsDir = getProjectAgentsDir(cwd);
+  const userBase = getUserAgentsDir();
+  const systemBase = getAgentsDir();
+  const resourceBases: ResourceBase[] = [];
+  if (projectAgentsDir) {
+    resourceBases.push({ scope: 'project', base: projectAgentsDir });
+  }
+  resourceBases.push({ scope: 'user', base: userBase });
+  resourceBases.push({ scope: 'user', base: systemBase });
+  for (const extra of getEnabledExtraRepos()) {
+    resourceBases.push({ scope: 'user', base: extra.dir });
+  }
+  return resourceBases;
+}
+
+function getScopedMcpResources(cwd: string): ScopedMcpResource[] {
+  const resources = new Map<string, ScopedMcpResource>();
+  for (const { base, scope } of getResourceBases(cwd)) {
+    const mcpDir = path.join(base, 'mcp');
+    if (!fs.existsSync(mcpDir)) continue;
+    const files = fs.readdirSync(mcpDir)
+      .filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
+    for (const file of files) {
+      const config = parseMcpServerConfig(path.join(mcpDir, file));
+      if (config?.name && !resources.has(config.name)) {
+        resources.set(config.name, { name: config.name, scope });
+      }
+    }
+  }
+  return Array.from(resources.values());
+}
+
 /**
  * Get all available resources from ~/.agents/.
  */
@@ -113,19 +149,7 @@ export function getAvailableResources(cwd: string = process.cwd()): AvailableRes
   };
 
   const projectAgentsDir = getProjectAgentsDir(cwd);
-  const userBase = getUserAgentsDir();
-  const systemBase = getAgentsDir();
-  const resourceBases: Array<{ scope: 'project' | 'user'; base: string }> = [];
-  if (projectAgentsDir) {
-    resourceBases.push({ scope: 'project', base: projectAgentsDir });
-  }
-  resourceBases.push({ scope: 'user', base: userBase });
-  resourceBases.push({ scope: 'user', base: systemBase });
-  // Extra DotAgent repos registered via `agents repo add`. Ordered last so
-  // project/user/system names win on collision.
-  for (const extra of getEnabledExtraRepos()) {
-    resourceBases.push({ scope: 'user', base: extra.dir });
-  }
+  const resourceBases = getResourceBases(cwd);
 
   // Commands (*.md files)
   const commandNames = new Set<string>();
@@ -206,19 +230,7 @@ export function getAvailableResources(cwd: string = process.cwd()): AvailableRes
   }
   result.memory = Array.from(presetNames);
 
-  // MCP servers (*.yaml files) — use the `name:` field inside, not filename
-  const mcpNames = new Set<string>();
-  for (const { base } of resourceBases) {
-    const mcpDir = path.join(base, 'mcp');
-    if (!fs.existsSync(mcpDir)) continue;
-    const files = fs.readdirSync(mcpDir)
-      .filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
-    for (const file of files) {
-      const config = parseMcpServerConfig(path.join(mcpDir, file));
-      if (config?.name) mcpNames.add(config.name);
-    }
-  }
-  result.mcp = Array.from(mcpNames);
+  result.mcp = getScopedMcpResources(cwd).map(resource => resource.name);
 
   // Permission groups (from permissions/groups/*.yaml)
   const permissionNames = new Set<string>();
@@ -1380,9 +1392,16 @@ export function getProjectVersion(agent: AgentId, startPath: string): string | n
         const parsed = yaml.parse(content);
         const version = parsed?.agents?.[agent];
         if (typeof version === 'string' && version.trim()) {
-          return version.trim();
+          const normalized = version.trim();
+          if (!VERSION_RE.test(normalized)) {
+            throw new Error(`Invalid version in agents.yaml for ${agent}: ${normalized}. Allowed: latest or [A-Za-z0-9._+-]{1,64}`);
+          }
+          return normalized;
         }
-      } catch {
+      } catch (err) {
+        if (err instanceof Error && err.message.startsWith('Invalid version in agents.yaml')) {
+          throw err;
+        }
         // Ignore parsing errors
       }
     }
@@ -1676,9 +1695,9 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
         patternSelection.permissions = expandPatterns(vr.permissions, permMap);
       }
 
-      // mcp: all declared servers are 'user' source.
+      // mcp: pattern matching must preserve project vs user scope.
       if (Array.isArray(vr.mcp) && vr.mcp.length > 0) {
-        const mcpMap = new Map(available.mcp.map(n => [n, 'user' as const]));
+        const mcpMap = new Map(getScopedMcpResources(cwd).map(resource => [resource.name, resource.scope]));
         patternSelection.mcp = expandPatterns(vr.mcp, mcpMap);
       }
 

@@ -111,4 +111,34 @@ describe('version resource sync path handling', () => {
     expect(fs.existsSync(path.join(syncedSkillDir, 'SKILL.md'))).toBe(true);
     expect(fs.existsSync(path.join(syncedSkillDir, 'secret-link'))).toBe(false);
   });
+
+  it('does not sync project MCP servers under the default user-only MCP policy', async () => {
+    const home = makeTempHome();
+    const project = path.join(home, 'repo');
+
+    fs.mkdirSync(path.join(project, '.agents', 'mcp'), { recursive: true });
+    fs.mkdirSync(path.join(home, '.agents', 'mcp'), { recursive: true });
+    fs.writeFileSync(
+      path.join(project, '.agents', 'mcp', 'evil.yaml'),
+      'name: evil\ntransport: stdio\ncommand: echo\nargs:\n  - evil\n',
+      'utf-8'
+    );
+    fs.writeFileSync(
+      path.join(home, '.agents', 'mcp', 'safe.yaml'),
+      'name: safe\ntransport: stdio\ncommand: echo\nargs:\n  - safe\n',
+      'utf-8'
+    );
+
+    const result = runVersionSync(
+      home,
+      `syncResourcesToVersion('gemini', '0.1.0', undefined, { cwd: ${JSON.stringify(project)} })`
+    ) as { mcp: string[] };
+
+    const settingsPath = path.join(home, '.agents', '.history', 'versions', 'gemini', '0.1.0', 'home', '.gemini', 'settings.json');
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as { mcpServers?: Record<string, unknown> };
+
+    expect(result.mcp).toEqual(['safe']);
+    expect(settings.mcpServers?.safe).toBeDefined();
+    expect(settings.mcpServers?.evil).toBeUndefined();
+  });
 });

@@ -207,8 +207,9 @@ async function promptConflictStrategy(
  *         interactively propose the latest already-installed version.
  *   v12 — helper calls inside generated shims use the absolute agents-cli
  *         entrypoint instead of PATH-resolved `agents`.
+ *   v13 — validate agents.yaml version strings before constructing binary paths.
  */
-export const SHIM_SCHEMA_VERSION = 12;
+export const SHIM_SCHEMA_VERSION = 13;
 
 /** Internal marker string used to embed the schema version in shim scripts. */
 const SHIM_VERSION_MARKER = 'agents-shim-version:';
@@ -394,6 +395,11 @@ if [ -z "$VERSION" ]; then
     echo "  Run: agents add $AGENT@<version>" >&2
     exit 1
   fi
+fi
+
+if [[ ! "$VERSION" =~ ^(latest|[A-Za-z0-9._+-]{1,64})$ || "$VERSION" == *..* ]]; then
+  echo "agents: invalid version in agents.yaml for $AGENT: $VERSION. Allowed: latest or [A-Za-z0-9._+-]{1,64}" >&2
+  exit 1
 fi
 
 VERSION_DIR="$AGENTS_USER_DIR/.history/versions/$AGENT/$VERSION"

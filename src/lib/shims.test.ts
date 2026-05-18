@@ -4,6 +4,7 @@ import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { generateShimScript, SHIM_SCHEMA_VERSION } from './shims.js';
+import { getProjectVersion } from './versions.js';
 
 const tempDirs: string[] = [];
 
@@ -40,6 +41,70 @@ describe('generateShimScript', () => {
   it('does not include .oauth_token fallback for codex shim', () => {
     const script = generateShimScript('codex');
     expect(script).not.toContain('.oauth_token');
+  });
+
+  it('execs normally for a valid project agents.yaml version', () => {
+    const dir = makeTempDir();
+    const home = path.join(dir, 'home');
+    const project = path.join(dir, 'project');
+    const fakeAgents = path.join(dir, 'agents');
+    const versionDir = path.join(home, '.agents', '.history', 'versions', 'claude', '2.0.65');
+    const binary = path.join(versionDir, 'node_modules', '.bin', 'claude');
+    const logPath = path.join(dir, 'exec.log');
+
+    fs.mkdirSync(project, { recursive: true });
+    fs.mkdirSync(path.dirname(binary), { recursive: true });
+    fs.writeFileSync(path.join(project, 'agents.yaml'), 'agents:\n  claude: "2.0.65"\n', 'utf-8');
+    fs.writeFileSync(fakeAgents, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    fs.writeFileSync(binary, `#!/bin/sh\nprintf "ran:%s\\n" "$1" >> ${JSON.stringify(logPath)}\n`, { mode: 0o755 });
+
+    const shimPath = path.join(dir, 'claude-shim');
+    const shim = generateShimScript('claude').replace(/^AGENTS_BIN=.*$/m, `AGENTS_BIN=${JSON.stringify(fakeAgents)}`);
+    fs.writeFileSync(shimPath, shim, { mode: 0o755 });
+
+    const result = spawnSync('bash', [shimPath, 'ok'], {
+      cwd: project,
+      env: { ...process.env, HOME: home },
+      encoding: 'utf-8',
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.readFileSync(logPath, 'utf-8')).toContain('ran:ok');
+  });
+
+  it('rejects a project agents.yaml traversal version before exec', () => {
+    const dir = makeTempDir();
+    const home = path.join(dir, 'home');
+    const project = path.join(dir, 'project');
+    const fakeAgents = path.join(dir, 'agents');
+    const logPath = path.join(dir, 'exec.log');
+
+    fs.mkdirSync(project, { recursive: true });
+    fs.writeFileSync(path.join(project, 'agents.yaml'), 'agents:\n  claude: "../../../tmp/pwn"\n', 'utf-8');
+    fs.writeFileSync(fakeAgents, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+
+    const shimPath = path.join(dir, 'claude-shim');
+    const shim = generateShimScript('claude').replace(/^AGENTS_BIN=.*$/m, `AGENTS_BIN=${JSON.stringify(fakeAgents)}`);
+    fs.writeFileSync(shimPath, shim, { mode: 0o755 });
+
+    const result = spawnSync('bash', [shimPath], {
+      cwd: project,
+      env: { ...process.env, HOME: home },
+      encoding: 'utf-8',
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('invalid version in agents.yaml for claude: ../../../tmp/pwn');
+    expect(fs.existsSync(logPath)).toBe(false);
+  });
+
+  it('rejects traversal versions in getProjectVersion', () => {
+    const dir = makeTempDir();
+    fs.writeFileSync(path.join(dir, 'agents.yaml'), 'agents:\n  claude: "../../../tmp/pwn"\n', 'utf-8');
+
+    expect(() => getProjectVersion('claude', dir)).toThrow(
+      'Invalid version in agents.yaml for claude: ../../../tmp/pwn. Allowed: latest or [A-Za-z0-9._+-]{1,64}'
+    );
   });
 });
 
