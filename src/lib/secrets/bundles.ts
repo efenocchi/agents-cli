@@ -71,6 +71,12 @@ export interface SecretsBundle {
   meta?: Record<string, VarMeta>;
 }
 
+export interface LegacyBundleCandidate {
+  name: string;
+  file: string;
+  keys: string[];
+}
+
 /** Minimum gap between last_used updates so the keychain isn't written on every secrets injection. */
 const LAST_USED_THROTTLE_MS = 60_000;
 
@@ -89,7 +95,25 @@ export function bundleToEnvPrefix(name: string): string {
 }
 
 export function isReservedEnvName(key: string): boolean {
-  return RESERVED_ENV_NAMES.has(key);
+  return RESERVED_ENV_NAMES.has(key.toUpperCase());
+}
+
+export function isLoaderOrInterpreterEnv(name: string): boolean {
+  const upper = name.toUpperCase();
+  return upper.startsWith('LD_') ||
+    upper.startsWith('DYLD_') ||
+    [
+      'NODE_OPTIONS',
+      'PYTHONPATH',
+      'PYTHONSTARTUP',
+      'BASH_ENV',
+      'ENV',
+      'PERL5OPT',
+      'RUBYOPT',
+      'PROMPT_COMMAND',
+      'IFS',
+      'CDPATH',
+    ].includes(upper);
 }
 
 /** Validate a bundle name against the allowed pattern. Throws on invalid input. */
@@ -102,6 +126,9 @@ export function validateBundleName(name: string): void {
 export function validateEnvKey(key: string): void {
   if (!ENV_KEY_PATTERN.test(key)) {
     throw new Error(`Invalid environment variable name '${key}'. Must match [A-Za-z_][A-Za-z0-9_]*.`);
+  }
+  if (isLoaderOrInterpreterEnv(key) || isReservedEnvName(key)) {
+    throw new Error(`Env key "${key}" is reserved — cannot be used in a secrets bundle. Reserved keys include PATH, HOME, USER, and dynamic-loader/interpreter vars (LD_*, DYLD_*, NODE_OPTIONS, etc.).`);
   }
 }
 
@@ -467,18 +494,7 @@ export function parseDotenv(content: string): Record<string, string> {
   return out;
 }
 
-/**
- * One-shot migration: move legacy YAML bundles into the keychain. Scans both
- * `~/.agents/secrets/` and `~/.agents-system/secrets/` — past versions of the
- * CLI sometimes wrote bundles into the system repo even though that's never
- * been a legitimate location. After migration the directories are removed so
- * the system repo never carries a `secrets/` subdir again.
- *
- * Idempotent: re-runs after the dirs are gone are no-ops. Called eagerly at
- * the top of every `agents secrets` subcommand. Skipped on the latency-
- * sensitive `agents run` path.
- */
-export function migrateLegacyBundles(): void {
+export async function migrateLegacyBundles(confirmBundle: (candidate: LegacyBundleCandidate) => boolean | Promise<boolean>): Promise<number> {
   const home = os.homedir();
   const dirs = [
     path.join(home, '.agents', 'secrets'),
@@ -496,32 +512,38 @@ export function migrateLegacyBundles(): void {
     for (const entry of ymls) {
       const file = path.join(dir, entry);
       const name = entry.replace(/\.(yml|yaml)$/, '');
+      let parsed: Partial<SecretsBundle> | null;
       try {
         validateBundleName(name);
         const raw = fs.readFileSync(file, 'utf-8');
-        const parsed = yaml.parse(raw) as Partial<SecretsBundle> | null;
-        if (!parsed || typeof parsed !== 'object') continue;
-        const bundle: SecretsBundle = {
-          name,
-          description: parsed.description,
-          allow_exec: Boolean(parsed.allow_exec),
-          icloud_sync: Boolean(parsed.icloud_sync),
-          vars: parsed.vars && typeof parsed.vars === 'object' ? parsed.vars : {},
-        };
-        writeBundle(bundle);
-        fs.unlinkSync(file);
-        migrated++;
+        parsed = yaml.parse(raw) as Partial<SecretsBundle> | null;
       } catch {
         // Leave malformed YAMLs in place so the user can inspect them.
+        continue;
       }
+      if (!parsed || typeof parsed !== 'object') continue;
+      const bundle: SecretsBundle = {
+        name,
+        description: parsed.description,
+        allow_exec: Boolean(parsed.allow_exec),
+        icloud_sync: Boolean(parsed.icloud_sync),
+        vars: parsed.vars && typeof parsed.vars === 'object' ? parsed.vars : {},
+      };
+      const keys = Object.keys(bundle.vars);
+      for (const key of keys) {
+        validateEnvKey(key);
+      }
+      const proceed = await confirmBundle({ name, file, keys });
+      if (!proceed) continue;
+      writeBundle(bundle);
+      fs.unlinkSync(file);
+      migrated++;
     }
     try {
       if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir);
     } catch { /* not empty or already gone */ }
   }
-  if (migrated > 0) {
-    console.log(`Migrated ${migrated} legacy bundle${migrated === 1 ? '' : 's'} into keychain.`);
-  }
+  return migrated;
 }
 
 export type { SecretRef };

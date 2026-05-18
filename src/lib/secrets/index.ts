@@ -125,9 +125,9 @@ export function setKeychainBackendForTest(b: KeychainBackend | null): KeychainBa
   return prev;
 }
 
-// Backend routing: non-sync items go through /usr/bin/security so they share
-// an ACL identity with items created by previous CLI versions (no prompts on
-// existing data). Sync items must go through the signed .app — only the .app
+// Backend routing: non-sync items go through /usr/bin/security with an empty
+// trusted-app ACL; existing items written by older versions retain their ACL.
+// Sync items must go through the signed .app — only the .app
 // holds the keychain-access-groups entitlement macOS requires for
 // kSecAttrSynchronizable. Enumeration also goes through the .app because the
 // security CLI doesn't expose listing by service prefix.
@@ -201,7 +201,7 @@ export function setKeychainToken(item: string, value: string, sync = false): voi
   }
   // `security -i` keeps the value out of argv (and `ps`).
   const user = os.userInfo().username;
-  const cmd = `add-generic-password -a ${quoteForSecurityCli(user)} -s ${quoteForSecurityCli(item)} -w ${quoteForSecurityCli(value)} -U\n`;
+  const cmd = `add-generic-password -a ${quoteForSecurityCli(user)} -s ${quoteForSecurityCli(item)} -w ${quoteForSecurityCli(value)} -T ${quoteForSecurityCli('')} -U\n`;
   const result = spawnSync('security', ['-i'], {
     input: cmd,
     stdio: ['pipe', 'pipe', 'pipe'],

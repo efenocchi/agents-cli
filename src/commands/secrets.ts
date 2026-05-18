@@ -343,8 +343,7 @@ function countExpiringSoon(meta: Record<string, VarMeta> | undefined): number {
 export function registerSecretsCommands(program: Command): void {
   const cmd = program
     .command('secrets')
-    .description('Named bundles of env variables backed by macOS Keychain (iCloud-synced by default). Inject into agents via `agents run --secrets <name>`.')
-    .hook('preAction', () => { migrateLegacyBundles(); });
+    .description('Named bundles of env variables backed by macOS Keychain (iCloud-synced by default). Inject into agents via `agents run --secrets <name>`.');
 
   setHelpSections(cmd, {
     examples: `
@@ -779,6 +778,39 @@ Examples:
           process.exit(1);
         }
         console.log(chalk.green(`Bundle '${resolvedName}' deleted.`));
+      } catch (err) {
+        if (isPromptCancelled(err)) return;
+        console.error(chalk.red((err as Error).message));
+        process.exit(1);
+      }
+    });
+
+  cmd
+    .command('migrate')
+    .description('Interactively migrate legacy YAML bundles into Keychain')
+    .action(async () => {
+      try {
+        if (!isInteractiveTerminal()) {
+          console.error(chalk.red('Refusing to migrate legacy secrets without an interactive confirmation prompt.'));
+          process.exit(1);
+        }
+        const { confirm } = await import('@inquirer/prompts');
+        const migrated = await migrateLegacyBundles(async (candidate) => {
+          console.log(chalk.bold(`Legacy bundle '${candidate.name}'`));
+          console.log(chalk.gray(candidate.file));
+          for (const key of candidate.keys) {
+            console.log(`  ${key}`);
+          }
+          return await confirm({
+            message: `Migrate legacy bundle '${candidate.name}' into Keychain?`,
+            default: false,
+          });
+        });
+        if (migrated === 0) {
+          console.log(chalk.gray('No legacy bundles migrated.'));
+          return;
+        }
+        console.log(chalk.green(`Migrated ${migrated} legacy bundle${migrated === 1 ? '' : 's'} into keychain.`));
       } catch (err) {
         if (isPromptCancelled(err)) return;
         console.error(chalk.red((err as Error).message));
