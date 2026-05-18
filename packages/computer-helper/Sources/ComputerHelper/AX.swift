@@ -44,10 +44,8 @@ enum AX {
         let pid = try Params.int(params, "pid")
         let maxDepth = Params.intOpt(params, "max_depth") ?? MAX_DEPTH_DEFAULT
 
-        // Reject denied bundle ids early.
-        if let bundleId = bundleIdForPid(pid), DENY_BUNDLE_IDS.contains(bundleId) {
-            throw RPCError.excluded(bundleId)
-        }
+        // Gate: hard floor + user allow list. Throws before any AX call.
+        try ensurePidAllowed(pid)
 
         guard runningPids().contains(pid) else {
             throw RPCError.appMissing(pid)
@@ -73,6 +71,10 @@ enum AX {
     static func click(params: [String: Any], cache: ElementCache) throws -> [String: Any] {
         try ensureTrusted()
         let pid = try Params.int(params, "pid")
+
+        // Gate BEFORE the coords-fallback branch so the bypass we previously
+        // shipped (drive a denied app by passing x/y) is closed.
+        try ensurePidAllowed(pid)
 
         // Coords fallback: if the caller passes x/y (and no element_id), synthesize
         // a click at those screen coords. Used for canvas apps, games, and any
@@ -168,6 +170,9 @@ enum AX {
         let pid = try Params.int(params, "pid")
         let text = try Params.string(params, "text")
 
+        // Gate BEFORE the coords-fallback branch — same reason as click().
+        try ensurePidAllowed(pid)
+
         // Coords fallback: click at (x,y) to focus the input, then paste the
         // text via clipboard + cmd+V. Works on canvas apps and any element
         // the AX tree doesn't expose as a text input. Note: this touches the
@@ -245,9 +250,7 @@ enum AX {
         let pid = try Params.int(params, "pid")
         let maxChars = min(Params.intOpt(params, "max_chars") ?? 50_000, 200_000)
 
-        if let bundleId = bundleIdForPid(pid), DENY_BUNDLE_IDS.contains(bundleId) {
-            throw RPCError.excluded(bundleId)
-        }
+        try ensurePidAllowed(pid)
 
         // Pick a root: either the element the caller named, or the whole app.
         let root: AXUIElement
@@ -324,6 +327,7 @@ enum AX {
     static func scroll(params: [String: Any], cache: ElementCache) throws -> [String: Any] {
         try ensureTrusted()
         let pid = try Params.int(params, "pid")
+        try ensurePidAllowed(pid)
         let elementId = Params.stringOpt(params, "element_id")
 
         // If an element id is given, try AXShowMenu / AXScrollToVisible first.
@@ -496,9 +500,5 @@ enum AX {
 
     private static func runningPids() -> Set<Int> {
         Set(NSWorkspace.shared.runningApplications.map { Int($0.processIdentifier) })
-    }
-
-    private static func bundleIdForPid(_ pid: Int) -> String? {
-        NSWorkspace.shared.runningApplications.first { Int($0.processIdentifier) == pid }?.bundleIdentifier
     }
 }

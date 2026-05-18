@@ -13,12 +13,10 @@ enum Events {
         // Validate pid resolves to a running app. CGEventPostToPid silently
         // no-ops for dead pids and returns no error, so without this check
         // the agent gets {"ok": true} for a pid that does not exist.
-        guard let app = NSRunningApplication(processIdentifier: pid_t(pid)) else {
+        guard NSRunningApplication(processIdentifier: pid_t(pid)) != nil else {
             throw RPCError.appMissing(pid)
         }
-        if let bundleId = app.bundleIdentifier, DENY_BUNDLE_IDS.contains(bundleId) {
-            throw RPCError.excluded(bundleId)
-        }
+        try ensurePidAllowed(pid)
 
         let chord = try parseChord(keys)
 

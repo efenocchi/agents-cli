@@ -19,6 +19,9 @@ enum Screenshot {
         let pid = try Params.int(params, "pid")
         let quality = max(1, min(100, Params.intOpt(params, "quality") ?? 85))
 
+        // Hard floor + user allow list. Throws before SCK initializes.
+        try ensurePidAllowed(pid)
+
         // SCK is async; bridge to the sync RPC dispatcher with a semaphore.
         // 5s is well above the 100-300ms typical SCK frame grab; if we hit
         // it something is wrong (permission, hung daemon, denied window).

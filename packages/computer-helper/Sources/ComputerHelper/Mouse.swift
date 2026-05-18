@@ -14,10 +14,9 @@ enum Mouse {
         try AX.ensureTrusted()
         let pid = try Params.int(params, "pid")
 
-        // Reject denied bundle ids early.
-        if let bundleId = bundleIdForPid(pid), DENY_BUNDLE_IDS.contains(bundleId) {
-            throw RPCError.excluded(bundleId)
-        }
+        // Hard floor + user allow list. Throws permission_denied / target_excluded
+        // before any CGEvent is synthesized.
+        try ensurePidAllowed(pid)
 
         let button = Params.stringOpt(params, "button") ?? "left"
         guard button == "left" || button == "right" else {
@@ -90,9 +89,8 @@ enum Mouse {
         try AX.ensureTrusted()
         let pid = try Params.int(params, "pid")
 
-        if let bundleId = bundleIdForPid(pid), DENY_BUNDLE_IDS.contains(bundleId) {
-            throw RPCError.excluded(bundleId)
-        }
+        // Gate BEFORE the coords-fallback branch to close the bypass path.
+        try ensurePidAllowed(pid)
 
         // Coords fallback for canvas/games/inaccessible elements.
         if Params.stringOpt(params, "element_id") == nil {
@@ -156,9 +154,7 @@ enum Mouse {
     static func focusWindow(params: [String: Any]) throws -> [String: Any] {
         let pid = try Params.int(params, "pid")
 
-        if let bundleId = bundleIdForPid(pid), DENY_BUNDLE_IDS.contains(bundleId) {
-            throw RPCError.excluded(bundleId)
-        }
+        try ensurePidAllowed(pid)
 
         guard let app = NSRunningApplication(processIdentifier: pid_t(pid)) else {
             throw RPCError.appMissing(pid)
@@ -233,10 +229,6 @@ enum Mouse {
         var arr: CFArray?
         guard AXUIElementCopyActionNames(el, &arr) == .success, let arr = arr else { return [] }
         return (arr as NSArray).compactMap { $0 as? String }
-    }
-
-    private static func bundleIdForPid(_ pid: Int) -> String? {
-        NSWorkspace.shared.runningApplications.first { Int($0.processIdentifier) == pid }?.bundleIdentifier
     }
 
     private static func numeric(_ v: Any) -> CGFloat? {
