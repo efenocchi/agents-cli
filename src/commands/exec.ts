@@ -22,6 +22,7 @@ import {
 import type { AgentId } from '../lib/types.js';
 import { profileExists, resolveProfileForRun } from '../lib/profiles.js';
 import { getSystemAgentsDir, getUserAgentsDir } from '../lib/state.js';
+import { setHelpSections } from '../lib/help.js';
 
 /** Resolve a workflow by name. User repo wins over system repo. Returns the workflow dir or null. */
 function resolveWorkflow(name: string): string | null {
@@ -84,7 +85,7 @@ function formatRotationBanner(result: RotateResult, verb: string = 'balanced'): 
 
 /** Register the `agents run <agent> [prompt]` command. */
 export function registerRunCommand(program: Command): void {
-  program
+  const runCmd = program
     .command('run <agent> [prompt]')
     .description('Execute an agent. Pass a prompt for headless runs; omit it to launch the agent interactively.')
     .option('-m, --mode <mode>', 'How much the agent can do: plan (read-only), edit (can write files), full (writes + all permissions)', 'plan')
@@ -135,56 +136,45 @@ export function registerRunCommand(program: Command): void {
     .option(
       '--acp',
       'Route through the Agent Client Protocol instead of direct exec. Supported for gemini, claude (via @zed-industries/claude-code-acp adapter). Unified event stream; emits ndjson when --json.',
-    )
-    .addHelpText('after', `
-Modes:
-  With a prompt -> headless (pipes output, no TTY, exits when the agent finishes).
-  Without a prompt -> interactive (launches the agent's TUI; stdio is fully inherited).
+    );
 
-Run strategy:
-  pinned     Use the workspace/global pinned version from agents.yaml.
-  available  Use the pinned version if it has usage available; otherwise switch
-             to another signed-in version with usage available.
-  balanced   Distribute traffic across healthy accounts using weighted random
-             by remaining capacity — fresher accounts get more, near-exhausted
-             ones get less. Avoids bursting any single account.
-  Configure with run.<agent>.strategy in agents.yaml, or override with
-  --strategy. --balanced is kept as a shortcut for --strategy balanced.
-  Legacy "rotate" is accepted as an alias for "balanced".
-  Ignored when @version is pinned, when a profile is used, or with --fallback.
+  setHelpSections(runCmd, {
+    examples: `
+      # Headless, read-only: investigate or summarize without writing files
+      agents run claude "summarize recent git commits" --mode plan
 
-Examples:
-  # Interactive with the pinned default version
-  agents run claude
+      # Headless, can edit: have the agent make changes
+      agents run claude "fix lint errors in src/" --mode edit
 
-  # Interactive, distribute load across healthy accounts
-  agents run claude --strategy balanced
+      # Interactive (TUI) with the pinned default version
+      agents run claude
 
-  # Headless, switch away from the pinned version when usage is unavailable
-  agents run claude "summarize recent git commits" --mode plan --strategy available
+      # Pipe JSON events to a parser (--quiet drops the preamble)
+      agents run claude "..." --json --quiet | jq
 
-  # Pin a specific version (rotation ignored)
-  agents run codex@0.116.0 "fix linting errors in src/" --mode edit
+      # Bounded run — kill the agent after 30 minutes
+      agents run claude "generate sales report for yesterday" --mode plan --timeout 30m
 
-  # Full autonomy with maximum reasoning for a complex task
-  agents run claude "refactor auth to use JWT" --mode full --effort max
+      # Inject a keychain-backed secrets bundle
+      agents run claude "deploy the worker" --secrets prod --mode edit
+    `,
+    notes: `
+      Modes:
+        plan  read-only       edit  can write files       full  writes + all permissions
 
-  # Resume a previous conversation to continue work
-  agents run claude "now add rate limiting" --session-id a1b2c3d4 --mode edit
+      Run strategy (set via --strategy or run.<agent>.strategy in agents.yaml):
+        pinned     use the workspace/global pinned version (default)
+        available  use pinned if usage available; otherwise switch to another signed-in version
+        balanced   distribute load across healthy accounts by remaining capacity
+        --balanced is shorthand for --strategy balanced. Ignored when @version is pinned, when a profile is used, or with --fallback.
 
-  # Automated cron job: generate daily report with 10-minute timeout
-  agents run claude "generate sales report for yesterday" --mode plan --timeout 10m --json > report.jsonl
+      Fallback: --fallback codex,gemini retries on rate-limit failure via /continue handoff. Each entry accepts @version.
 
-  # Auto-fallback to codex then gemini if claude hits a rate limit
-  agents run claude "refactor auth module" --mode edit --fallback codex,gemini
+      Resume: --session-id <id> continues a prior Claude conversation.
+    `,
+  });
 
-  # Inject a named secrets bundle (keychain-backed)
-  agents run claude "charge a test card" --secrets prod-stripe
-
-  # Pin fallback versions: primary claude@2.0.65, fallback codex@0.116.0 then gemini
-  agents run claude@2.0.65 "deep refactor" --fallback codex@0.116.0,gemini
-`)
-    .action(async (agentSpec: string, prompt: string | undefined, options: ExecCommandActionOptions) => {
+  runCmd.action(async (agentSpec: string, prompt: string | undefined, options: ExecCommandActionOptions) => {
       // Parse agent@version
       const [rawAgent, rawVersion] = agentSpec.split('@');
       let agent: AgentId;
