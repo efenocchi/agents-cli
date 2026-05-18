@@ -25,8 +25,8 @@ PROFILE="${CRABBOX_PROFILE:-$(awk '/^profile:/ {print $2; exit}' "$REPO_ROOT/.cr
 PROFILE="${PROFILE:-default}"
 export PROFILE
 
-# GitHub .agents repo for syncing skills/commands
-AGENTS_REPO="${AGENTS_REPO:-git@github.com:phnx-labs/.agents.git}"
+# GitHub .agents repo for syncing skills/commands. Must be set explicitly.
+AGENTS_REPO="${AGENTS_REPO:?AGENTS_REPO must be set to your DotAgents repo (e.g. git@github.com:owner/.agents.git)}"
 
 die() { echo "error: $*" >&2; exit 1; }
 
@@ -41,12 +41,12 @@ export HCLOUD_TOKEN
 # Generate GitHub App token for private repo access.
 # Resolves the installation ID dynamically from a target repo so the script
 # works regardless of whether the App is installed on a user or an org.
-# TOKEN_REPO env var (default: phnx-labs/.agents) picks which installation.
+# TOKEN_REPO env var (required) picks which installation.
 generate_github_token() {
   eval "$(agents secrets export github.com 2>/dev/null)" || return 1
   [[ -n "${APP_ID:-}" && -n "${APP_PRIVATE_KEY:-}" ]] || return 1
 
-  local target_repo="${TOKEN_REPO:-phnx-labs/.agents}"
+  local target_repo="${TOKEN_REPO:?TOKEN_REPO must be set (e.g. owner/.agents) to pick the GitHub App installation}"
   local jwt installation_id token
 
   jwt=$(APP_PRIVATE_KEY="$APP_PRIVATE_KEY" /usr/bin/python3 -c "
