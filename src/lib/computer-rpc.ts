@@ -15,21 +15,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import { createConnection, type Socket } from 'net';
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-
-// Path matches the agents-cli convention codified in src/lib/state.ts —
-// ~/.agents/.cache/helpers/ is the bucket for helper subprocess scratch
-// (sibling: browser.sock). Hard-coded here because state.ts currently has
-// unresolved merge-conflict markers; switch to getHelpersDir() import once
-// the upstream state.ts is repaired.
-function helpersDir(): string {
-  return path.join(os.homedir(), '.agents', '.cache', 'helpers');
-}
-function logsDir(): string {
-  return path.join(os.homedir(), '.agents', '.cache', 'logs');
-}
+import { getHelpersDir, getLogsDir } from './state.js';
 
 export interface RPCResponse {
   id: number | null;
@@ -48,13 +36,13 @@ export interface ComputerClient {
 export function resolveSocketPath(): string {
   const envPath = process.env.COMPUTER_HELPER_SOCKET;
   if (envPath && envPath.length > 0) return envPath;
-  return path.join(helpersDir(), 'computer.sock');
+  return path.join(getHelpersDir(), 'computer.sock');
 }
 
 // Default log path for the launchd-managed daemon. Lives in the cache/logs/
 // bucket (matches the scheduler daemon's logs.jsonl convention).
 export function resolveLogPath(): string {
-  return path.join(logsDir(), 'computer-helper.log');
+  return path.join(getLogsDir(), 'computer-helper.log');
 }
 
 // Resolve the helper executable inside the dist .app bundle. Used by the
