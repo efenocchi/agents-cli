@@ -37,6 +37,12 @@ enum Wait {
             throw RPCError.invalid("pass either duration_ms, or pid + (element_id or locator) + until")
         }
 
+        // Hard floor + user allow list. Goes here (after the duration_ms
+        // early-return that doesn't need a pid) but BEFORE any element_id /
+        // locator branch — the locator branch walks the live AX tree, which
+        // is exactly the bypass we need to close.
+        try ensurePidAllowed(pid)
+
         let elementId = Params.stringOpt(params, "element_id")
         let locator = params["locator"] as? [String: Any]
         guard elementId != nil || locator != nil else {
