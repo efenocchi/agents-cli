@@ -21,17 +21,7 @@ import {
 } from '../lib/exec.js';
 import type { AgentId } from '../lib/types.js';
 import { profileExists, resolveProfileForRun } from '../lib/profiles.js';
-import { getSystemAgentsDir, getUserAgentsDir } from '../lib/state.js';
 import { setHelpSections } from '../lib/help.js';
-
-/** Resolve a workflow by name. User repo wins over system repo. Returns the workflow dir or null. */
-function resolveWorkflow(name: string): string | null {
-  for (const base of [getUserAgentsDir(), getSystemAgentsDir()]) {
-    const dir = path.join(base, 'workflows', name);
-    if (fs.existsSync(path.join(dir, 'WORKFLOW.md'))) return dir;
-  }
-  return null;
-}
 import { readBundle, resolveBundleEnv, describeBundle } from '../lib/secrets/bundles.js';
 import {
   getConfiguredRunStrategy,
@@ -42,7 +32,7 @@ import {
 } from '../lib/rotate.js';
 import { getGlobalDefault, getVersionHomePath, resolveVersion, resolveVersionAlias } from '../lib/versions.js';
 import { buildDiscoveredPlugin, loadPluginManifest, syncPluginToVersion } from '../lib/plugins.js';
-import { parseWorkflowFrontmatter } from '../lib/workflows.js';
+import { parseWorkflowFrontmatter, resolveWorkflowRef } from '../lib/workflows.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -181,6 +171,7 @@ export function registerRunCommand(program: Command): void {
       let version: string | undefined = rawVersion || undefined;
       let profileEnv: Record<string, string> | undefined;
       let fromProfile = false;
+      const cwd = options.cwd ?? process.cwd();
 
       if (isValidAgent(rawAgent)) {
         agent = rawAgent;
@@ -200,13 +191,13 @@ export function registerRunCommand(program: Command): void {
           console.error(chalk.red((err as Error).message));
           process.exit(1);
         }
-      } else if (resolveWorkflow(rawAgent)) {
-        // Workflow: ~/.agents-system/workflows/<name>/ or ~/.agents/workflows/<name>/
-        // Resolution: user repo wins over system repo (same precedence as all resources).
+      } else if (resolveWorkflowRef(rawAgent, cwd)) {
+        // Workflow: explicit directory, project .agents/workflows/<name>, user, system, or extra repo.
+        // Resolution follows resource precedence: direct path, then project > user > system > extras.
         // Structure:
         //   WORKFLOW.md        ← orchestrator instructions fed to claude as system prompt
         //   subagents/*.md     ← flat .md files copied to ~/.claude/agents/ for Agent tool discovery
-        const workflowDir = resolveWorkflow(rawAgent)!;
+        const workflowDir = resolveWorkflowRef(rawAgent, cwd)!;
         agent = 'claude';
 
         const resolvedVersion = resolveVersionAlias('claude', version);
@@ -292,7 +283,6 @@ export function registerRunCommand(program: Command): void {
 
       version = resolveVersionAlias(agent, version);
 
-      const cwd = options.cwd ?? process.cwd();
       const configuredStrategy = getConfiguredRunStrategy(agent, cwd);
       const explicitStrategy = options.strategy ? normalizeRunStrategy(options.strategy) : null;
       if (options.strategy && !explicitStrategy) {

@@ -11,6 +11,7 @@ import * as path from 'path';
 import * as yaml from 'yaml';
 import type { AgentId } from './types.js';
 import {
+  getProjectAgentsDir,
   getSystemWorkflowsDir,
   getUserWorkflowsDir,
   getTrashWorkflowsDir,
@@ -95,6 +96,50 @@ export function countWorkflowSubagents(workflowDir: string): number {
   } catch {
     return 0;
   }
+}
+
+function expandWorkflowPath(ref: string): string {
+  if (ref === '~') return process.env.HOME ?? ref;
+  if (ref.startsWith('~/')) {
+    const home = process.env.HOME;
+    return home ? path.join(home, ref.slice(2)) : ref;
+  }
+  return ref;
+}
+
+function isWorkflowDir(dir: string): boolean {
+  return fs.existsSync(path.join(dir, 'WORKFLOW.md'));
+}
+
+function resolveWorkflowPath(ref: string, cwd: string): string | null {
+  const expanded = expandWorkflowPath(ref);
+  const candidate = path.isAbsolute(expanded) ? expanded : path.resolve(cwd, expanded);
+  return isWorkflowDir(candidate) ? candidate : null;
+}
+
+/**
+ * Resolve an `agents run <workflow>` reference.
+ *
+ * Directories are accepted anywhere on disk when they contain WORKFLOW.md.
+ * Name lookup keeps the normal resource precedence: project > user > system > extras.
+ */
+export function resolveWorkflowRef(ref: string, cwd: string = process.cwd()): string | null {
+  const direct = resolveWorkflowPath(ref, cwd);
+  if (direct) return direct;
+
+  const projectAgentsDir = getProjectAgentsDir(cwd);
+  const searchDirs = [
+    ...(projectAgentsDir ? [path.join(projectAgentsDir, 'workflows')] : []),
+    getUserWorkflowsDir(),
+    getSystemWorkflowsDir(),
+    ...getEnabledExtraRepos().map(r => path.join(r.dir, 'workflows')),
+  ];
+
+  for (const dir of searchDirs) {
+    const workflowPath = path.join(dir, ref);
+    if (isWorkflowDir(workflowPath)) return workflowPath;
+  }
+  return null;
 }
 
 /**
