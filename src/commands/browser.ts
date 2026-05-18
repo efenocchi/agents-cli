@@ -24,7 +24,7 @@ import { parseTargetFilter } from '../lib/browser/service.js';
 import { sendIPCRequest } from '../lib/browser/ipc.js';
 import { browserTaskPicker, type BrowserTask } from './browser-picker.js';
 import { isInteractiveTerminal } from './utils.js';
-import { registerCommandGroups } from '../lib/help.js';
+import { registerCommandGroups, setHelpSections } from '../lib/help.js';
 
 /**
  * Resolve which browser task a command targets. Order:
@@ -69,7 +69,31 @@ const BROWSER_HELP_GROUPS = [
 export function registerBrowserCommand(program: Command): void {
   const browser = program
     .command('browser')
-    .description('Browser automation via CDP');
+    .description('Launch and drive browser profiles via the Chrome DevTools Protocol. Power-tool for the `browser` skill.');
+
+  setHelpSections(browser, {
+    examples: `
+      # List configured browser profiles
+      agents browser profiles list
+
+      # Create a Chrome profile pointed at a CDP endpoint
+      agents browser profiles create work --browser chrome --endpoint http://localhost:9222
+
+      # Start a session against a profile
+      agents browser start work
+
+      # Drive the page
+      agents browser navigate https://example.com
+      agents browser screenshot
+
+      # End the session when done
+      agents browser done
+    `,
+    notes: `
+      Most agent workflows should use the 'browser' skill instead of raw subcommands.
+      The skill wraps profile selection, snapshotting, and tunneling.
+    `,
+  });
 
   registerProfilesCommands(browser);
   registerTaskCommands(browser);
