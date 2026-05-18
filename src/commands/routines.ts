@@ -40,6 +40,7 @@ import { safeJoin } from '../lib/paths.js';
 import { executeJob } from '../lib/runner.js';
 import { JobScheduler } from '../lib/scheduler.js';
 import { isInteractiveTerminal, requireInteractiveSelection } from './utils.js';
+import { setHelpSections } from '../lib/help.js';
 
 /** Start or reload the background scheduler so newly-added jobs fire on time. */
 function ensureSchedulerRunning(): void {
@@ -109,39 +110,39 @@ async function pickJob(
 export function registerRoutinesCommands(program: Command): void {
   const routinesCmd = program
     .command('routines')
-    .description('Schedule agents to run on a cron schedule or at a specific time. The scheduler auto-starts on first add.')
-    .addHelpText(
-      'after',
-      `
-A routine is a YAML file that schedules an agent invocation. It specifies:
-  - which agent to run (claude, codex, gemini, etc.)
-  - when to run (cron schedule or one-shot time)
-  - what task to give the agent (the prompt)
-  - execution constraints (mode, effort, timeout)
+    .description('Schedule agents to run on a cron schedule or at a specific time. The scheduler auto-starts on first add.');
 
-A background scheduler fires routines on their schedule. It auto-starts the first
-time you add a routine; control it manually with 'agents routines start|stop|status'.
+  setHelpSections(routinesCmd, {
+    examples: `
+      # Cron routine: Claude every weekday at 9 AM (scheduler auto-starts)
+      agents routines add daily-standup --schedule "0 9 * * 1-5" --agent claude --prompt "Draft standup from git log"
 
-Examples:
-  # Create a routine that runs Claude every weekday at 9 AM (scheduler auto-starts)
-  agents routines add daily-standup --schedule "0 9 * * 1-5" --agent claude --prompt "Draft standup update from git log"
+      # One-shot: Codex tomorrow at 2:30 PM, then never again
+      agents routines add hotfix-review --at "14:30" --agent codex --prompt "Review hotfix PR #42"
 
-  # One-shot routine: run Codex tomorrow at 2:30 PM, then never again
-  agents routines add hotfix-review --at "14:30" --agent codex --prompt "Review hotfix PR #42"
+      # Create from YAML (for complex routines with multiple settings)
+      agents routines add weekly-report.yml
 
-  # Create from a YAML file (for complex routines with multiple settings)
-  agents routines add weekly-report.yml
+      # List all routines and their next run times
+      agents routines list
 
-  # See all routines and their next run times
-  agents routines list
+      # Run a routine right now in the foreground (ignores schedule)
+      agents routines run daily-standup
 
-  # Check whether the scheduler is running
-  agents routines status
+      # Check whether the scheduler is running
+      agents routines status
+    `,
+    notes: `
+      A routine is a YAML file that schedules an agent invocation. It specifies:
+        - which agent to run (claude, codex, gemini, ...)
+        - when to run (cron schedule or one-shot time)
+        - what task to give the agent (the prompt)
+        - execution constraints (mode, effort, timeout)
 
-  # Test a routine immediately in the foreground (ignores schedule)
-  agents routines run daily-standup
-`
-    );
+      The background scheduler auto-starts the first time you add a routine.
+      Manage it with 'agents routines start|stop|status'.
+    `,
+  });
 
   routinesCmd
     .command('list')
