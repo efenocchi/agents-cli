@@ -1,9 +1,9 @@
 ---
 name: browser
-description: "Drive a browser via CDP - navigate, click, type, screenshot. Profiles persist login state across sessions."
-author: phnx-labs
-version: 1.2.0
-license: MIT
+description: "Drive a browser via CDP — navigate, click, type, screenshot. Profiles persist login state across sessions, so agents log in once and stay authenticated. Triggers on: 'automate a website', 'browser automation', 'click', 'screenshot', 'scrape', 'log in', 'fill form'."
+argument-hint: "[profiles|start|refs|click|type|screenshot|done]"
+allowed-tools: Bash(agents browser*), Bash(browser*)
+user-invocable: true
 ---
 
 # Browser
