@@ -63,7 +63,7 @@ function registerStatusCommand(program: Command): void {
         if (helperPath) console.log(`helper: ${helperPath}`);
         if (typeof helperPid === 'number') console.log(`pid: ${helperPid}`);
         if (!trusted) {
-          const appPath = helperPath ? path.resolve(helperPath, '..', '..', '..') : '/Applications/Companion Computer Helper.app';
+          const appPath = helperPath ? path.resolve(helperPath, '..', '..', '..') : HELPER_APP_DEST;
           console.error('');
           console.error('Accessibility is not granted to ComputerHelper.app.');
           console.error('Open System Settings > Privacy & Security > Accessibility and add:');
@@ -148,7 +148,7 @@ function registerScreenshotCommand(program: Command): void {
 
 // install-helper:
 //   1. resolve dist .app
-//   2. copy to /Applications/Companion Computer Helper.app
+//   2. copy to /Applications/Computer Helper.app
 //   3. codesign --verify the destination
 //   4. write LaunchAgent plist with absolute HOME paths
 //   5. launchctl bootout (ignore failure) -> bootstrap -> kickstart -k
@@ -159,8 +159,8 @@ function registerScreenshotCommand(program: Command): void {
 // .app at a stable absolute path under /Applications/ means the AX grant
 // survives across npm updates. The CLI itself is unsigned but doesn't
 // need AX — it sends JSON-RPC to the daemon, which has AX.
-const HELPER_BUNDLE_ID = 'dev.companion.computer-helper';
-const HELPER_APP_NAME = 'Companion Computer Helper.app';
+const HELPER_BUNDLE_ID = 'com.phnx-labs.computer-helper';
+const HELPER_APP_NAME = 'Computer Helper.app';
 const HELPER_APP_DEST = `/Applications/${HELPER_APP_NAME}`;
 const HELPER_LABEL = HELPER_BUNDLE_ID;
 

@@ -17,7 +17,7 @@ Outputs:
 - `dist/computer-helper-mac` — bare binary
 - `dist/ComputerHelper.app` — signed .app bundle (Developer ID if available, ad-hoc otherwise)
 
-Bundle id: `dev.companion.computer-helper`.
+Bundle id: `com.phnx-labs.computer-helper`.
 
 ## Why a .app bundle, not just a binary
 
