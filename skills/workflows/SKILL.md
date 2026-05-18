@@ -1,9 +1,9 @@
 ---
 name: workflows
-description: "Create and run reusable multi-agent pipelines. Bundle an orchestrator prompt with optional subagents, skills, and plugins into a named workflow invoked as `agents run <workflow-name>`."
-author: phnx-labs
-version: 1.0.0
-license: MIT
+description: "Create and run reusable multi-agent pipelines. Bundle an orchestrator prompt with optional subagents, skills, and plugins into a named workflow invoked as `agents run <workflow-name>`. Triggers on: 'workflow', 'orchestrator', 'WORKFLOW.md', 'multi-agent pipeline', 'reusable agent task'."
+argument-hint: "[add|list|view|remove|run]"
+allowed-tools: Bash(agents workflows*), Bash(agents run*)
+user-invocable: true
 ---
 
 # Workflows
