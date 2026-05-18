@@ -1,25 +1,74 @@
+import type { Readable, Writable } from 'stream';
+
+export interface CDPPipeTransport {
+  read: Readable;
+  write: Writable;
+}
+
 type PendingCall = {
   resolve: (result: unknown) => void;
   reject: (error: Error) => void;
 };
 
 type EventHandler = (params: Record<string, unknown>) => void;
+type TransportKind = 'websocket' | 'pipe';
+
+const pipeTransports = new Map<string, CDPPipeTransport>();
+
+export function registerPipeTransport(transport: CDPPipeTransport): string {
+  const id = `pipe://${process.pid}/${pipeTransports.size + 1}`;
+  pipeTransports.set(id, transport);
+  return id;
+}
 
 export class CDPClient {
   private ws: WebSocket | null = null;
+  private pipe: CDPPipeTransport | null = null;
+  private pipeBuffer = Buffer.alloc(0);
+  private transport: TransportKind | null = null;
   private messageId = 0;
   private pending = new Map<number, PendingCall>();
   private eventHandlers = new Map<string, Set<EventHandler>>();
+  private pipeDataHandler: ((chunk: Buffer) => void) | null = null;
+  private pipeErrorHandler: ((err: Error) => void) | null = null;
+  private pipeCloseHandler: (() => void) | null = null;
 
-  async connect(wsUrl: string): Promise<void> {
+  async connect(endpoint: string): Promise<void> {
+    if (endpoint.startsWith('pipe://')) {
+      const transport = pipeTransports.get(endpoint);
+      if (!transport) {
+        throw new Error('CDP pipe transport is not available in this process');
+      }
+      pipeTransports.delete(endpoint);
+      this.connectPipe(transport);
+      return;
+    }
+
     return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(wsUrl);
+      this.ws = new WebSocket(endpoint);
+      this.transport = 'websocket';
 
       this.ws.onopen = () => resolve();
-      this.ws.onerror = (ev) => reject(new Error('WebSocket error'));
+      this.ws.onerror = () => reject(new Error('WebSocket error'));
       this.ws.onclose = () => this.handleClose();
       this.ws.onmessage = (ev) => this.handleMessage(String(ev.data));
     });
+  }
+
+  connectPipe(transport: CDPPipeTransport): void {
+    this.pipe = transport;
+    this.transport = 'pipe';
+    this.pipeBuffer = Buffer.alloc(0);
+
+    this.pipeDataHandler = (chunk) => this.handlePipeData(chunk);
+    this.pipeErrorHandler = (err) => this.handleClose(err);
+    this.pipeCloseHandler = () => this.handleClose();
+
+    transport.read.on('data', this.pipeDataHandler);
+    transport.read.on('error', this.pipeErrorHandler);
+    transport.read.on('close', this.pipeCloseHandler);
+    transport.write.on('error', this.pipeErrorHandler);
+    transport.write.on('close', this.pipeCloseHandler);
   }
 
   async send<T = unknown>(
@@ -27,7 +76,7 @@ export class CDPClient {
     params?: Record<string, unknown>,
     sessionId?: string
   ): Promise<T> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+    if (!this.isOpen) {
       // Reached when the underlying browser was killed externally between
       // the daemon establishing the connection and a CDP call going out.
       // The service-layer healthcheck normally catches this on the next
@@ -46,7 +95,11 @@ export class CDPClient {
 
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve: resolve as (r: unknown) => void, reject });
-      this.ws!.send(message);
+      if (this.transport === 'pipe') {
+        this.pipe!.write.write(message + '\0');
+      } else {
+        this.ws!.send(message);
+      }
     });
   }
 
@@ -66,14 +119,42 @@ export class CDPClient {
       this.ws.close();
       this.ws = null;
     }
+    if (this.pipe) {
+      if (this.pipeDataHandler) this.pipe.read.off('data', this.pipeDataHandler);
+      if (this.pipeErrorHandler) {
+        this.pipe.read.off('error', this.pipeErrorHandler);
+        this.pipe.write.off('error', this.pipeErrorHandler);
+      }
+      if (this.pipeCloseHandler) {
+        this.pipe.read.off('close', this.pipeCloseHandler);
+        this.pipe.write.off('close', this.pipeCloseHandler);
+      }
+      this.pipe.write.end();
+      this.pipe = null;
+    }
+    this.transport = null;
   }
 
   get connected(): boolean {
-    return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+    return (
+      (this.ws !== null && this.ws.readyState === WebSocket.OPEN) ||
+      (this.pipe !== null && !this.pipe.write.destroyed)
+    );
   }
 
   get isOpen(): boolean {
     return this.connected;
+  }
+
+  private handlePipeData(chunk: Buffer): void {
+    this.pipeBuffer = Buffer.concat([this.pipeBuffer, chunk]);
+    let idx = this.pipeBuffer.indexOf(0);
+    while (idx !== -1) {
+      const frame = this.pipeBuffer.subarray(0, idx).toString('utf8');
+      this.pipeBuffer = this.pipeBuffer.subarray(idx + 1);
+      if (frame.length > 0) this.handleMessage(frame);
+      idx = this.pipeBuffer.indexOf(0);
+    }
   }
 
   private handleMessage(data: string): void {
@@ -99,12 +180,14 @@ export class CDPClient {
     }
   }
 
-  private handleClose(): void {
+  private handleClose(err?: Error): void {
     for (const pending of this.pending.values()) {
-      pending.reject(new Error('CDP connection closed'));
+      pending.reject(err ?? new Error('CDP connection closed'));
     }
     this.pending.clear();
     this.ws = null;
+    this.pipe = null;
+    this.transport = null;
   }
 }
 

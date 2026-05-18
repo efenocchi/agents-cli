@@ -1,10 +1,25 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import { tmpdir } from 'os';
+
+const { TEST_BROWSER_DIR } = vi.hoisted(() => {
+  const nodeOs = require('os');
+  const nodePath = require('path');
+  return {
+    TEST_BROWSER_DIR: nodePath.join(nodeOs.tmpdir(), 'agents-cli-upload-test-browser'),
+  };
+});
+
+vi.mock('./profiles.js', () => ({
+  getBrowserRuntimeDir: () => TEST_BROWSER_DIR,
+}));
+
 import {
+  getUploadStagingDir,
   mimeFromExt,
   detectUploadPattern,
+  stageUploadFile,
   uploadToFileInput,
   uploadToDropTarget,
   uploadViaFileChooser,
@@ -12,7 +27,7 @@ import {
 import type { CDPClient } from './cdp.js';
 
 function makeTempFile(ext: string, bytes: Buffer = Buffer.from('hello')): string {
-  const dir = fs.mkdtempSync(path.join(tmpdir(), 'upload-test-'));
+  const dir = fs.mkdtempSync(path.join(getUploadStagingDir(), 'upload-test-'));
   const p = path.join(dir, `f${ext}`);
   fs.writeFileSync(p, bytes);
   return p;
@@ -44,6 +59,15 @@ function makeCdp(send: MockSend): { cdp: CDPClient; calls: Array<{ method: strin
   return { cdp: cdp as CDPClient, calls };
 }
 
+beforeEach(() => {
+  fs.rmSync(TEST_BROWSER_DIR, { recursive: true, force: true });
+  fs.mkdirSync(getUploadStagingDir(), { recursive: true });
+});
+
+afterEach(() => {
+  fs.rmSync(TEST_BROWSER_DIR, { recursive: true, force: true });
+});
+
 describe('mimeFromExt', () => {
   it('maps common image extensions', () => {
     expect(mimeFromExt('/x/logo.png')).toBe('image/png');
@@ -55,6 +79,31 @@ describe('mimeFromExt', () => {
   it('falls back to octet-stream for unknown extensions', () => {
     expect(mimeFromExt('/x/file.xyz')).toBe('application/octet-stream');
     expect(mimeFromExt('/x/noext')).toBe('application/octet-stream');
+  });
+});
+
+describe('upload staging', () => {
+  it('copies a source file into the browser upload staging directory', () => {
+    const sourceDir = fs.mkdtempSync(path.join(tmpdir(), 'upload-source-'));
+    const source = path.join(sourceDir, 'photo.png');
+    fs.writeFileSync(source, 'image');
+
+    const staged = stageUploadFile(source);
+
+    expect(staged.startsWith(getUploadStagingDir() + path.sep)).toBe(true);
+    expect(path.extname(staged)).toBe('.png');
+    expect(fs.readFileSync(staged, 'utf8')).toBe('image');
+  });
+
+  it('rejects existing absolute files outside the upload staging directory', async () => {
+    const sourceDir = fs.mkdtempSync(path.join(tmpdir(), 'upload-source-'));
+    const source = path.join(sourceDir, 'photo.png');
+    fs.writeFileSync(source, 'image');
+    const { cdp } = makeCdp(() => ({}));
+
+    await expect(uploadToFileInput(cdp, 'session-1', 42, [source])).rejects.toThrow(
+      /outside the upload staging directory/
+    );
   });
 });
 

@@ -1,7 +1,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { randomBytes } from 'crypto';
 import type { CDPClient } from './cdp.js';
 import { clickAtCoords } from './input.js';
+import { getBrowserRuntimeDir } from './profiles.js';
 import { resolveRefToCoords, type RefNode } from './refs.js';
 
 /**
@@ -31,6 +33,32 @@ import { resolveRefToCoords, type RefNode } from './refs.js';
 
 export interface UploadOptions {
   files: string[];
+}
+
+export function getUploadStagingDir(): string {
+  return path.join(getBrowserRuntimeDir(), 'uploads');
+}
+
+export function stageUploadFile(source: string): string {
+  if (!path.isAbsolute(source)) {
+    throw new Error(`upload-stage: source path must be absolute: ${source}`);
+  }
+  const resolvedSource = fs.realpathSync(source);
+  const stat = fs.statSync(resolvedSource);
+  if (!stat.isFile()) {
+    throw new Error(`upload-stage: source path is not a file: ${source}`);
+  }
+
+  const stagingDir = getUploadStagingDir();
+  fs.mkdirSync(stagingDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(stagingDir, 0o700);
+
+  const stagedPath = path.join(
+    stagingDir,
+    `${randomBytes(8).toString('hex')}${path.extname(source)}`
+  );
+  fs.copyFileSync(resolvedSource, stagedPath);
+  return stagedPath;
 }
 
 const RESOLVE_FILE_INPUT_FN = `(function() {
@@ -296,6 +324,11 @@ function validateFiles(files: string[]): void {
   if (!files || files.length === 0) {
     throw new Error('At least one file path is required');
   }
+  const stagingDir = getUploadStagingDir();
+  fs.mkdirSync(stagingDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(stagingDir, 0o700);
+  const resolvedStagingDir = fs.realpathSync(stagingDir);
+
   for (const f of files) {
     if (!path.isAbsolute(f)) {
       throw new Error(`Upload path must be absolute: ${f}`);
@@ -303,7 +336,19 @@ function validateFiles(files: string[]): void {
     if (!fs.existsSync(f)) {
       throw new Error(`File not found: ${f}`);
     }
+    const resolvedFile = fs.realpathSync(f);
+    if (!isPathInside(resolvedFile, resolvedStagingDir)) {
+      throw new Error(
+        `upload: path ${f} is outside the upload staging directory ${stagingDir}. ` +
+          `Stage files via 'agents browser upload-stage <path>' first.`
+      );
+    }
   }
+}
+
+function isPathInside(candidate: string, dir: string): boolean {
+  const rel = path.relative(dir, candidate);
+  return rel === '' || (!!rel && !rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
 const MIME_BY_EXT: Record<string, string> = {

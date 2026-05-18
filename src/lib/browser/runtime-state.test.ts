@@ -73,6 +73,16 @@ describe('writeProfileRuntime + readProfileRuntime', () => {
   it('returns null when no files exist', () => {
     expect(readProfileRuntime(uniq('never-written'))).toBeNull();
   });
+
+  it('does not persist a CDP port for pipe-launched browsers', () => {
+    const name = uniq('pipe');
+    writeProfileRuntime(name, { pid: process.pid, command: 'node' });
+    const dir = getProfileRuntimeDir(name);
+
+    expect(fs.existsSync(path.join(dir, 'port'))).toBe(false);
+    expect(readProfileRuntime(name)).toBeNull();
+    expect(readProfileRuntimeMeta(name)?.port).toBeUndefined();
+  });
 });
 
 describe('clearProfileRuntime', () => {

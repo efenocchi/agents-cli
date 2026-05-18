@@ -60,7 +60,7 @@ vi.mock('./profiles.js', async (importOriginal) => {
   };
 });
 
-const { BrowserService } = await import('./service.js');
+const { BrowserService, resolveScreenshotOutputPath } = await import('./service.js');
 
 function reset() {
   try {
@@ -113,6 +113,22 @@ afterEach(() => {
   } catch {
     // ignore
   }
+});
+
+describe('resolveScreenshotOutputPath', () => {
+  it('uses the runtime autopath when a requested output path is outside browser runtime', () => {
+    const automaticPath = path.join(TEST_BROWSER_DIR, 'sessions', 'task', '1.jpg');
+    const outsidePath = path.join(tmpdir(), 'outside-browser-runtime.jpg');
+
+    expect(resolveScreenshotOutputPath(outsidePath, automaticPath)).toBe(automaticPath);
+  });
+
+  it('allows requested output paths inside browser runtime', () => {
+    const automaticPath = path.join(TEST_BROWSER_DIR, 'sessions', 'task', '1.jpg');
+    const requestedPath = path.join(TEST_BROWSER_DIR, 'exports', 'shot.jpg');
+
+    expect(resolveScreenshotOutputPath(requestedPath, automaticPath)).toBe(requestedPath);
+  });
 });
 
 describe('BrowserService.status — disk reconciliation (Issue #6)', () => {

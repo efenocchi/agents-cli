@@ -9,7 +9,6 @@ import { getProfileRuntimeDir, getBrowserRuntimeDir } from './profiles.js';
  *
  *  - `pid`     — child process ID we spawned (or 0 if attached to an
  *                already-running browser)
- *  - `port`    — CDP port we ended up speaking on
  *  - `command` — basename of the executable so we can defend against pid
  *                reuse (`process.kill(pid, 0)` only proves *some* process
  *                with that id exists; if the OS recycled it for an
@@ -24,7 +23,7 @@ import { getProfileRuntimeDir, getBrowserRuntimeDir } from './profiles.js';
  */
 export interface ProfileRuntime {
   pid: number;
-  port: number;
+  port?: number;
   command?: string;
   /** Full path of the user-data-dir we passed to --user-data-dir, used by the reaper to confirm. */
   userDataDir?: string;
@@ -72,7 +71,11 @@ export function writeProfileRuntime(
   const dir = getProfileRuntimeDir(profileName);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, PID_FILE), String(runtime.pid));
-  fs.writeFileSync(path.join(dir, PORT_FILE), String(runtime.port));
+  if (runtime.port !== undefined) {
+    fs.writeFileSync(path.join(dir, PORT_FILE), String(runtime.port));
+  } else {
+    try { fs.unlinkSync(path.join(dir, PORT_FILE)); } catch { /* not present */ }
+  }
   if (runtime.command) {
     fs.writeFileSync(path.join(dir, COMMAND_FILE), runtime.command);
   }

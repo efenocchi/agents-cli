@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeBrowserName, verifyBrowserIdentity } from './cdp.js';
+import { PassThrough } from 'stream';
+import { CDPClient, normalizeBrowserName, verifyBrowserIdentity } from './cdp.js';
 
 describe('normalizeBrowserName', () => {
   it('strips version suffix and lowercases', () => {
@@ -82,5 +83,29 @@ describe('verifyBrowserIdentity', () => {
 
   it('accepts chrome for edge (Edge reports Chrome/<version> in /json/version)', () => {
     expect(() => verifyBrowserIdentity('chrome', 'edge', 9222)).not.toThrow();
+  });
+});
+
+describe('CDPClient pipe transport', () => {
+  it('sends and receives null-terminated JSON frames over pipes', async () => {
+    const read = new PassThrough();
+    const write = new PassThrough();
+    const cdp = new CDPClient();
+    cdp.connectPipe({ read, write });
+
+    const sent = new Promise<Buffer>((resolve) => {
+      write.once('data', (chunk) => resolve(chunk as Buffer));
+    });
+    const response = cdp.send<{ ok: true }>('Browser.getVersion');
+
+    const frame = await sent;
+    expect(frame.at(-1)).toBe(0);
+    const request = JSON.parse(frame.subarray(0, -1).toString('utf8'));
+    expect(request.method).toBe('Browser.getVersion');
+
+    read.write(JSON.stringify({ id: request.id, result: { ok: true } }) + '\0');
+    await expect(response).resolves.toEqual({ ok: true });
+
+    cdp.close();
   });
 });
