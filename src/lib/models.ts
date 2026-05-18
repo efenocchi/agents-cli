@@ -299,7 +299,9 @@ function extractClaudeCatalog(text: string): { models: ModelInfo[]; aliases: Rec
   }
 
   const perCloud: Record<string, ModelPerCloud> = {};
-  const perCloudRe = /\{firstParty:"(claude-[^"]+)",bedrock:"([^"]+)"(?:,vertex:"([^"]+)")?(?:,foundry:"([^"]+)")?(?:,anthropicAws:"([^"]+)")?(?:,mantle:(?:null|"([^"]*)"))?\}/g;
+  // The record may carry additional trailing fields (e.g. gateway, eagerInputStreaming)
+  // in newer Claude bundles, so the regex does not anchor at the closing brace.
+  const perCloudRe = /\{firstParty:"(claude-[^"]+)",bedrock:"([^"]+)"(?:,vertex:"([^"]+)")?(?:,foundry:"([^"]+)")?(?:,anthropicAws:"([^"]+)")?(?:,mantle:(?:null|"([^"]*)"))?/g;
   let m: RegExpExecArray | null;
   while ((m = perCloudRe.exec(text)) !== null) {
     const id = m[1];
