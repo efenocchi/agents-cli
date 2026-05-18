@@ -3,10 +3,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { getProfileRuntimeDir } from './profiles.js';
-import { discoverBrowserWsUrl } from './cdp.js';
+import { discoverBrowserWsUrl, registerPipeTransport } from './cdp.js';
 import { readBundle, resolveBundleEnv, bundleExists } from '../secrets/bundles.js';
 import { writeProfileRuntime, readProfileRuntime } from './runtime-state.js';
 import type { ChromeOptions } from './types.js';
+import type { Readable, Writable } from 'stream';
 
 import type { BrowserType } from './types.js';
 
@@ -116,9 +117,8 @@ export async function launchBrowser(
 
   const viewport = options.viewport ?? { width: 1512, height: 982 };
   const args = [
-    `--remote-debugging-port=${port}`,
+    '--remote-debugging-pipe',
     `--user-data-dir=${userDataDir}`,
-    '--remote-allow-origins=*',
     '--disable-background-timer-throttling',
     '--disable-backgrounding-occluded-windows',
     '--disable-renderer-backgrounding',
@@ -149,37 +149,29 @@ export async function launchBrowser(
 
   const child = spawn(browserPath, args, {
     detached: true,
-    stdio: 'ignore',
+    stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'],
     env,
   });
   child.unref();
+  child.stdout?.resume();
+  child.stderr?.resume();
 
   const pid = child.pid!;
+  const writePipe = child.stdio[3] as Writable | null;
+  const readPipe = child.stdio[4] as Readable | null;
+  if (!writePipe || !readPipe) {
+    throw new Error('Chrome failed to expose CDP pipe file descriptors');
+  }
+  const wsUrl = registerPipeTransport({ read: readPipe, write: writePipe });
+
   writeProfileRuntime(profileName, {
     pid,
-    port,
     command: path.basename(browserPath),
     userDataDir,
     kind: isElectron ? 'electron' : 'browser',
   });
 
-  let wsUrl: string | null = null;
-  for (let i = 0; i < 30; i++) {
-    await sleep(200);
-    try {
-      const result = await discoverBrowserWsUrl(port);
-      wsUrl = result.wsUrl;
-      break;
-    } catch {
-      // Chrome still starting
-    }
-  }
-
-  if (!wsUrl) {
-    throw new Error('Chrome failed to start within 6 seconds');
-  }
-
-  return { pid, port, wsUrl };
+  return { pid, port: 0, wsUrl };
 }
 
 export async function attachToChrome(port: number): Promise<string> {
@@ -203,6 +195,7 @@ export function getRunningChromeInfo(
   // doesn't masquerade as our browser.
   const rt = readProfileRuntime(profileName);
   if (!rt) return null;
+  if (rt.port === undefined) return null;
   return { pid: rt.pid, port: rt.port };
 }
 

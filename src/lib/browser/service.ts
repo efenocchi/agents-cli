@@ -33,6 +33,7 @@ import { clickAtCoords, hoverAtCoords, scrollAtCoords, typeText, pressKey, focus
 import { typeEditorText } from './editor.js';
 import {
   detectUploadPattern,
+  stageUploadFile,
   uploadToDropTarget,
   uploadToFileInput,
   uploadViaFileChooser,
@@ -41,6 +42,34 @@ import { emit } from '../events.js';
 import type { TargetFilter } from './types.js';
 
 export type UploadMode = 'auto' | 'input' | 'drop' | 'chooser';
+
+function isPathInside(candidate: string, dir: string): boolean {
+  const rel = path.relative(dir, candidate);
+  return rel === '' || (!!rel && !rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+export function resolveScreenshotOutputPath(outputPath: string | undefined, automaticPath: string): string {
+  if (!outputPath) return automaticPath;
+
+  const runtimeDir = getBrowserRuntimeDir();
+  fs.mkdirSync(runtimeDir, { recursive: true });
+  const runtimeReal = fs.realpathSync(runtimeDir);
+  const requested = path.resolve(outputPath);
+  if (!isPathInside(requested, runtimeReal)) {
+    return automaticPath;
+  }
+
+  const parent = path.dirname(requested);
+  fs.mkdirSync(parent, { recursive: true });
+  const parentReal = fs.realpathSync(parent);
+  const resolved = path.join(parentReal, path.basename(requested));
+  if (!isPathInside(resolved, runtimeReal)) {
+    throw new Error(
+      `screenshot: output path must be under ${runtimeDir}. The CLI will copy the screenshot to your requested path.`
+    );
+  }
+  return resolved;
+}
 
 /**
  * Read width/height from a JPEG buffer by walking SOF markers. Returns null
@@ -785,7 +814,8 @@ export class BrowserService {
     }
 
     const sessionsDir = path.join(getBrowserRuntimeDir(), 'sessions', task.name);
-    const finalPath = outputPath || path.join(sessionsDir, `${Date.now()}.${extension}`);
+    const automaticPath = path.join(sessionsDir, `${Date.now()}.${extension}`);
+    const finalPath = resolveScreenshotOutputPath(outputPath, automaticPath);
     await fs.promises.mkdir(path.dirname(finalPath), { recursive: true });
     await fs.promises.writeFile(finalPath, buffer);
 
@@ -1156,6 +1186,10 @@ export class BrowserService {
       await uploadToDropTarget(conn.cdp, sessionId, node.backendNodeId, files);
     }
     return { mode: resolved };
+  }
+
+  stageUpload(source: string): { path: string } {
+    return { path: stageUploadFile(source) };
   }
 
   async status(profileName?: string): Promise<ProfileStatus[]> {

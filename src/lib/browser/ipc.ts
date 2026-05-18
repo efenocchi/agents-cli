@@ -10,7 +10,7 @@ import type { IPCRequest, IPCResponse, RefNodeJson } from './types.js';
 const SOCKET_NAME = 'browser.sock';
 
 export function getSocketPath(): string {
-  return path.join(getHelpersDir(), SOCKET_NAME);
+  return path.join(getHelpersDir(), 'browser', SOCKET_NAME);
 }
 
 export class BrowserIPCServer {
@@ -23,6 +23,9 @@ export class BrowserIPCServer {
 
   async start(): Promise<void> {
     const socketPath = getSocketPath();
+    const socketDir = path.dirname(socketPath);
+    fs.mkdirSync(socketDir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(socketDir, 0o700);
 
     if (fs.existsSync(socketPath)) {
       fs.unlinkSync(socketPath);
@@ -56,11 +59,29 @@ export class BrowserIPCServer {
     });
 
     return new Promise((resolve, reject) => {
+      // Lock down the browser socket dir before opening the socket; on macOS
+      // the parent dir is the real local-user boundary for AF_UNIX sockets.
+      const prevUmask = process.umask(0o077);
+      let restored = false;
+      const restoreUmask = () => {
+        if (restored) return;
+        restored = true;
+        process.umask(prevUmask);
+      };
       this.server!.listen(socketPath, () => {
-        fs.chmodSync(socketPath, 0o600);
-        resolve();
+        try {
+          fs.chmodSync(socketPath, 0o600);
+          resolve();
+        } catch (err) {
+          reject(err);
+        } finally {
+          restoreUmask();
+        }
       });
-      this.server!.on('error', reject);
+      this.server!.on('error', (err) => {
+        restoreUmask();
+        reject(err);
+      });
     });
   }
 
@@ -79,6 +100,15 @@ export class BrowserIPCServer {
   }
 
   private async handleRequest(request: IPCRequest): Promise<IPCResponse> {
+    if ((request.action as string) === 'upload-stage') {
+      const source = (request as IPCRequest & { source?: string }).source;
+      if (!source) {
+        return { ok: false, error: 'Source required' };
+      }
+      const result = this.service.stageUpload(source);
+      return { ok: true, path: result.path };
+    }
+
     switch (request.action) {
       case 'version': {
         return { ok: true, version: getCliVersion() };
@@ -459,7 +489,8 @@ async function sendRawIPCRequest(request: IPCRequest): Promise<IPCResponse> {
   const socketPath = getSocketPath();
 
   if (!fs.existsSync(socketPath)) {
-    await fs.promises.mkdir(path.dirname(socketPath), { recursive: true });
+    await fs.promises.mkdir(path.dirname(socketPath), { recursive: true, mode: 0o700 });
+    await fs.promises.chmod(path.dirname(socketPath), 0o700);
     startDaemon();
     if (!fs.existsSync(socketPath)) {
       await new Promise<void>((resolve, reject) => {
