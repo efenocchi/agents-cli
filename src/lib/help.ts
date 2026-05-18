@@ -25,6 +25,47 @@ export function registerCommandGroups(parent: Command, groups: readonly CommandG
   commandGroupRegistry.set(parent, groups);
 }
 
+/** Examples + Notes blocks attached to a command via setHelpSections. */
+interface HelpSections {
+  examples?: string;
+  notes?: string;
+}
+
+const helpSectionRegistry = new WeakMap<Command, HelpSections>();
+
+/**
+ * Attach an Examples block (rendered between the description and Arguments)
+ * and/or a Notes block (rendered at the very end, after Options) to a command.
+ *
+ * Bodies are normalized: the shared leading indent is stripped, then every line
+ * is re-indented by two spaces. Callers can pass natural multiline template
+ * literals without babysitting whitespace.
+ */
+export function setHelpSections(cmd: Command, sections: HelpSections): void {
+  helpSectionRegistry.set(cmd, sections);
+}
+
+/** Strip a uniform leading indent from a block and trim surrounding blank lines. */
+function dedent(body: string): string {
+  const lines = body.replace(/^\n+/, '').replace(/\s+$/, '').split('\n');
+  let minIndent = Infinity;
+  for (const line of lines) {
+    if (line.trim() === '') continue;
+    const indent = line.match(/^[ \t]*/)?.[0].length ?? 0;
+    if (indent < minIndent) minIndent = indent;
+  }
+  if (!Number.isFinite(minIndent) || minIndent === 0) return lines.join('\n');
+  return lines.map((line) => (line.length >= minIndent ? line.slice(minIndent) : line)).join('\n');
+}
+
+/** Re-indent a dedented block by two spaces so it sits under a section heading. */
+function indentBlock(body: string): string {
+  return body
+    .split('\n')
+    .map((line) => (line.length === 0 ? '' : `  ${line}`))
+    .join('\n');
+}
+
 /** Format help output with Commands listed before Options for better discoverability. */
 function formatHelpCommandsFirst(cmd: Command, helper: Help): string {
   const termWidth = helper.padWidth(cmd, helper);
@@ -70,6 +111,11 @@ function formatHelpCommandsFirst(cmd: Command, helper: Help): string {
   const commandDescription = helper.commandDescription(cmd);
   if (commandDescription.length > 0) {
     output = output.concat([helper.wrap(commandDescription, helpWidth, 0), '']);
+  }
+
+  const sections = helpSectionRegistry.get(cmd);
+  if (sections?.examples) {
+    output = output.concat(['Examples:', indentBlock(dedent(sections.examples)), '']);
   }
 
   const argumentList = helper
@@ -133,6 +179,10 @@ function formatHelpCommandsFirst(cmd: Command, helper: Help): string {
     if (globalOptionList.length > 0) {
       output = output.concat(['Global Options:', formatList(globalOptionList), '']);
     }
+  }
+
+  if (sections?.notes) {
+    output = output.concat(['Notes:', indentBlock(dedent(sections.notes)), '']);
   }
 
   return output.join('\n');
