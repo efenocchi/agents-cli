@@ -14,7 +14,14 @@ import type { JobConfig } from './routines.js';
 import { setGeminiAutoUpdateDisabled, updateGeminiSettings } from './gemini-settings.js';
 import { getRoutinesDir } from './state.js';
 
-const REAL_HOME = os.homedir();
+function resolveRealHome(): string {
+  const home = os.homedir();
+  try {
+    return fs.realpathSync(home);
+  } catch {
+    return home;
+  }
+}
 
 /** Environment variables forwarded from the parent process into the sandbox. */
 const ENV_ALLOWLIST = [
@@ -110,8 +117,9 @@ export function cleanJobHome(name: string): void {
 
 /** Symlink allowed directories into the overlay HOME, skipping paths outside the real HOME. */
 export function symlinkAllowedDirs(overlayHome: string, dirs: string[]): void {
+  const realHome = resolveRealHome();
   for (const dir of dirs) {
-    const expanded = dir.replace(/^~/, REAL_HOME);
+    const expanded = dir.replace(/^~/, realHome);
 
     // Resolve .. and symlinks to prevent path traversal outside HOME
     let realPath: string;
@@ -123,11 +131,11 @@ export function symlinkAllowedDirs(overlayHome: string, dirs: string[]): void {
       realPath = path.resolve(expanded);
     }
 
-    if (!realPath.startsWith(REAL_HOME + path.sep) && realPath !== REAL_HOME) {
+    if (!realPath.startsWith(realHome + path.sep) && realPath !== realHome) {
       continue;
     }
 
-    const relativePath = path.relative(REAL_HOME, realPath);
+    const relativePath = path.relative(realHome, realPath);
     const symlinkTarget = path.join(overlayHome, relativePath);
     const parentDir = path.dirname(symlinkTarget);
 
@@ -143,6 +151,7 @@ export function symlinkAllowedDirs(overlayHome: string, dirs: string[]): void {
 
 /** Generate a Claude settings.json in the overlay with scoped permissions from the job config. */
 export function generateClaudeConfig(overlayHome: string, config: JobConfig): void {
+  const realHome = resolveRealHome();
   const claudeDir = path.join(overlayHome, '.claude');
   fs.mkdirSync(claudeDir, { recursive: true });
 
@@ -184,7 +193,7 @@ export function generateClaudeConfig(overlayHome: string, config: JobConfig): vo
   // Scope filesystem tools to allowed dirs
   if (config.allow?.dirs) {
     for (const dir of config.allow.dirs) {
-      const resolved = dir.replace(/^~/, REAL_HOME);
+      const resolved = dir.replace(/^~/, realHome);
 
       // Read always granted for allowed dirs
       allowPermissions.push(`Read(${resolved}/**)`);
