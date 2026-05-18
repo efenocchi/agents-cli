@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import {
   bundleToEnvPrefix,
   describeBundle,
+  isLoaderOrInterpreterEnv,
   isReservedEnvName,
   keychainItemsForBundle,
   parseDotenv,
@@ -41,6 +42,17 @@ describe('validation', () => {
     expect(() => validateEnvKey('KEY-WITH-DASH')).toThrow();
   });
 
+  it('validateEnvKey rejects reserved loader and interpreter env vars', () => {
+    expect(isLoaderOrInterpreterEnv('LD_PRELOAD')).toBe(true);
+    expect(isLoaderOrInterpreterEnv('dyld_insert_libraries')).toBe(true);
+    expect(isLoaderOrInterpreterEnv('NODE_OPTIONS')).toBe(true);
+    expect(isLoaderOrInterpreterEnv('APP_TOKEN')).toBe(false);
+    expect(() => validateEnvKey('LD_PRELOAD')).toThrow(/reserved/);
+    expect(() => validateEnvKey('DYLD_INSERT_LIBRARIES')).toThrow(/reserved/);
+    expect(() => validateEnvKey('NODE_OPTIONS')).toThrow(/reserved/);
+    expect(() => validateEnvKey('path')).toThrow(/reserved/);
+  });
+
   it('bundleToEnvPrefix converts bundle names to valid env prefixes', () => {
     expect(bundleToEnvPrefix('github')).toBe('GITHUB');
     expect(bundleToEnvPrefix('github.com')).toBe('GITHUB_COM');
@@ -55,6 +67,7 @@ describe('validation', () => {
     expect(isReservedEnvName('USERNAME')).toBe(true);
     expect(isReservedEnvName('USER')).toBe(true);
     expect(isReservedEnvName('SHELL')).toBe(true);
+    expect(isReservedEnvName('path')).toBe(true);
     expect(isReservedEnvName('MY_CUSTOM_VAR')).toBe(false);
     expect(isReservedEnvName('API_KEY')).toBe(false);
   });

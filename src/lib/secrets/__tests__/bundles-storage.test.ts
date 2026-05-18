@@ -411,7 +411,7 @@ describe('migrateLegacyBundles', () => {
     fs.rmSync(tmpHome, { recursive: true, force: true });
   });
 
-  it('moves YAML bundle into keychain and unlinks the file', () => {
+  it('moves YAML bundle into keychain and unlinks the file', async () => {
     const dir = path.join(tmpHome, '.agents', 'secrets');
     fs.mkdirSync(dir, { recursive: true });
     const file = path.join(dir, 'legacy-bundle.yml');
@@ -422,7 +422,7 @@ describe('migrateLegacyBundles', () => {
       vars: { A: 'literal', B: 'keychain:K_B' },
     }), 'utf-8');
 
-    migrateLegacyBundles();
+    await migrateLegacyBundles(() => true);
 
     expect(fs.existsSync(file)).toBe(false);
     const got = readBundle('legacy-bundle');
@@ -433,7 +433,23 @@ describe('migrateLegacyBundles', () => {
     expect(store.get('agents-cli.bundles.legacy-bundle')?.sync).toBe(true);
   });
 
-  it('is a no-op when the secrets dir does not exist', () => {
-    expect(() => migrateLegacyBundles()).not.toThrow();
+  it('refuses legacy YAML with dynamic-loader env keys before writing', async () => {
+    const dir = path.join(tmpHome, '.agents', 'secrets');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, 'legacy-bundle.yml');
+    fs.writeFileSync(file, yaml.stringify({
+      vars: { DYLD_INSERT_LIBRARIES: '/tmp/inject.dylib' },
+    }), 'utf-8');
+
+    await expect(migrateLegacyBundles(() => {
+      throw new Error('confirmation should not run');
+    })).rejects.toThrow(/DYLD_INSERT_LIBRARIES.*reserved/);
+
+    expect(fs.existsSync(file)).toBe(true);
+    expect(store.has('agents-cli.bundles.legacy-bundle')).toBe(false);
+  });
+
+  it('is a no-op when the secrets dir does not exist', async () => {
+    await expect(migrateLegacyBundles(() => true)).resolves.toBe(0);
   });
 });
