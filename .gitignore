@@ -42,6 +42,7 @@ scripts/scrub-history.sh
 # Other
 .refs/
 .crabbox/
+.rush/
 
 # Agents (recurisve)
 **/.claude
