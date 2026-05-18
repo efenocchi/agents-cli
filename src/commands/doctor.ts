@@ -42,6 +42,7 @@ import {
   type VersionResourceReport,
 } from '../lib/doctor-diff.js';
 import { unifiedDiff, colorizeUnifiedDiff } from '../lib/diff-text.js';
+import { setHelpSections } from '../lib/help.js';
 import * as fs from 'fs';
 
 const AGENT_NAMES: Record<string, string> = Object.fromEntries(
@@ -373,31 +374,34 @@ function renderTargetText(report: VersionResourceReport, options: { showDiff: bo
 // ─── command registration ────────────────────────────────────────────────────
 
 export function registerDoctorCommand(program: Command): void {
-  program
+  const doctorCmd = program
     .command('doctor [target]')
-    .description('Diagnose CLI availability, sync status, and resource divergence (optionally for a specific agent[@version])')
+    .description('Diagnose CLI availability, sync status, and resource divergence (optionally for a specific agent[@version]).')
     .option('--json', 'Output machine-readable JSON')
     .option('--diff', 'In target mode, include unified diffs for divergent files')
     .option('--kind <kinds>', 'Restrict to comma-separated resource kinds (commands,skills,hooks,rules,mcp,permissions,subagents,plugins,promptcuts)')
-    .option('--cwd <path>', 'Resolution cwd for project layer detection (default: process.cwd())')
-    .addHelpText('after', `
-Examples:
-  # Overview across default versions (CLI availability + sync + orphans)
-  agents doctor
+    .option('--cwd <path>', 'Resolution cwd for project layer detection (default: process.cwd())');
 
-  # Full per-resource report for the active default
-  agents doctor claude@default
+  setHelpSections(doctorCmd, {
+    examples: `
+      # Overview: CLI availability + sync status + orphans across all defaults
+      agents doctor
 
-  # Pin to a specific installed version
-  agents doctor codex@0.117.0
+      # Full per-resource report for the active default
+      agents doctor claude@default
 
-  # All installed versions for one agent
-  agents doctor gemini
+      # All installed versions of one agent
+      agents doctor gemini
 
-  # Only inspect rules and hooks, with full diffs
-  agents doctor claude@default --kind rules,hooks --diff
-`)
-    .action((target: string | undefined, opts: DoctorOptions) => {
+      # Pin to a specific installed version
+      agents doctor codex@0.117.0
+
+      # Inspect only rules and hooks, with full diffs
+      agents doctor claude@default --kind rules,hooks --diff
+    `,
+  });
+
+  doctorCmd.action((target: string | undefined, opts: DoctorOptions) => {
       const cwd = opts.cwd ? opts.cwd : process.cwd();
 
       if (!target) {
