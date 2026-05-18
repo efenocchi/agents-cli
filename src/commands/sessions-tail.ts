@@ -12,6 +12,7 @@ import chalk from 'chalk';
 import type { Command } from 'commander';
 import type { SessionMeta, SessionAgentId } from '../lib/session/types.js';
 import { discoverSessions, resolveSessionById } from '../lib/session/discover.js';
+import { setHelpSections } from '../lib/help.js';
 
 const TAIL_SUPPORTED: SessionAgentId[] = ['claude', 'codex'];
 
@@ -216,34 +217,34 @@ async function runTail(sessionId: string | undefined, options: TailOptions): Pro
 
 /** Attach the `tail` subcommand to an existing `sessions` command. */
 export function registerSessionsTailCommand(sessionsCmd: Command): void {
-  sessionsCmd
+  const tailCmd = sessionsCmd
     .command('tail [sessionId]')
-    .description('Live-tail a session file, streaming new JSONL events as they are written. Long-running: press Ctrl+C to stop. Claude and Codex only.')
+    .description('Stream JSONL events from a session file as they are written, one event per line. Long-running: Ctrl+C to stop. Claude and Codex only.')
     .option('--latest', 'Tail the most recent tailable session (claude or codex)')
     .option('--from-start', 'Emit the full file first, then follow (default: start at EOF)')
-    .option('--json', 'Raw JSONL passthrough (default)')
-    .addHelpText('after', `
-This command runs until interrupted (Ctrl+C). Each line printed to stdout
-is a raw JSONL event from the session file — parse with jq or similar.
+    .option('--json', 'Raw JSONL passthrough (default)');
 
-Examples:
-  # Follow the most recent active Claude or Codex session
-  agents sessions tail --latest
+  setHelpSections(tailCmd, {
+    examples: `
+      # Follow the most recent active Claude or Codex session
+      agents sessions tail --latest
 
-  # Follow a specific session by short or full ID
-  agents sessions tail a1b2c3d4
+      # Follow a specific session by short or full ID
+      agents sessions tail a1b2c3d4
 
-  # Replay from the beginning, then follow
-  agents sessions tail a1b2c3d4 --from-start
+      # Replay from the beginning, then follow
+      agents sessions tail a1b2c3d4 --from-start
 
-  # Pipe through jq to extract just user messages
-  agents sessions tail --latest | jq 'select(.type == "user")'
+      # Pipe through jq to extract just user messages
+      agents sessions tail --latest | jq 'select(.type == "user")'
+    `,
+    notes: `
+      - Only Claude and Codex sessions are tailable — they append JSONL one event per line.
+      - Gemini, OpenCode, and OpenClaw use formats that rewrite the file or store state elsewhere.
+    `,
+  });
 
-Only Claude and Codex sessions are supported — they append JSONL one event
-per line, which makes live-tailing safe. Gemini, OpenCode, and OpenClaw
-use formats that rewrite the file or store state elsewhere.
-`)
-    .action(async (sessionId: string | undefined, options: TailOptions) => {
-      await runTail(sessionId, options);
-    });
+  tailCmd.action(async (sessionId: string | undefined, options: TailOptions) => {
+    await runTail(sessionId, options);
+  });
 }
