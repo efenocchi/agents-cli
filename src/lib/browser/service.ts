@@ -55,18 +55,12 @@ export function resolveScreenshotOutputPath(outputPath: string | undefined, auto
   fs.mkdirSync(runtimeDir, { recursive: true });
   const runtimeReal = fs.realpathSync(runtimeDir);
   const requested = path.resolve(outputPath);
-  if (!isPathInside(requested, runtimeReal)) {
-    return automaticPath;
-  }
-
   const parent = path.dirname(requested);
   fs.mkdirSync(parent, { recursive: true });
   const parentReal = fs.realpathSync(parent);
   const resolved = path.join(parentReal, path.basename(requested));
   if (!isPathInside(resolved, runtimeReal)) {
-    throw new Error(
-      `screenshot: output path must be under ${runtimeDir}. The CLI will copy the screenshot to your requested path.`
-    );
+    return automaticPath;
   }
   return resolved;
 }
