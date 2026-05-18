@@ -66,6 +66,7 @@ import {
   switchHomeFileSymlinks,
 } from '../lib/shims.js';
 import { parseHookManifest, registerHooksToSettings } from '../lib/hooks.js';
+import { setHelpSections } from '../lib/help.js';
 import { select } from '@inquirer/prompts';
 import { isInteractiveTerminal, isPromptCancelled } from './utils.js';
 
@@ -96,37 +97,42 @@ function migratePromptcutsToRoot(agentsDir: string): void {
 
 /** Register the `agents pull` command. */
 export function registerPullCommand(program: Command): void {
-  program
+  const pullCmd = program
     .command('pull [agent]')
-    .description('Pull your user repo at ~/.agents/ and refresh installed agent versions.')
+    .description('Sync your user repo at ~/.agents/ and refresh installed agent CLIs. (Deprecated — prefer \'agents repo pull\' and \'agents setup\'.)')
     .option('-y, --yes', 'Auto-sync all resources without prompting')
-    .option('--skip-clis', 'Pull config changes but do not install or upgrade agent CLIs')
-    .addHelpText('after', `
-Examples:
-  # First time: clone the system repo into ~/.agents-system/
-  agents pull
+    .option('--skip-clis', 'Pull config changes but do not install or upgrade agent CLIs');
 
-  # Sync only one agent's config
-  agents pull claude
+  setHelpSections(pullCmd, {
+    examples: `
+      # First time: clone the system repo into ~/.agents-system/
+      agents pull
 
-  # Non-interactive sync (for scripts / CI)
-  agents pull -y
+      # Sync only one agent's config
+      agents pull claude
 
-When to use:
-  - Initial setup: clone the system repo to a new machine
-  - Daily sync: pull the latest system skills, commands, or MCP servers
-  - Per-agent: sync just one agent's config without touching others
+      # Non-interactive (scripts / CI)
+      agents pull -y
 
-What it syncs:
-  - CLI versions listed in agents.yaml
-  - Commands, skills, hooks from the repo
-  - MCP server configs
-  - Memory/rules files
-  - Permissions groups
+      # Sync config without touching installed CLI versions
+      agents pull --skip-clis
+    `,
+    notes: `
+      Deprecated. Use:
+        agents setup       first-time setup
+        agents repo pull   force-sync now
+        agents repo push   push your user repo
 
-Skip CLI installs with --skip-clis when you only want config updates, not version changes.
-`)
-    .action(async (arg1: string | undefined, options) => {
+      What it syncs:
+        - CLI versions listed in agents.yaml
+        - Commands, skills, hooks
+        - MCP server configs
+        - Memory/rules files
+        - Permissions groups
+    `,
+  });
+
+  pullCmd.action(async (arg1: string | undefined, options) => {
       // Deprecation banner — `agents pull` is on its way out. agents-cli now
       // auto-syncs the system repo in the background and surfaces upstream
       // changes for user/extra repos as one-line notices. Repo lifecycle is
