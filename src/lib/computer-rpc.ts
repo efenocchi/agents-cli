@@ -1,8 +1,9 @@
 // JSON-RPC client for the computer-helper.
 //
 // Two transports, picked at runtime:
-//   - socket: ~/.agents/computer-helper.sock (or COMPUTER_HELPER_SOCKET env)
-//     when the launchd daemon is installed and listening. Sub-50ms per call.
+//   - socket: ~/.agents/.cache/helpers/computer.sock (or COMPUTER_HELPER_SOCKET
+//     env) when the launchd daemon is installed and listening. Sub-50ms per
+//     call. Path is internal scratch — sibling of browser.sock.
 //   - stdio: spawn the helper binary as a child process per call. Used in
 //     dev (no install-helper) and as a fallback. The legacy probe.py and
 //     drive-capcut.py scripts in rush/agents still use this shape.
@@ -18,6 +19,18 @@ import * as os from 'os';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 
+// Path matches the agents-cli convention codified in src/lib/state.ts —
+// ~/.agents/.cache/helpers/ is the bucket for helper subprocess scratch
+// (sibling: browser.sock). Hard-coded here because state.ts currently has
+// unresolved merge-conflict markers; switch to getHelpersDir() import once
+// the upstream state.ts is repaired.
+function helpersDir(): string {
+  return path.join(os.homedir(), '.agents', '.cache', 'helpers');
+}
+function logsDir(): string {
+  return path.join(os.homedir(), '.agents', '.cache', 'logs');
+}
+
 export interface RPCResponse {
   id: number | null;
   result?: Record<string, unknown>;
@@ -29,11 +42,19 @@ export interface ComputerClient {
   close(): Promise<void>;
 }
 
-// Resolve the socket path used by the launchd-managed daemon.
+// Resolve the socket path used by the launchd-managed daemon. Internal
+// scratch — lives under getHelpersDir() (~/.agents/.cache/helpers/),
+// matching browser.sock.
 export function resolveSocketPath(): string {
   const envPath = process.env.COMPUTER_HELPER_SOCKET;
   if (envPath && envPath.length > 0) return envPath;
-  return path.join(os.homedir(), '.agents', 'computer-helper.sock');
+  return path.join(helpersDir(), 'computer.sock');
+}
+
+// Default log path for the launchd-managed daemon. Lives in the cache/logs/
+// bucket (matches the scheduler daemon's logs.jsonl convention).
+export function resolveLogPath(): string {
+  return path.join(logsDir(), 'computer-helper.log');
 }
 
 // Resolve the helper executable inside the dist .app bundle. Used by the
