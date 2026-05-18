@@ -28,6 +28,7 @@ import { colorAgent, resolveAgentName } from '../lib/agents.js';
 import { resolveVersion, resolveVersionAliasLoose } from '../lib/versions.js';
 import { isInteractiveTerminal, isPromptCancelled } from './utils.js';
 import { sessionPicker, type PickedSession } from './sessions-picker.js';
+import { setHelpSections } from '../lib/help.js';
 import { registerSessionsTailCommand } from './sessions-tail.js';
 
 const SESSION_AGENT_FILTER_HELP = `Filter by agent, e.g. claude, codex, claude@2.0.65`;
@@ -1180,72 +1181,40 @@ export function registerSessionsCommands(program: Command): void {
     .option('--artifacts', 'List all files written or edited during a session')
     .option('--artifact <name>', 'Read a specific artifact by filename or path (outputs to stdout)')
     .option('--active', 'Show only sessions running right now across terminals, teams, cloud, and headless agents')
-    .option('--cloud', 'Source sessions from Rush Cloud (captured runs) instead of local disk')
-    .addHelpText('after', `
-Examples:
-  # Interactive picker: browse and search recent sessions (TTY only)
-  agents sessions
+    .option('--cloud', 'Source sessions from Rush Cloud (captured runs) instead of local disk');
 
-  # List sessions from current project (last 30 days, piped output shows table)
-  agents sessions | head -20
+  setHelpSections(sessionsCmd, {
+    examples: `
+      # Search prior sessions in this project by topic, file path, or command
+      agents sessions "add auth middleware"
 
-  # Search sessions by text (topic, file paths, commands)
-  agents sessions "add auth middleware"
+      # Read a session as markdown (user + assistant + thinking + tools)
+      agents sessions a1b2c3d4 --markdown
 
-  # Filter by project across all directories
-  agents sessions --project agents-cli --all
+      # Just the user turns — useful for recalling intent
+      agents sessions a1b2c3d4 --include user
 
-  # Filter by agent and time window
-  agents sessions --agent claude --since 7d
+      # Show only what's running right now (terminals, teams, cloud, headless)
+      agents sessions --active
 
-  # Filter sessions in a specific directory
-  agents sessions ~/src/my-project
+      # Search across every directory, not just this project
+      agents sessions "topic" --all
 
-  # Default summary view for one session
-  agents sessions a1b2c3d4
+      # Export for analysis
+      agents sessions --since 30d --limit 200 --json > sessions.json
+    `,
+    notes: `
+      - --include and --exclude are mutually exclusive.
+      - --first and --last are mutually exclusive.
+      - A filter flag (--include/--exclude/--first/--last) without --markdown/--json defaults to --markdown output.
+      - --cloud sources from Rush Cloud captured runs instead of local disk.
+      - Without --teams, team-spawned sessions are hidden by default.
+    `,
+  });
 
-  # Full conversation (user + assistant + thinking + tools) as markdown
-  agents sessions a1b2c3d4 --markdown
-
-  # Same conversation as structured JSON events
-  agents sessions a1b2c3d4 --json
-
-  # Only user messages (filter flags auto-select markdown)
-  agents sessions a1b2c3d4 --include user
-
-  # Everything except thinking, as markdown
-  agents sessions a1b2c3d4 --exclude thinking --markdown
-
-  # Last 3 turns as markdown
-  agents sessions a1b2c3d4 --last 3
-
-  # First 10 turns, user messages only, as JSON
-  agents sessions a1b2c3d4 --first 10 --include user --json
-
-  # Export all recent sessions as JSON for analysis
-  agents sessions --since 30d --limit 200 --json > sessions.json
-
-  # Include team-spawned sessions in results
-  agents sessions --teams
-
-  # Show only live sessions across terminals, teams, cloud, and headless agents
-  agents sessions --active
-  agents sessions --active --json
-
-  # List captured cloud-run sessions (claude/codex/rush) via Rush Cloud
-  agents sessions --cloud
-  agents sessions --cloud <execution_id>
-  agents sessions --cloud <execution_id> --markdown
-  agents sessions --cloud <execution_id> --include user,assistant --last 3
-
-Notes:
-  - --include and --exclude are mutually exclusive.
-  - --first and --last are mutually exclusive.
-  - A filter flag without --markdown/--json defaults to --markdown output.
-`)
-    .action(async (query: string | undefined, options: SessionsOptions) => {
-      await sessionsAction(query, options);
-    });
+  sessionsCmd.action(async (query: string | undefined, options: SessionsOptions) => {
+    await sessionsAction(query, options);
+  });
 
   registerSessionsTailCommand(sessionsCmd);
 }
