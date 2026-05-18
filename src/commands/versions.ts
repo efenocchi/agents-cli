@@ -286,7 +286,7 @@ export function registerVersionsCommands(program: Command): void {
                 // First install for this agent - auto-set without prompting
                 await setDefaultVersion(agent, installedVersion);
               } else if (skipPrompts) {
-                await setDefaultVersion(agent, installedVersion);
+                console.log(chalk.gray(`  Default remains ${agentLabel(agentConfig.id)}@${currentDefault}. Run 'agents use ${agent}@${installedVersion}' to switch.`));
               } else {
                 try {
                   // Fetch account info for context in the prompt

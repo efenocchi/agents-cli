@@ -899,11 +899,17 @@ export async function registerMcp(
   command: string,
   scope: 'user' | 'project' = 'user',
   transport: string = 'stdio',
-  options?: { home?: string; binary?: string }
+  options?: { home?: string; binary?: string; headers?: Record<string, string> }
 ): Promise<{ success: boolean; error?: string }> {
   const agent = AGENTS[agentId];
   if (!agent.capabilities.mcp) {
     return { success: false, error: 'Agent does not support MCP' };
+  }
+  if (transport === 'http' && agentId !== 'claude' && agentId !== 'codex' && agentId !== 'gemini') {
+    return { success: false, error: 'skipped: agent does not support HTTP MCP registration' };
+  }
+  if (transport === 'http' && options?.headers && Object.keys(options.headers).length > 0 && agentId !== 'claude') {
+    return { success: false, error: 'skipped: HTTP MCP headers are only supported for Claude registration' };
   }
   if (!options?.binary && !(await isCliInstalled(agentId))) {
     return { success: false, error: 'CLI not installed' };
@@ -913,10 +919,18 @@ export async function registerMcp(
     // Use explicit binary path when provided (bypasses shim for version-managed agents)
     const bin = options?.binary || agent.cliCommand;
     let args: string[];
-    const commandArgs = splitCommandLine(command);
-    if (agentId === 'claude') {
+    if (transport === 'http') {
+      if (agentId === 'codex') {
+        args = ['mcp', 'add', name, '--url', command];
+      } else {
+        const headerArgs = Object.entries(options?.headers || {}).flatMap(([key, value]) => ['--header', `${key}: ${value}`]);
+        args = ['mcp', 'add', '--transport', 'http', '--scope', scope, name, command, ...headerArgs];
+      }
+    } else if (agentId === 'claude') {
+      const commandArgs = splitCommandLine(command);
       args = ['mcp', 'add', '--transport', transport, '--scope', scope, name, '--', ...commandArgs];
     } else {
+      const commandArgs = splitCommandLine(command);
       args = ['mcp', 'add', name, '--', ...commandArgs];
     }
     // When home is specified, override HOME so MCP config writes to the version's config dir
@@ -969,18 +983,20 @@ export async function registerMcpToTargets(
   name: string,
   command: string,
   scope: 'user' | 'project' = 'user',
-  transport: string = 'stdio'
+  transport: string = 'stdio',
+  options: { headers?: Record<string, string> } = {}
 ): Promise<McpTargetOperationResult[]> {
   const results: McpTargetOperationResult[] = [];
 
   for (const agentId of targets.directAgents) {
-    const result = await registerMcp(agentId, name, command, scope, transport);
+    const result = await registerMcp(agentId, name, command, scope, transport, options);
     results.push({ agentId, success: result.success, error: result.error });
   }
 
   for (const [agentId, versions] of targets.versionSelections) {
     for (const version of versions) {
       const result = await registerMcp(agentId, name, command, scope, transport, {
+        ...options,
         home: getVersionHomePath(agentId, version),
         binary: getBinaryPath(agentId, version),
       });

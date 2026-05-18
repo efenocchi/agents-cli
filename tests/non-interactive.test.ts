@@ -66,6 +66,29 @@ function writeLoggingManagedVersion(
   );
 }
 
+function writeFakeNpmInstaller(home: string, version: string): string {
+  const binDir = path.join(home, 'bin');
+  const npmPath = path.join(binDir, 'npm');
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(
+    npmPath,
+    [
+      '#!/bin/sh',
+      'if [ "$1" = "install" ]; then',
+      '  mkdir -p node_modules/@openai/codex node_modules/.bin',
+      `  printf '{"version":"${version}"}' > node_modules/@openai/codex/package.json`,
+      '  printf "#!/bin/sh\\nexit 0\\n" > node_modules/.bin/codex',
+      '  chmod 755 node_modules/.bin/codex',
+      '  exit 0',
+      'fi',
+      'exit 1',
+      '',
+    ].join('\n'),
+  );
+  fs.chmodSync(npmPath, 0o755);
+  return binDir;
+}
+
 function writeLocalPackageRepo(): string {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-cli-package-repo-'));
   fs.mkdirSync(path.join(repo, 'commands'), { recursive: true });
@@ -206,6 +229,36 @@ describe('non-interactive CLI usage', () => {
     expect(fs.lstatSync(codexSymlink).isSymbolicLink()).toBe(true);
   });
 
+  it('does not switch an existing default during non-interactive add', () => {
+    const home = makeTempHome();
+    tempHomes.push(home);
+    writeFakeManagedVersion(home, 'codex', '0.1.0', 'codex');
+    fs.writeFileSync(path.join(home, '.agents', 'agents.yaml'), 'agents:\n  codex: 0.1.0\n');
+    const fakeNpmBin = writeFakeNpmInstaller(home, '0.2.0');
+
+    const result = runAgents(home, ['add', 'codex@0.2.0', '-y'], {
+      PATH: `${fakeNpmBin}${path.delimiter}${process.env.PATH || ''}`,
+    });
+    const agentsYaml = fs.readFileSync(path.join(home, '.agents', 'agents.yaml'), 'utf-8');
+    const installedBinary = path.join(
+      home,
+      '.agents',
+      '.history',
+      'versions',
+      'codex',
+      '0.2.0',
+      'node_modules',
+      '.bin',
+      'codex',
+    );
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(fs.existsSync(installedBinary)).toBe(true);
+    expect(agentsYaml).toContain('codex: 0.1.0');
+    expect(agentsYaml).not.toContain('codex: 0.2.0');
+    expect(result.stdout).toContain("Default remains Codex@0.1.0. Run 'agents use codex@0.2.0' to switch.");
+  });
+
   it('installs package repo contents only to the requested explicit version target', () => {
     const home = makeTempHome();
     const repo = writeLocalPackageRepo();
@@ -267,6 +320,32 @@ describe('non-interactive CLI usage', () => {
     expect(log).toContain(path.join(home, '.agents', '.history', 'versions', 'codex', '0.2.0', 'home'));
     expect(log).toContain('mcp add demo -- demo-server');
     expect(log).not.toContain(path.join(home, '.agents', '.history', 'versions', 'codex', '0.1.0', 'home'));
+  });
+
+  it('registers HTTP MCPs from the manifest to Codex with --url', () => {
+    const home = makeTempHome();
+    const logPath = path.join(home, 'mcp-http-register.log');
+    tempHomes.push(home);
+    writeLoggingManagedVersion(home, 'codex', '0.2.0', 'codex', logPath);
+
+    const addResult = runAgents(home, [
+      'mcp',
+      'add',
+      'docs',
+      'https://developers.openai.com/mcp',
+      '--transport',
+      'http',
+      '--agents',
+      'codex@0.2.0',
+    ]);
+    const registerResult = runAgents(home, ['mcp', 'register', 'docs']);
+    const log = fs.readFileSync(logPath, 'utf-8');
+
+    expect(addResult.status).toBe(0);
+    expect(registerResult.status, `${registerResult.stdout}\n${registerResult.stderr}`).toBe(0);
+    expect(registerResult.stdout).not.toContain('HTTP transport not yet supported');
+    expect(log).toContain(path.join(home, '.agents', '.history', 'versions', 'codex', '0.2.0', 'home'));
+    expect(log).toContain('mcp add docs --url https://developers.openai.com/mcp');
   });
 
   it('removes MCPs only from the requested explicit version target', () => {

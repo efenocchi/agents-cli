@@ -136,6 +136,7 @@ import {
   getVersionDir,
   getBinaryPath,
   getVersionHomePath,
+  installVersion,
   type AvailableResources,
   type ResourceSelection,
 } from '../src/lib/versions.js';
@@ -209,6 +210,13 @@ describe('parseAgentSpec', () => {
     expect(parseAgentSpec('fake-agent@1.0.0')).toBeNull();
     expect(parseAgentSpec('gpt@4.0')).toBeNull();
     expect(parseAgentSpec('')).toBeNull();
+  });
+
+  it('rejects ambiguous or unsafe version specifiers', () => {
+    expect(parseAgentSpec('claude@1.0.0@evil')).toBeNull();
+    expect(parseAgentSpec('claude@../escape')).toBeNull();
+    expect(parseAgentSpec('claude@1.0.0;touch pwned')).toBeNull();
+    expect(parseAgentSpec('claude@1.0.0/pwned')).toBeNull();
   });
 
   it('parses all valid agents', () => {
@@ -484,8 +492,10 @@ describe('hasNewResources', () => {
     const diff = { ...emptyResources(), plugins: ['my-plugin'] };
     // claude supports plugins
     expect(hasNewResources(diff, 'claude')).toBe(true);
-    // codex does NOT support plugins
-    expect(hasNewResources(diff, 'codex')).toBe(false);
+    // codex supports plugins from 0.128.0 onward
+    expect(hasNewResources(diff, 'codex')).toBe(true);
+    expect(hasNewResources(diff, 'codex', '0.127.0')).toBe(false);
+    expect(hasNewResources(diff, 'codex', '0.128.0')).toBe(true);
   });
 
   it('without agent param, all resource types count', () => {
@@ -838,6 +848,22 @@ describe('syncResourcesToVersion', () => {
       expect(fs.existsSync(path.join(versionHome, '.claude', 'skills', 'mq', 'SKILL.md'))).toBe(true);
       expect(fs.existsSync(path.join(versionHome, '.claude', 'skills', 'browser'))).toBe(false);
     });
+
+    it('replaces a parent skills symlink without deleting central skill files', () => {
+      setupCentralResources();
+
+      const centralSkillsDir = path.join(AGENTS_DIR, 'skills');
+      const versionHome = getVersionHomePath('claude', '2.0.65');
+      const versionSkillsDir = path.join(versionHome, '.claude', 'skills');
+      fs.mkdirSync(path.dirname(versionSkillsDir), { recursive: true });
+      fs.symlinkSync(centralSkillsDir, versionSkillsDir);
+
+      syncResourcesToVersion('claude', '2.0.65', { skills: ['mq'] });
+
+      expect(fs.existsSync(path.join(centralSkillsDir, 'mq', 'SKILL.md'))).toBe(true);
+      expect(fs.lstatSync(versionSkillsDir).isSymbolicLink()).toBe(false);
+      expect(fs.existsSync(path.join(versionSkillsDir, 'mq', 'SKILL.md'))).toBe(true);
+    });
   });
 
   describe('hooks syncing', () => {
@@ -1007,6 +1033,18 @@ describe('syncResourcesToVersion', () => {
       expect(result.subagents).toEqual([]);
       expect(result.plugins).toEqual([]);
     });
+  });
+});
+
+describe('installVersion', () => {
+  it('rejects unsafe versions before creating install directories', async () => {
+    const badVersion = '1.0.0;touch-pwned';
+
+    await expect(installVersion('claude', badVersion)).rejects.toThrow(
+      `Invalid version: ${JSON.stringify(badVersion)}`
+    );
+
+    expect(fs.existsSync(path.join(AGENTS_DIR, 'versions', 'claude'))).toBe(false);
   });
 });
 

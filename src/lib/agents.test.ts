@@ -110,4 +110,61 @@ describe('MCP CLI execution', () => {
     expect(log).toContain('ARG:-e');
     expect(log).toContain('ARG:console.log(1)');
   });
+
+  it('registers Claude HTTP MCP servers with native transport args and headers', async () => {
+    const dir = makeTempDir();
+    const { binary, logPath } = writeArgLogger(dir);
+
+    const result = runAgentsModule(
+      `registerMcp('claude', 'docs', 'https://developers.openai.com/mcp', 'user', 'http', { binary: ${JSON.stringify(binary)}, home: ${JSON.stringify(dir)}, headers: { Authorization: 'Bearer token' } })`
+    ) as { success: boolean };
+
+    const log = fs.readFileSync(logPath, 'utf-8');
+    expect(result.success).toBe(true);
+    expect(log).toContain('ARG:--transport\nARG:http\nARG:--scope\nARG:user');
+    expect(log).toContain('ARG:docs\nARG:https://developers.openai.com/mcp');
+    expect(log).toContain('ARG:--header\nARG:Authorization: Bearer token');
+    expect(log).not.toContain('ARG:--\n');
+  });
+
+  it('registers Codex HTTP MCP servers with --url', async () => {
+    const dir = makeTempDir();
+    const { binary, logPath } = writeArgLogger(dir);
+
+    const result = runAgentsModule(
+      `registerMcp('codex', 'docs', 'https://developers.openai.com/mcp', 'user', 'http', { binary: ${JSON.stringify(binary)}, home: ${JSON.stringify(dir)} })`
+    ) as { success: boolean };
+
+    const log = fs.readFileSync(logPath, 'utf-8');
+    expect(result.success).toBe(true);
+    expect(log).toContain('ARG:mcp\nARG:add\nARG:docs\nARG:--url\nARG:https://developers.openai.com/mcp');
+    expect(log).not.toContain('ARG:--\n');
+  });
+
+  it('registers Gemini HTTP MCP servers with native transport args', async () => {
+    const dir = makeTempDir();
+    const { binary, logPath } = writeArgLogger(dir);
+
+    const result = runAgentsModule(
+      `registerMcp('gemini', 'docs', 'https://developers.openai.com/mcp', 'project', 'http', { binary: ${JSON.stringify(binary)}, home: ${JSON.stringify(dir)} })`
+    ) as { success: boolean };
+
+    const log = fs.readFileSync(logPath, 'utf-8');
+    expect(result.success).toBe(true);
+    expect(log).toContain('ARG:--transport\nARG:http\nARG:--scope\nARG:project');
+    expect(log).toContain('ARG:docs\nARG:https://developers.openai.com/mcp');
+    expect(log).not.toContain('ARG:--\n');
+  });
+
+  it('skips HTTP MCP registration for agents without native HTTP support', async () => {
+    const dir = makeTempDir();
+    const { binary } = writeArgLogger(dir);
+
+    const result = runAgentsModule(
+      `registerMcp('cursor', 'docs', 'https://developers.openai.com/mcp', 'user', 'http', { binary: ${JSON.stringify(binary)}, home: ${JSON.stringify(dir)} })`
+    ) as { success: boolean; error?: string };
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('skipped: agent does not support HTTP MCP registration');
+  });
 });

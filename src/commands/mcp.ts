@@ -516,7 +516,7 @@ Examples:
 
   mcpCmd
     .command('register [name]')
-    .description('Apply MCP servers from manifest to agent config files (stdio only for now)')
+    .description('Apply MCP servers from manifest to agent config files')
     .option('-a, --agents <list>', 'Override manifest targets: claude, codex@0.116.0')
     .addHelpText('after', `
 Examples:
@@ -551,8 +551,10 @@ Examples:
       }
 
       for (const [mcpName, config] of entries) {
-        if (config.transport === 'http' || !config.command) {
-          console.log(`\n  ${chalk.cyan(mcpName)}: ${chalk.yellow('HTTP transport not yet supported')}`);
+        const transport = config.transport || 'stdio';
+        const commandOrUrl = transport === 'http' ? config.url : config.command;
+        if (!commandOrUrl) {
+          console.log(`\n  ${chalk.cyan(mcpName)}: ${chalk.yellow(`missing ${transport === 'http' ? 'url' : 'command'}`)}`);
           continue;
         }
 
@@ -563,14 +565,17 @@ Examples:
         const results = await registerMcpToTargets(
           targets,
           mcpName,
-          config.command,
+          commandOrUrl,
           config.scope || 'user',
-          config.transport || 'stdio'
+          transport,
+          { headers: config.headers }
         );
 
         for (const result of results) {
           if (result.success) {
             console.log(`    ${chalk.green('+')} ${formatTargetLabel(result.agentId, result.version)}`);
+          } else if (result.error?.startsWith('skipped:')) {
+            console.log(`    ${chalk.yellow('-')} ${formatTargetLabel(result.agentId, result.version)}: ${result.error}`);
           } else {
             console.log(`    ${chalk.red('x')} ${formatTargetLabel(result.agentId, result.version)}: ${result.error}`);
           }

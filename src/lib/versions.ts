@@ -927,6 +927,9 @@ export interface AgentSpec {
  */
 export function parseAgentSpec(spec: string): AgentSpec | null {
   const parts = spec.split('@');
+  if (parts.length > 2) {
+    return null;
+  }
   const agentName = parts[0].toLowerCase();
   const version = parts[1] || 'latest';
 
@@ -1092,6 +1095,13 @@ export async function installVersion(
     return { success: false, installedVersion: version, error: 'Agent has no npm package' };
   }
 
+  // Validate before deriving filesystem paths or npm package specs. The CLI
+  // parser already enforces this for user input; this guard protects direct
+  // callers and tests the critical install path at the source.
+  if (!VERSION_RE.test(version)) {
+    throw new Error(`Invalid version: ${JSON.stringify(version)}`);
+  }
+
   ensureAgentsDir();
   const versionDir = getVersionDir(agent, version);
 
@@ -1111,13 +1121,6 @@ export async function installVersion(
   const packageSpec = version === 'latest'
     ? agentConfig.npmPackage
     : `${agentConfig.npmPackage}@${version}`;
-
-  // Defense-in-depth: even if a future caller bypasses parseAgentSpec, the
-  // version string never reaches /bin/sh because we use execFile (argv form)
-  // and re-validate here.
-  if (version !== 'latest' && !VERSION_RE.test(version)) {
-    throw new Error(`Invalid version: ${JSON.stringify(version)}`);
-  }
 
   try {
     // Check npm is available
@@ -1826,6 +1829,14 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
 
     if (skillsToSync.length > 0) {
       const skillsTarget = path.join(agentDir, 'skills');
+      // Old version homes may have skills -> ~/.agents/skills. Replace the
+      // parent symlink before touching children so removePath(destDir) cannot
+      // delete the central source through it.
+      try {
+        if (fs.lstatSync(skillsTarget).isSymbolicLink()) {
+          removePath(skillsTarget);
+        }
+      } catch { /* target does not exist yet */ }
       fs.mkdirSync(skillsTarget, { recursive: true });
 
       const syncedSkills: string[] = [];
