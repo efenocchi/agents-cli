@@ -19,6 +19,7 @@ import * as os from 'os';
 import simpleGit from 'simple-git';
 import { confirm, input } from '@inquirer/prompts';
 import { isInteractiveTerminal, isPromptCancelled } from './utils.js';
+import { setHelpSections } from '../lib/help.js';
 
 const HOME = os.homedir();
 
@@ -82,38 +83,36 @@ async function getShortCommit(repoDir: string): Promise<string | null> {
 export function registerRepoCommands(program: Command): void {
   const repoCmd = program
     .command('repo')
-    .description('Manage extra DotAgent repos alongside ~/.agents/ (for private or team skills)')
-    .addHelpText('after', `
-Managed extras live at ~/.agents-<alias>/ as peer dirs to ~/.agents/. User-owned
-repos can also live anywhere and be registered by path. Their skills, commands,
-and hooks merge into agent version homes after the user repo's — so ~/.agents/
-wins on name collisions.
+    .description('Manage extra DotAgent repos alongside ~/.agents/ (for private or team skills).');
 
-Examples:
-  # Scaffold your own editable repo (default: ~/.agents/)
-  agents repo init
+  setHelpSections(repoCmd, {
+    examples: `
+      # Scaffold an editable repo (default: ~/.agents/)
+      agents repo init
 
-  # Scaffold a named repo (creates ~/.agents-work/)
-  agents repo init work
+      # Scaffold a named repo at ~/.agents-work/
+      agents repo init work
 
-  # Scaffold at a custom path
-  agents repo init ~/my-agents
+      # Register an existing repo (clones to ~/.agents-<alias>/)
+      agents repo add gh:yourname/.agents-work
 
-  # Add a private repo for work-only skills
-  agents repo add gh:yourname/.agents-work
+      # Register with a custom alias
+      agents repo add git@github.com:acme/team-skills.git --as acme
 
-  # Add with a custom alias
-  agents repo add git@github.com:acme/team-skills.git --as acme
+      # See what's registered
+      agents repo list
 
-  # Show all registered repos
-  agents repo list
+      # Temporarily disable without deleting
+      agents repo disable acme
+    `,
+    notes: `
+      Managed extras live at ~/.agents-<alias>/ as peer dirs to ~/.agents/. User-owned
+      repos can also live anywhere and be registered by path.
 
-  # Temporarily disable without deleting
-  agents repo disable acme
-
-  # Unregister it
-  agents repo remove acme
-`);
+      Resolution: skills/commands/hooks merge into agent version homes after the user
+      repo's, so ~/.agents/ wins on name collisions.
+    `,
+  });
 
   repoCmd
     .command('init [target]')
