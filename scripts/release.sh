@@ -137,8 +137,10 @@ parse_v() { echo "$1" | tr '.' ' '; }
 read -r CMAJ CMIN CPAT <<< "$(parse_v "$PHNX_LATEST")"
 read -r TMAJ TMIN TPAT <<< "$(parse_v "$TARGET")"
 
-# Strict single-step bump from $PHNX_LATEST:
+# Strict single-step bump from $PHNX_LATEST, OR equal to $PHNX_LATEST when the
+# shim is still behind (shim catch-up rerun after a partial publish).
 is_valid_bump=false
+read -r SMAJ SMIN SPAT <<< "$(parse_v "$SWARMIFY_LATEST")"
 if [[ $TMAJ -eq $CMAJ && $TMIN -eq $CMIN && $TPAT -eq $((CPAT + 1)) ]]; then
   BUMP="patch"
   is_valid_bump=true
@@ -147,6 +149,12 @@ elif [[ $TMAJ -eq $CMAJ && $TMIN -eq $((CMIN + 1)) && $TPAT -eq 0 ]]; then
   is_valid_bump=true
 elif [[ $TMAJ -eq $((CMAJ + 1)) && $TMIN -eq 0 && $TPAT -eq 0 ]]; then
   BUMP="major"
+  is_valid_bump=true
+elif [[ "$TARGET" == "$PHNX_LATEST" ]] && \
+     { [[ $TMAJ -gt $SMAJ ]] || \
+       { [[ $TMAJ -eq $SMAJ ]] && [[ $TMIN -gt $SMIN ]]; } || \
+       { [[ $TMAJ -eq $SMAJ ]] && [[ $TMIN -eq $SMIN ]] && [[ $TPAT -gt $SPAT ]]; }; }; then
+  BUMP="shim-catchup"
   is_valid_bump=true
 fi
 
@@ -159,13 +167,15 @@ if ! $is_valid_bump; then
   exit 1
 fi
 
-# Target must also be strictly newer than @companion latest (rare edge case).
-read -r SMAJ SMIN SPAT <<< "$(parse_v "$SWARMIFY_LATEST")"
-if [[ "$TMAJ$TMIN$TPAT" == "$SMAJ$SMIN$SPAT" ]] || \
-   { [[ $TMAJ -lt $SMAJ ]] || \
-     { [[ $TMAJ -eq $SMAJ ]] && [[ $TMIN -lt $SMIN ]]; } || \
-     { [[ $TMAJ -eq $SMAJ ]] && [[ $TMIN -eq $SMIN ]] && [[ $TPAT -le $SPAT ]]; }; }; then
-  die "target $TARGET is not strictly newer than @companion latest $SWARMIFY_LATEST"
+# Target must also be strictly newer than @companion latest (rare edge case),
+# unless this is a shim-catchup where target == phnx_latest and shim is behind.
+if [[ "$BUMP" != "shim-catchup" ]]; then
+  if [[ "$TMAJ$TMIN$TPAT" == "$SMAJ$SMIN$SPAT" ]] || \
+     { [[ $TMAJ -lt $SMAJ ]] || \
+       { [[ $TMAJ -eq $SMAJ ]] && [[ $TMIN -lt $SMIN ]]; } || \
+       { [[ $TMAJ -eq $SMAJ ]] && [[ $TMIN -eq $SMIN ]] && [[ $TPAT -le $SPAT ]]; }; }; then
+    die "target $TARGET is not strictly newer than @companion latest $SWARMIFY_LATEST"
+  fi
 fi
 
 green "Bump: $BUMP ($PHNX_LATEST -> $TARGET)"
