@@ -84,8 +84,8 @@ describe('addShimsToPath', () => {
 });
 
 describe('SHIM_SCHEMA_VERSION', () => {
-  it('is 12 (shim helper calls use an absolute agents-cli entrypoint)', () => {
-    expect(SHIM_SCHEMA_VERSION).toBe(12);
+  it('is 13 (agents.yaml version is validated before shim writes)', () => {
+    expect(SHIM_SCHEMA_VERSION).toBe(13);
   });
 });
 

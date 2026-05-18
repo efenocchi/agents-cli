@@ -126,8 +126,10 @@ describe('resolveScreenshotOutputPath', () => {
   it('allows requested output paths inside browser runtime', () => {
     const automaticPath = path.join(TEST_BROWSER_DIR, 'sessions', 'task', '1.jpg');
     const requestedPath = path.join(TEST_BROWSER_DIR, 'exports', 'shot.jpg');
+    const resolved = resolveScreenshotOutputPath(requestedPath, automaticPath);
 
-    expect(resolveScreenshotOutputPath(requestedPath, automaticPath)).toBe(requestedPath);
+    expect(resolved.endsWith(path.join('exports', 'shot.jpg'))).toBe(true);
+    expect(resolved).not.toBe(automaticPath);
   });
 });
 

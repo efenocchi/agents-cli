@@ -102,6 +102,6 @@ describe('agents beta', () => {
     expect(drive.status).toBe(0);
     expect(outputOf(drive)).toContain('Drive');
     expect(factory.status).toBe(1);
-    expect(outputOf(factory)).toContain('Run `rush login` first.');
+    expect(outputOf(factory)).toContain('FACTORY_FLOOR_URL is not set.');
   });
 });
