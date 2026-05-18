@@ -1,9 +1,9 @@
 ---
 name: secrets
-description: "Manage secrets bundles backed by your OS keychain. Store, retrieve, generate, and inject credentials into agent runs without touching disk."
-author: phnx-labs
-version: 1.1.0
-license: MIT
+description: "Manage named bundles of environment variables backed by macOS Keychain. Create bundles, add secrets, generate passwords, and inject them into agent runs. Triggers on: 'API key', 'credentials', 'secrets bundle', 'inject env vars', '--secrets', 'keychain'."
+argument-hint: "[create|add|list|view|import|export|rotate|generate]"
+allowed-tools: Bash(agents secrets*)
+user-invocable: true
 ---
 
 # Secrets
@@ -72,18 +72,20 @@ agents secrets generate --copy    # copies to clipboard, prints nothing
 
 ## "I have multiple Macs and want secrets to sync"
 
-Create the bundle with `--icloud-sync` and it automatically appears on all your Macs (same iCloud account):
+Bundles auto-sync via iCloud Keychain by default. Create on one Mac, and the bundle appears on every Mac signed into the same iCloud account:
 
 ```bash
-agents secrets create work --icloud-sync
+agents secrets create work
 ```
+
+Pass `--no-icloud-sync` to keep values device-local instead.
 
 ## "I want to track when API keys expire"
 
 Add metadata when storing secrets:
 
 ```bash
-agents secrets add prod STRIPE_KEY --type api-key --expires 2025-12-31 --note "Live key, rotate annually"
+agents secrets add prod STRIPE_KEY --type api-key --expires 2027-12-31 --note "Live key, rotate annually"
 ```
 
 The `list` command shows secrets expiring in the next 30 days. Expired secrets show in red.
