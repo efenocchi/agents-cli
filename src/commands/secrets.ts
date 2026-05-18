@@ -46,7 +46,7 @@ import {
   listVaults,
   type OpVault,
 } from '../lib/onepassword.js';
-import { registerCommandGroups } from '../lib/help.js';
+import { registerCommandGroups, setHelpSections } from '../lib/help.js';
 import { isInteractiveTerminal, isPromptCancelled } from './utils.js';
 
 /** Prompt the user for a secret value with masked input. Requires an interactive TTY. */
@@ -344,85 +344,46 @@ export function registerSecretsCommands(program: Command): void {
   const cmd = program
     .command('secrets')
     .description('Named bundles of env variables backed by macOS Keychain (iCloud-synced by default). Inject into agents via `agents run --secrets <name>`.')
-    .hook('preAction', () => { migrateLegacyBundles(); })
-    .addHelpText('after', `
-Workflow:
-  Bundles are containers; secrets are the variables inside them. Create a
-  bundle once, add secrets to it, then inject the whole bundle into any agent
-  run with --secrets <name>. Keychain-backed values never touch disk in
-  plaintext.
+    .hook('preAction', () => { migrateLegacyBundles(); });
 
-  New bundles store values in the iCloud-synced keychain by default so they
-  appear automatically on your other Macs (same iCloud account, iCloud
-  Keychain enabled). Pass --no-icloud-sync at create time to keep values
-  device-local instead.
+  setHelpSections(cmd, {
+    examples: `
+      # Create a bundle
+      agents secrets create prod --description "Production keys for the api stack"
 
-Examples:
-  # Create a bundle for production credentials (iCloud-synced by default)
-  agents secrets create prod --description "Production keys for the api stack"
+      # Add a keychain-backed secret (prompts for the value)
+      agents secrets add prod STRIPE_API_KEY
 
-  # Create a bundle that never leaves this Mac
-  agents secrets create local-only --no-icloud-sync
+      # Add a non-sensitive literal
+      agents secrets add prod LOG_LEVEL --value info
 
-  # Rename a bundle (moves metadata + every keychain value)
-  agents secrets rename prod production
+      # Inject the bundle into an agent run
+      agents run claude "deploy the worker" --secrets prod
 
-  # Edit the description of an existing bundle
-  agents secrets describe prod "Production keys for the api stack"
-  agents secrets describe prod --clear
+      # See what's in the bundle (values masked)
+      agents secrets view prod
 
-  # Add a keychain-backed secret (prompts for the value)
-  agents secrets add prod STRIPE_API_KEY
+      # Eval the bundle into your current shell
+      eval "$(agents secrets export prod --plaintext)"
 
-  # Add a literal (non-sensitive) value
-  agents secrets add prod LOG_LEVEL --value info
+      # Run a one-off command with secrets injected
+      agents secrets exec prod -- ./deploy.sh
+    `,
+    notes: `
+      Bundles are containers; secrets are the variables inside them. Keychain values
+      never touch disk in plaintext.
 
-  # Add with metadata
-  agents secrets add prod STRIPE_API_KEY --type api-key --expires 2027-01-15 --note "Live key, owner: payments-team"
+      iCloud sync: new bundles use the iCloud-synced keychain by default so they
+      appear on other Macs (same iCloud account, iCloud Keychain enabled). Pass
+      --no-icloud-sync at create time to keep values device-local instead.
 
-  # Rotate a key (replaces the value, preserves metadata unless overridden)
-  agents secrets rotate prod STRIPE_API_KEY
-
-  # Import an entire .env file straight into keychain
-  agents secrets import prod --from .env.prod
-
-  # Import secrets from a 1Password vault
-  agents secrets import prod --from-1password --vault "Rush Prod"
-
-  # Push a bundle back to 1Password (vault migration, backup)
-  agents secrets export prod --to-1password --vault "Rush Prod"
-  agents secrets export prod --to-1password --vault "Rush Prod" --force
-
-  # See what's in a bundle (values masked)
-  agents secrets view prod
-
-  # Reveal the real values in an interactive shell
-  agents secrets view prod --reveal
-
-  # Inject the bundle into an agent run
-  agents run claude "deploy the worker" --secrets prod
-
-  # Eval the bundle into your current shell
-  eval "$(agents secrets export prod --plaintext)"
-
-  # Run a command with secrets injected
-  agents secrets exec prod -- ./deploy.sh
-  agents secrets exec hetzner.com -- crabbox list
-
-  # Remove one key (purges the keychain item by default)
-  agents secrets remove prod STRIPE_API_KEY
-
-  # Delete the whole bundle and purge every keychain item it owned
-  agents secrets delete prod
-
-  # Generate a random password (32 chars, all character classes)
-  agents secrets generate
-
-  # Generate a 16-char password, or a PIN, or hex
-  agents secrets generate 16
-  agents secrets generate 8 --pin
-  agents secrets generate 32 --hex
-`);
+      See also:
+        agents secrets rotate <bundle> <key>           rotate value, preserve metadata
+        agents secrets import <bundle> --from .env     bulk import from .env
+        agents secrets import <bundle> --from-1password --vault <name>
+        agents secrets generate [length]               generate a random password / PIN / hex
+    `,
+  });
 
   registerCommandGroups(cmd, [
     { title: 'Bundle commands', names: ['list', 'view', 'create', 'rename', 'describe', 'delete'] },
