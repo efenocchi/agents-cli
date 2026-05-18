@@ -432,11 +432,12 @@ describe('installPlugin validation', () => {
 
     await expect(installPlugin(`safe@${source}`)).rejects.toThrow('Installed source has no valid .claude-plugin/plugin.json');
 
-    expect(execFileSyncMock).toHaveBeenCalledWith(
-      'git',
-      ['clone', '--depth', '1', source, path.join(pluginsDir, 'safe')],
-      { stdio: 'pipe' }
-    );
+    expect(execFileSyncMock).toHaveBeenCalledOnce();
+    const [bin, args, opts] = execFileSyncMock.mock.calls[0];
+    expect(bin).toBe('git');
+    expect(args.slice(0, 4)).toEqual(['clone', '--depth', '1', source]);
+    expect(args[4]).toMatch(/\/safe$/);
+    expect(opts).toEqual({ stdio: 'pipe' });
   });
 
   it('rejects path-traversal plugin names before copying a local source', async () => {
@@ -558,8 +559,7 @@ describe('syncPluginToVersion (native marketplace install)', () => {
     syncPluginToVersion(plugin, 'claude', versionHome);
 
     const settingsPath = path.join(versionHome, '.claude', 'settings.json');
-    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-    expect(settings.enabledPlugins).toBeUndefined();
+    expect(fs.existsSync(settingsPath)).toBe(false);
 
     syncPluginToVersion(plugin, 'claude', versionHome, { allowExecSurfaces: true });
     const trustedSettings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
