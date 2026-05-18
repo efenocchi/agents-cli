@@ -36,6 +36,7 @@ import {
   removeTeam,
   teamExists,
 } from '../lib/teams/registry.js';
+import { setHelpSections } from '../lib/help.js';
 import {
   createWorktree,
   isGitRepo,
@@ -602,56 +603,44 @@ async function pickTeamOr(
 export function registerTeamsCommands(program: Command): void {
   const teams = program
     .command('teams')
-    .description('Organize AI coding agents into teams that collaborate on a shared task')
-    .addHelpText(
-      'after',
-      `
-A team is a named group of agents working together on a shared task. Each teammate
-runs in the background; you use 'status' to check in on progress. Use --after to
-create DAG-style dependencies (one teammate waits for another to finish first).
+    .description('Organize AI coding agents into teams that work in parallel on a shared task.');
 
-Teammate sessions appear in 'agents sessions --teams' with a [team/name · mode] tag.
+  setHelpSections(teams, {
+    examples: `
+      # Create a team for a coordinated task
+      agents teams create pricing-page
 
-Examples:
-  # Spin up a team to ship the new pricing page end-to-end
-  agents teams create pricing-page
+      # Add a teammate — name them so you can refer to them later
+      agents teams add pricing-page claude "Rewrite /v2/pricing endpoint" --name backend
 
-  # Backend first: Claude rewrites the billing endpoint
-  agents teams add pricing-page claude "Rewrite /v2/pricing to return tiered plans from billing.plans table" --name backend
+      # Parallel work — frontend stubs API while backend lands
+      agents teams add pricing-page codex "Build /pricing route with three-tier layout" --name frontend
 
-  # Frontend can start in parallel — it stubs the API while backend lands
-  agents teams add pricing-page codex "Build the new /pricing route in apps/web with the three-tier layout" --name frontend
+      # DAG dependency — QA waits for backend AND frontend to finish
+      agents teams add pricing-page claude "Run Playwright suite, fix flakes" --name qa --after backend,frontend
 
-  # QA waits for both to finish before running e2e
-  agents teams add pricing-page claude "Run the full Playwright suite, fix any flakes, paste failing screenshots" --name qa --after backend,frontend
+      # Start everyone (respects --after dependencies) and watch live
+      agents teams start pricing-page --watch
 
-  # Drain the DAG: backend + frontend launch now, qa picks up when they're done
-  agents teams start pricing-page --watch
+      # Delta-poll status without rereading everything
+      agents teams status pricing-page --since 2026-04-24T09:00:00-07:00
 
-  # Check in without re-reading everything (delta poll)
-  agents teams status pricing-page --since 2026-04-24T09:00:00-07:00
+      # Wind everyone down when shipped
+      agents teams disband pricing-page
+    `,
+    notes: `
+      A team is a named group of agents working in the background on a shared task.
+      Teammate sessions show in 'agents sessions --teams' tagged [team/name · mode].
 
-  # Pull the live log of one teammate
-  agents teams logs frontend
+      Teammate syntax:
+        'claude'           the default Claude version on this machine
+        'claude@2.1.112'   a specific installed version (see 'agents view')
 
-  # A teammate is stuck — stop them, then remove if needed
-  agents teams stop pricing-page frontend
-  agents teams remove pricing-page frontend
-
-  # Ship done — wind everyone down
-  agents teams disband pricing-page
-
-Short aliases:
-  teams c  = create    teams a  = add       teams s  = status
-  teams rm = remove    teams d  = disband   teams ls = list
-
-Teammate syntax (same as the rest of agents-cli):
-  'claude'              -> the default Claude version on this machine
-  'claude@2.1.112'      -> a specific installed version (see 'agents view')
-
-Name teammates with --name alice to refer to them as 'alice' instead of a UUID.
-`
-    );
+      Short aliases:
+        teams c  = create    teams a  = add       teams s  = status
+        teams rm = remove    teams d  = disband   teams ls = list
+    `,
+  });
 
   // list
   teams
