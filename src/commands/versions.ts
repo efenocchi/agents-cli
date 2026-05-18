@@ -68,6 +68,7 @@ import {
 import { isInteractiveTerminal, isPromptCancelled, requireInteractiveSelection } from './utils.js';
 import { tryAutoPull } from '../lib/git.js';
 import { getAgentsDir } from '../lib/state.js';
+import { setHelpSections } from '../lib/help.js';
 
 /**
  * Helper to get actual installed version for an agent.
@@ -134,34 +135,34 @@ function warnIfShimShadowed(agent: AgentId): void {
 
 /** Register `agents add`, `agents remove`, `agents use`, and `agents list` (deprecated). */
 export function registerVersionsCommands(program: Command): void {
-  program
+  const addCmd = program
     .command('add <specs...>')
     .description('Download and install agent CLI versions. Enables subsidized API usage through managed binaries.')
     .option('-p, --project', 'Lock this version to the current project directory only, stored in project-root agents.yaml')
-    .option('-y, --yes', 'Auto-accept defaults without prompting (useful for scripts and CI)')
-    .addHelpText('after', `
-Examples:
-  # Fresh install of the latest Claude CLI
-  agents add claude@latest
+    .option('-y, --yes', 'Auto-accept defaults without prompting (useful for scripts and CI)');
 
-  # Install specific version (use this when you need reproducibility)
-  agents add claude@2.1.112
+  setHelpSections(addCmd, {
+    examples: `
+      # Install the latest version of an agent
+      agents add claude@latest
 
-  # Install multiple agents at once
-  agents add claude@latest codex@0.116.0
+      # Install a specific version (reproducibility)
+      agents add claude@2.1.112
 
-  # Pin a version to this project only (won't affect global default)
-  agents add claude@2.1.100 --project
+      # Install multiple agents at once
+      agents add claude@latest codex@0.116.0
 
-When to use:
-  - First time setup: install the agent CLI you want to use
-  - Upgrading: install a newer version (old versions remain available)
-  - Multi-account: install different versions for different accounts (each version has its own auth)
-  - Project-specific: lock a version for a repo with --project
+      # Lock a version to this project only (won't affect global default)
+      agents add claude@2.1.100 --project
+    `,
+    notes: `
+      - The first version you install becomes the default automatically.
+      - 'add' does NOT change the default if a default already exists. Use 'agents use' to switch.
+      - Multi-account: each installed version has separate auth, so you can install the same agent twice for two accounts.
+    `,
+  });
 
-Note: The first version you install becomes the default automatically.
-`)
-    .action(async (specs: string[], options) => {
+  addCmd.action(async (specs: string[], options) => {
       const isProject = options.project;
       const skipPrompts = options.yes || !isInteractiveTerminal();
 
@@ -359,31 +360,29 @@ Note: The first version you install becomes the default automatically.
       }
     });
 
-  program
+  const removeCmd = program
     .command('remove <specs...>')
-    .description('Uninstall agent CLI versions from your system. Frees up disk space and removes auth tokens.')
-    .option('-p, --project', 'Also clear the pinned version from .agents/agents.yaml in the current project')
-    .addHelpText('after', `
-Examples:
-  # Remove a specific version
-  agents remove claude@2.0.50
+    .description('Uninstall agent CLI versions. Frees disk space and removes the version\'s auth token.')
+    .option('-p, --project', 'Also clear the pinned version from .agents/agents.yaml in the current project');
 
-  # Remove without specifying version (opens interactive picker)
-  agents remove claude
+  setHelpSections(removeCmd, {
+    examples: `
+      # Remove a specific version
+      agents remove claude@2.0.50
 
-  # Remove and also clear project pin
-  agents remove claude@2.0.50 --project
+      # Pick interactively if you omit the version
+      agents remove claude
 
-When to use:
-  - Freeing disk space by removing old unused versions
-  - Cleaning up after testing a version you no longer need
-  - Removing a version tied to an account you've deactivated
+      # Remove and also clear the project pin
+      agents remove claude@2.0.50 --project
+    `,
+    notes: `
+      - Removing the default version unsets the default; run 'agents use' to pick a new one.
+      - Reinstall any time with 'agents add'.
+    `,
+  });
 
-Notes:
-  - Removing the default version will unset the default; run 'agents use' to pick a new one
-  - You can always reinstall with 'agents add' later
-`)
-    .action(async (specs: string[], options) => {
+  removeCmd.action(async (specs: string[], options) => {
       const isProject = options.project;
 
       for (const spec of specs) {
@@ -489,32 +488,31 @@ Notes:
       }
     });
 
-  program
+  const useCmd = program
     .command('use <agent> [version]')
-    .description('Switch the active version for an agent. This is how you set defaults globally or per-project.')
+    .description('Switch the active version for an agent. This is the only command that sets the default.')
     .option('-p, --project', 'Pin to this project directory only (stored in .agents/agents.yaml)')
-    .option('-y, --yes', 'Auto-sync resources without prompting')
-    .addHelpText('after', `
-Examples:
-  # Set global default (interactive picker if version omitted)
-  agents use claude
-  agents use claude@2.1.112
+    .option('-y, --yes', 'Auto-sync resources without prompting');
 
-  # Lock this project to a specific version (overrides global default when in this directory)
-  agents use claude@2.1.100 --project
+  setHelpSections(useCmd, {
+    examples: `
+      # Set global default (interactive picker if version omitted)
+      agents use claude
+      agents use claude@2.1.112
 
-  # Switch accounts (each version can be logged into a different account)
-  agents use claude@2.1.50
+      # Pin this project to a version (overrides the global default in this directory)
+      agents use claude@2.1.100 --project
 
-When to use:
-  - After installing: 'agents add' does NOT set the default; 'use' does
-  - Switching accounts: each installed version has separate auth; 'use' switches which one is active
-  - Project overrides: set a different version for a specific project with --project
-  - Testing: quickly switch between versions without reinstalling
+      # Switch accounts — each installed version has its own auth
+      agents use claude@2.1.50
+    `,
+    notes: `
+      - 'agents add' installs but does NOT set the default. Always follow with 'agents use'.
+      - --project pins to the current directory only via .agents/agents.yaml.
+    `,
+  });
 
-Important: This is the ONLY command that sets the default version. If you want a version to be active, you must run 'agents use'.
-`)
-    .action(async (agentArg: string, versionArg: string | undefined, options) => {
+  useCmd.action(async (agentArg: string, versionArg: string | undefined, options) => {
       try {
         const skipPrompts = options.yes || !isInteractiveTerminal();
         // Auto-pull ~/.agents-system if it's a git repo with remote (silent on success)
