@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Mock dependencies before importing the module under test
+// Mock dependencies before importing the module under test.
+// Use a regular function (not arrow) so vitest 4 can invoke it via `new`.
 vi.mock('./cdp.js', () => ({
-  CDPClient: vi.fn().mockImplementation(() => ({
-    connect: vi.fn().mockResolvedValue(undefined),
-  })),
+  CDPClient: vi.fn().mockImplementation(function () {
+    return { connect: vi.fn().mockResolvedValue(undefined) };
+  }),
   discoverBrowserWsUrl: vi.fn(),
   verifyBrowserIdentity: vi.fn(),
 }));

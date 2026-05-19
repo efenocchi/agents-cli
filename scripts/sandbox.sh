@@ -133,7 +133,7 @@ get_or_create_box() {
   box_id=$(pick_box_for_profile)
 
   if [[ -z "$box_id" ]]; then
-    echo "No running box for profile '$PROFILE', warming up (~60s)..."
+    echo "No running box for profile '$PROFILE', warming up (~60s)..." >&2
     crabbox warmup --class "$BOX_CLASS" --profile "$PROFILE" >/dev/null
     sleep 5
     box_id=$(pick_box_for_profile)
@@ -147,18 +147,30 @@ bootstrap_remote() {
   cat <<'BOOTSTRAP'
 set -euo pipefail
 
+# Build tools for native modules (node-pty, etc.) — install BEFORE bun, since
+# bun's installer requires unzip.
+if ! command -v make &>/dev/null || ! command -v unzip &>/dev/null; then
+  echo "Installing build-essential + unzip..."
+  sudo apt-get update -qq && sudo apt-get install -y -qq build-essential unzip
+fi
+
+# Node.js — tests spawn `node`/`tsx` subprocesses; without it, the bun shim
+# misroutes shebang lines and ESM imports fail (Cannot find module './cjs/index.cjs').
+# Vitest 4 uses rolldown internally which imports `styleText` from `node:util`
+# (added in node 20.12), so apt's nodejs (often 18 on jammy) is too old.
+# Install node 22 via NodeSource to match .github/workflows/ci.yml.
+if ! command -v node &>/dev/null || ! node -e "process.exit(parseInt(process.versions.node.split('.')[0]) >= 20 ? 0 : 1)" 2>/dev/null; then
+  echo "Installing nodejs 22 from NodeSource..."
+  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - >/dev/null 2>&1
+  sudo apt-get install -y -qq nodejs
+fi
+
 # Bun (for TypeScript projects)
 if ! command -v bun &>/dev/null; then
   echo "Installing bun..."
   curl -fsSL https://bun.sh/install | bash
 fi
 export PATH="$HOME/.bun/bin:$PATH"
-
-# Build tools for native modules (node-pty, etc.)
-if ! command -v make &>/dev/null; then
-  echo "Installing build-essential..."
-  sudo apt-get update -qq && sudo apt-get install -y -qq build-essential unzip
-fi
 
 # GitHub CLI (gh) — used by agents to open PRs, query issues, etc.
 if ! command -v gh &>/dev/null; then
