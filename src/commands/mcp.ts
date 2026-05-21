@@ -219,12 +219,41 @@ Examples:
   agents mcp add db-server -- uvx postgres-mcp
 `)
     .action(async (name: string, commandOrUrl: string[], options) => {
+      // Registry resolution: if the user just typed `agents mcp add <name>`,
+      // try looking up `<name>` in any configured MCP registry (by default the
+      // official MCP Registry at registry.modelcontextprotocol.io) and derive
+      // the install spec automatically.
+      if (commandOrUrl.length === 0) {
+        const { getMcpServerInfo, mcpEntryToInstallSpec } = await import('../lib/registry.js');
+        const spinner = ora(`Looking up '${name}' in MCP registries…`).start();
+        try {
+          const entry = await getMcpServerInfo(name);
+          if (entry) {
+            const spec = mcpEntryToInstallSpec(entry);
+            if (spec?.command) {
+              commandOrUrl = spec.command.split(' ');
+              options.transport = spec.transport;
+              spinner.succeed(`Resolved '${name}' → ${chalk.gray(spec.command)}`);
+            } else {
+              spinner.warn(
+                `Found '${name}' in registry but could not derive an install command (likely a remote-only server).`
+              );
+            }
+          } else {
+            spinner.fail(`'${name}' not found in any configured MCP registry.`);
+          }
+        } catch (err) {
+          spinner.fail(`Registry lookup failed: ${(err as Error).message}`);
+        }
+      }
+
       const transport = options.transport as 'stdio' | 'http';
 
       if (commandOrUrl.length === 0) {
         console.error(chalk.red('Error: Command or URL required'));
         console.log(chalk.gray('Stdio: agents mcp add <name> -- <command...>'));
         console.log(chalk.gray('HTTP:  agents mcp add <name> <url> --transport http'));
+        console.log(chalk.gray("Or list what's discoverable: agents mcp list --available"));
         process.exit(1);
       }
 

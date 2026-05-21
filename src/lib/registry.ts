@@ -158,6 +158,55 @@ export async function searchMcpRegistries(
   return results;
 }
 
+/**
+ * Convert an MCP server registry entry into an install spec suitable for
+ * writing into `manifest.mcp`. Returns `null` if the entry has no package we
+ * know how to launch (e.g. only remote endpoints, which the current manifest
+ * shape supports via `url`+`transport: 'http'` but isn't yet wired to the
+ * registry's `remotes` field).
+ *
+ * Supported package shapes:
+ *   - npm / runtime=node      → `npx -y <name>`
+ *   - pypi / runtime=python   → `uvx <name>`
+ *   - runtime=docker          → `docker run --rm -i <name>`
+ *   - runtime=binary          → `<name>` (assumed to be on PATH)
+ */
+export function mcpEntryToInstallSpec(
+  entry: McpServerEntry
+): { command?: string; url?: string; transport: 'stdio' | 'http' } | null {
+  const pkg = entry.packages?.[0];
+  if (!pkg) return null;
+
+  // Remote transports (sse / streamable-http) need a URL the registry doesn't
+  // currently expose in this client's type. Skip for now; caller can fall back
+  // to manual --transport http with an explicit URL.
+  if (pkg.transport === 'sse' || pkg.transport === 'streamable-http') {
+    return null;
+  }
+
+  const reg = pkg.registry_name?.toLowerCase();
+  const runtime = pkg.runtime;
+  const name = pkg.name;
+
+  if (!name) return null;
+
+  if (reg === 'npm' || runtime === 'node') {
+    return { command: `npx -y ${name}`, transport: 'stdio' };
+  }
+  if (reg === 'pypi' || runtime === 'python') {
+    return { command: `uvx ${name}`, transport: 'stdio' };
+  }
+  if (runtime === 'docker') {
+    return { command: `docker run --rm -i ${name}`, transport: 'stdio' };
+  }
+  if (runtime === 'binary') {
+    return { command: name, transport: 'stdio' };
+  }
+  // Unknown registry/runtime — fall back to bare name so the user gets *something*
+  // to inspect via `agents mcp view`, rather than a silent miss.
+  return { command: name, transport: 'stdio' };
+}
+
 /** Look up detailed info for an MCP server by exact name. */
 export async function getMcpServerInfo(
   serverName: string,
