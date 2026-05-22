@@ -19,6 +19,7 @@ import * as yaml from 'yaml';
 import {
   deleteKeychainToken,
   getKeychainToken,
+  getKeychainTokensBatch,
   hasKeychainToken,
   listKeychainItems,
   parseBundleValue,
@@ -313,13 +314,67 @@ function stampLastUsed(bundle: SecretsBundle): void {
 // the bundle-scoped naming scheme so two bundles with the same short ID never
 // collide. Throws on the first missing secret so `agents run` fails loudly
 // rather than silently injecting empty strings.
-export function resolveBundleEnv(bundle: SecretsBundle): Record<string, string> {
+/** Options for resolveBundleEnv. */
+export interface ResolveBundleOptions {
+  /**
+   * Human-readable label for who is requesting the secrets. Shown to the
+   * user under the Touch ID prompt so they know what's about to read.
+   * Example: "agent claude", "command curl", "browser profile".
+   * When omitted the prompt only names the bundle.
+   */
+  caller?: string;
+}
+
+export function resolveBundleEnv(bundle: SecretsBundle, opts: ResolveBundleOptions = {}): Record<string, string> {
   stampLastUsed(bundle);
-  const env: Record<string, string> = {};
+
+  // First pass: collect every keychain: ref into a single batch so macOS
+  // shows ONE Touch ID prompt for the whole bundle. Literals/env/file/exec
+  // refs don't go through the keychain helper and are resolved inline below.
+  type Parsed = { literal: string } | { ref: SecretRef };
+  const parsedByKey = new Map<string, Parsed>();
+  const keychainItemsToFetch: string[] = [];
+  const keychainItemToKey = new Map<string, string>();
   for (const [key, raw] of Object.entries(bundle.vars)) {
     const parsed = parseBundleValue(raw);
+    parsedByKey.set(key, parsed);
+    if ('ref' in parsed && parsed.ref.provider === 'keychain') {
+      const item = secretsKeychainItem(bundle.name, parsed.ref.value);
+      keychainItemsToFetch.push(item);
+      keychainItemToKey.set(item, key);
+    }
+  }
+
+  // Build the localizedReason shown under the Touch ID prompt. Lowercase verb
+  // phrase per Apple HIG — the system prepends "<App> is required to ".
+  const reason = opts.caller
+    ? `read ${bundle.name} secrets (for ${opts.caller})`
+    : `read ${bundle.name} secrets`;
+
+  // Single helper invocation, one biometric prompt.
+  const fetched = keychainItemsToFetch.length > 0
+    ? getKeychainTokensBatch(keychainItemsToFetch, bundle.icloud_sync, reason)
+    : new Map<string, string>();
+
+  // Second pass: assemble env. Keychain values come from the batch; everything
+  // else is resolved inline (literals and env/file/exec refs don't prompt).
+  const env: Record<string, string> = {};
+  for (const [key, raw] of Object.entries(bundle.vars)) {
+    const parsed = parsedByKey.get(key)!;
     if ('literal' in parsed) {
       env[key] = parsed.literal;
+      continue;
+    }
+    if (parsed.ref.provider === 'keychain') {
+      const item = secretsKeychainItem(bundle.name, parsed.ref.value);
+      const value = fetched.get(item);
+      if (value === undefined) {
+        throw new Error(
+          `Bundle '${bundle.name}' key '${key}': keychain item '${item}' not found. ` +
+          `Run: agents secrets add ${bundle.name} ${key}`
+        );
+      }
+      env[key] = value;
       continue;
     }
     try {
@@ -329,13 +384,7 @@ export function resolveBundleEnv(bundle: SecretsBundle): Record<string, string> 
         keychainItemFor: (shortId: string) => secretsKeychainItem(bundle.name, shortId),
       });
     } catch (err) {
-      const msg = (err as Error).message;
-      if (parsed.ref.provider === 'keychain' && /not found/.test(msg)) {
-        throw new Error(
-          `${msg} Run: agents secrets add ${bundle.name} ${key}`
-        );
-      }
-      throw new Error(`Bundle '${bundle.name}' key '${key}': ${msg}`);
+      throw new Error(`Bundle '${bundle.name}' key '${key}': ${(err as Error).message}`);
     }
   }
   return env;

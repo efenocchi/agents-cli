@@ -8,15 +8,15 @@
 #
 # Requires: APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID in env;
 #           bin/embedded.provisionprofile checked into the repo.
-# Output: bin/AgentsKeychain.app (universal, signed, notarized)
+# Output: bin/Agents CLI.app (universal, signed, notarized)
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SOURCE="$REPO_ROOT/src/lib/secrets/keychain-helper.swift"
 PROFILE="$REPO_ROOT/bin/embedded.provisionprofile"
 ENTITLEMENTS="$REPO_ROOT/scripts/keychain-entitlements.plist"
-APP="$REPO_ROOT/bin/AgentsKeychain.app"
-BIN="$APP/Contents/MacOS/AgentsKeychain"
+APP="$REPO_ROOT/bin/Agents CLI.app"
+BIN="$APP/Contents/MacOS/Agents CLI"
 
 : "${APPLE_ID:?APPLE_ID not set}"
 : "${APPLE_APP_SPECIFIC_PASSWORD:?APPLE_APP_SPECIFIC_PASSWORD not set}"
@@ -47,9 +47,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleIdentifier</key>
   <string>com.phnx-labs.agents-keychain</string>
   <key>CFBundleName</key>
-  <string>AgentsKeychain</string>
+  <string>Agents CLI</string>
+  <key>CFBundleDisplayName</key>
+  <string>Agents CLI</string>
   <key>CFBundleExecutable</key>
-  <string>AgentsKeychain</string>
+  <string>Agents CLI</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleVersion</key>
@@ -86,10 +88,10 @@ codesign --verify --verbose "$APP"
 codesign -d --entitlements - "$APP" | head -10
 
 echo "Packaging for notarization..."
-ditto -c -k --keepParent "$APP" /tmp/AgentsKeychain.zip
+ditto -c -k --keepParent "$APP" "/tmp/Agents CLI.zip"
 
 echo "Submitting for notarization (~1 min)..."
-xcrun notarytool submit /tmp/AgentsKeychain.zip \
+xcrun notarytool submit "/tmp/Agents CLI.zip" \
   --apple-id "$APPLE_ID" \
   --password "$APPLE_APP_SPECIFIC_PASSWORD" \
   --team-id "$APPLE_TEAM_ID" \

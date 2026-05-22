@@ -414,7 +414,7 @@ agents secrets list                              # npm-tokens is already there;
 agents run claude "..." --secrets npm-tokens     # injects NPM_TOKEN automatically
 ```
 
-Under the hood, synced bundles route writes through a notarized helper app (`AgentsKeychain.app`) that holds the entitlement macOS requires for `kSecAttrSynchronizable`. Bundles created with `--no-icloud-sync` stay device-local.
+Under the hood, synced bundles route writes through a notarized helper app (`Agents CLI.app`) that holds the entitlement macOS requires for `kSecAttrSynchronizable`. Bundles created with `--no-icloud-sync` stay device-local.
 
 Bundle definitions sync via iCloud Keychain too — no `agents repo push` needed for secrets, no recreate step on each Mac. Nothing about secrets ever lives in plaintext on disk.
 

@@ -140,7 +140,7 @@ export async function launchBrowser(
   if (secrets && bundleExists(secrets)) {
     try {
       const bundle = readBundle(secrets);
-      const bundleEnv = resolveBundleEnv(bundle);
+      const bundleEnv = resolveBundleEnv(bundle, { caller: 'browser profile' });
       env = { ...env, ...bundleEnv };
     } catch {
       // Bundle failed to resolve, continue without secrets

@@ -358,7 +358,7 @@ export function registerRunCommand(program: Command): void {
           }
           const breakdown = Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ');
           console.log(chalk.gray(`[secrets] Resolved ${bundleName}: ${entries.length} keys (${breakdown})`));
-          secretsEnv = { ...secretsEnv, ...resolveBundleEnv(bundle) };
+          secretsEnv = { ...secretsEnv, ...resolveBundleEnv(bundle, { caller: `agent ${agent}` }) };
         } catch (err) {
           console.error(chalk.red((err as Error).message));
           process.exit(1);

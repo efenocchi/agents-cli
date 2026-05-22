@@ -23,7 +23,7 @@
   "files": [
     "dist/**/*.js",
     "dist/**/*.d.ts",
-    "dist/lib/secrets/AgentsKeychain.app/**",
+    "dist/lib/secrets/Agents CLI.app/**",
     "npm-shrinkwrap.json",
     "scripts/postinstall.js",
     "CHANGELOG.md",
@@ -42,7 +42,7 @@
     "url": "https://github.com/phnx-labs/agents-cli/issues"
   },
   "scripts": {
-    "build": "tsc && rm -rf dist/lib/secrets/AgentsKeychain.app && ([ \"$(uname)\" = \"Darwin\" ] && cp -R bin/AgentsKeychain.app dist/lib/secrets/AgentsKeychain.app || true)",
+    "build": "tsc && rm -rf 'dist/lib/secrets/AgentsKeychain.app' 'dist/lib/secrets/Agents CLI.app' && ([ \"$(uname)\" = \"Darwin\" ] && cp -R 'bin/Agents CLI.app' 'dist/lib/secrets/Agents CLI.app' || true)",
     "prepack": "scripts/verify-keychain-helper.sh",
     "postinstall": "node scripts/postinstall.js",
     "dev": "tsx src/index.ts",

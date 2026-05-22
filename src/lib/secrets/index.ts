@@ -1,7 +1,7 @@
 /**
  * Cross-platform secure credential storage.
  *
- * macOS: Uses Keychain via signed Swift helper (AgentsKeychain.app) or `security` CLI.
+ * macOS: Uses Keychain via signed Swift helper (Agents CLI.app) or `security` CLI.
  * Linux: Uses libsecret (GNOME Keyring) via `secret-tool` CLI.
  * Windows: Not yet supported.
  *
@@ -83,7 +83,7 @@ export function secretsKeychainItem(bundle: string, key: string): string {
   return `${SERVICE_PREFIX}.secrets.${bundle}.${key}`;
 }
 
-// Resolve the bundled, signed-and-notarized AgentsKeychain.app shipped
+// Resolve the bundled, signed-and-notarized Agents CLI.app shipped
 // alongside the compiled JS. The .app embeds a provisioning profile that
 // grants the application-identifier + keychain-access-groups entitlements
 // macOS requires for kSecAttrSynchronizable writes. Bare CLI binaries
@@ -92,7 +92,7 @@ export function secretsKeychainItem(bundle: string, key: string): string {
 // be prebuilt by `scripts/build-keychain-helper.sh` and shipped.
 function ensureKeychainHelper(): string {
   const here = path.dirname(fileURLToPath(import.meta.url));
-  const binPath = path.join(here, 'AgentsKeychain.app', 'Contents', 'MacOS', 'AgentsKeychain');
+  const binPath = path.join(here, 'Agents CLI.app', 'Contents', 'MacOS', 'Agents CLI');
   if (!fs.existsSync(binPath)) {
     throw new Error(
       `Keychain helper missing at ${binPath}. ` +
@@ -161,7 +161,9 @@ export function getKeychainToken(item: string, sync = false): string {
     const token = secResult.stdout?.toString().trim();
     if (token) return token;
   }
-  // Fallback: binary searches both synced and non-synced via kSecAttrSynchronizableAny
+  // Fallback: binary searches both synced and non-synced via kSecAttrSynchronizableAny.
+  // `get` is the unauthenticated path — no LocalAuthentication prompt. Used by
+  // profiles.ts (OAuth refresh) where biometric on every API call is too noisy.
   const bin = ensureKeychainHelper();
   const result = spawnSync(bin, ['get', item, os.userInfo().username], {
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -174,6 +176,76 @@ export function getKeychainToken(item: string, sync = false): string {
   const token = result.stdout?.toString().trim();
   if (!token) throw new Error(`Keychain item '${item}' exists but is empty.`);
   return token;
+}
+
+/**
+ * Batch-read multiple keychain items behind a single LocalAuthentication
+ * prompt. macOS shows ONE Touch ID prompt and every requested item is
+ * unlocked in the same process. Returns a Map keyed by item name. Missing
+ * items are absent from the map (caller decides whether that's an error).
+ *
+ * `reason` is shown to the user under the Touch ID prompt — e.g.
+ * "read 'hetzner.com' secrets for agent 'claude'". Apple's HIG recommends
+ * a lowercase verb phrase that completes the sentence "X is required to ___".
+ *
+ * On Linux or when a test backend is installed, falls back to individual
+ * `get` calls — no biometric prompt path on those platforms.
+ */
+export function getKeychainTokensBatch(items: string[], _sync = false, reason?: string): Map<string, string> {
+  const result = new Map<string, string>();
+  if (items.length === 0) return result;
+  if (backend) {
+    for (const item of items) {
+      try { result.set(item, backend.get(item, _sync)); } catch { /* missing — skip */ }
+    }
+    return result;
+  }
+  assertSupportedPlatform();
+  if (isLinux()) {
+    for (const item of items) {
+      try { result.set(item, linuxBackend.get(item, _sync)); } catch { /* missing — skip */ }
+    }
+    return result;
+  }
+  // macOS: single helper invocation with Touch ID gate.
+  const bin = ensureKeychainHelper();
+  const helperArgs = ['get-batch', os.userInfo().username];
+  if (reason) helperArgs.push('--reason', reason);
+  helperArgs.push(...items);
+  const child = spawnSync(bin, helperArgs, {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (child.status !== 0) {
+    const msg = child.stderr?.toString().trim();
+    throw new Error(msg || `Failed to batch-read ${items.length} keychain items.`);
+  }
+  const out = child.stdout?.toString() ?? '';
+  // Parser. Output is a sequence of records:
+  //   "V <service>\n<value>\n"   (present)
+  //   "M <service>\n"            (missing)
+  // Service names cannot contain '\n' (validated at write time); values are
+  // also newline-free (rejected by setKeychainToken). So splitting on '\n'
+  // and walking line-by-line is unambiguous.
+  const lines = out.split('\n');
+  // Last entry from split is the empty string after a trailing newline.
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (line === '' && i === lines.length - 1) break;
+    if (line.startsWith('V ')) {
+      const service = line.slice(2);
+      const value = lines[i + 1] ?? '';
+      result.set(service, value);
+      i += 2;
+    } else if (line.startsWith('M ')) {
+      i += 1;
+    } else if (line === '') {
+      i += 1;
+    } else {
+      throw new Error(`Malformed get-batch output line: ${JSON.stringify(line)}`);
+    }
+  }
+  return result;
 }
 
 /** Store or update a secret value in the keychain/keyring. iCloud-synced when sync=true (macOS only). */
