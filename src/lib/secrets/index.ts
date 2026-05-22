@@ -258,28 +258,22 @@ export function setKeychainToken(item: string, value: string, sync = false): voi
 
   if (isLinux()) { linuxBackend.set(item, value, sync); return; }
 
-  // macOS path
-  if (sync) {
-    const bin = ensureKeychainHelper();
-    const result = spawnSync(bin, ['set', item, os.userInfo().username], {
-      input: value,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    if (result.status !== 0) {
-      const msg = result.stderr?.toString().trim();
-      throw new Error(msg || `Failed to write keychain item '${item}'.`);
-    }
-    return;
-  }
-  // `security -i` keeps the value out of argv (and `ps`).
-  const user = os.userInfo().username;
-  const cmd = `add-generic-password -a ${quoteForSecurityCli(user)} -s ${quoteForSecurityCli(item)} -w ${quoteForSecurityCli(value)} -T ${quoteForSecurityCli('')} -U\n`;
-  const result = spawnSync('security', ['-i'], {
-    input: cmd,
+  // macOS path. Both sync and non-sync writes go through the .app helper so
+  // the item picks up our SecAccess ACL (helper as trusted reader). That ACL
+  // is what stops macOS from showing the legacy "enter password" sheet on
+  // subsequent reads. The helper takes an optional `nosync` arg for
+  // device-local writes; sync writes get kSecAttrSynchronizable=true by
+  // default.
+  const bin = ensureKeychainHelper();
+  const args = ['set', item, os.userInfo().username];
+  if (!sync) args.push('nosync');
+  const result = spawnSync(bin, args, {
+    input: value,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   if (result.status !== 0) {
-    throw new Error(`Failed to write keychain item '${item}' (exit ${result.status}).`);
+    const msg = result.stderr?.toString().trim();
+    throw new Error(msg || `Failed to write keychain item '${item}'.`);
   }
 }
 
@@ -297,10 +291,6 @@ export function deleteKeychainToken(item: string, sync = false): boolean {
   return spawnSync(bin, ['delete', item, os.userInfo().username], {
     stdio: ['ignore', 'pipe', 'pipe'],
   }).status === 0;
-}
-
-function quoteForSecurityCli(s: string): string {
-  return '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
 }
 
 /** Enumerate keychain/keyring item names starting with the given prefix. */
