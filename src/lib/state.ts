@@ -716,23 +716,6 @@ export function getVersionResources(
   return meta.versions?.[agent]?.[version] || null;
 }
 
-export function clearVersionResources(
-  agent: AgentId,
-  version: string
-): void {
-  const meta = readMeta();
-  if (meta.versions?.[agent]?.[version]) {
-    delete meta.versions[agent]![version];
-    if (Object.keys(meta.versions[agent]!).length === 0) {
-      delete meta.versions[agent];
-    }
-    if (Object.keys(meta.versions).length === 0) {
-      delete meta.versions;
-    }
-    writeMeta(meta);
-  }
-}
-
 /** Active rules preset for an agent@version. Defaults to "default" when unset. */
 export function getActiveRulesPreset(agent: AgentId, version: string): string {
   const meta = readMeta();

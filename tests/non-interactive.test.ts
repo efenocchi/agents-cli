@@ -202,6 +202,8 @@ describe('non-interactive CLI usage', () => {
     const version = '2.1.139';
     const sessionId = 'prune-session-row';
     writeFakeManagedVersion(home, 'claude', version, 'claude');
+    const metaPath = path.join(home, '.agents', 'agents.yaml');
+    fs.writeFileSync(metaPath, `versions:\n  claude:\n    "${version}":\n      rulesPreset: default\n`);
 
     const versionDir = path.join(home, '.agents', '.history', 'versions', 'claude', version);
     const sessionFile = path.join(versionDir, 'home', '.claude', 'projects', 'demo', `${sessionId}.jsonl`);
@@ -228,6 +230,7 @@ describe('non-interactive CLI usage', () => {
     const storedPath = readSessionFilePath(home, sessionId);
     expect(storedPath).toBe(trashedSessionFile);
     expect(fs.existsSync(storedPath!)).toBe(true);
+    expect(fs.readFileSync(metaPath, 'utf-8')).toContain(version);
   });
 
   it('keeps remove as an alias for version prune', () => {
