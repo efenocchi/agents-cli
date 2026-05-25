@@ -23,6 +23,7 @@ const __dirname = path.dirname(__filename);
 let TEMP_ROOT = '';
 let USER_DIR = '';
 let SYSTEM_DIR = '';
+let VERSIONS_DIR = '';
 
 vi.mock('../src/lib/state.js', async () => {
   const actual = await vi.importActual<typeof import('../src/lib/state.js')>('../src/lib/state.js');
@@ -36,6 +37,20 @@ vi.mock('../src/lib/state.js', async () => {
     getEnabledExtraRepos: () => [],
     getMcpDir: () => path.join(SYSTEM_DIR, 'mcp'),
     getUserMcpDir: () => path.join(USER_DIR, 'mcp'),
+    // Additional getters used by syncResourcesToVersion. Each points at the
+    // empty system root so no central resources resolve — the project layer
+    // is the sole source.
+    getVersionsDir: () => VERSIONS_DIR,
+    getCommandsDir: () => path.join(SYSTEM_DIR, 'commands'),
+    getSkillsDir: () => path.join(SYSTEM_DIR, 'skills'),
+    getHooksDir: () => path.join(SYSTEM_DIR, 'hooks'),
+    getSubagentsDir: () => path.join(SYSTEM_DIR, 'subagents'),
+    getPermissionsDir: () => path.join(SYSTEM_DIR, 'permissions'),
+    getPromptcutsPath: () => path.join(SYSTEM_DIR, 'promptcuts.yaml'),
+    getUserPromptcutsPath: () => path.join(USER_DIR, 'promptcuts.yaml'),
+    getTrashVersionsDir: () => path.join(VERSIONS_DIR, '.trash'),
+    getActivePermissionPresetName: () => null,
+    getActiveRulesPreset: () => null,
   };
 });
 
@@ -56,8 +71,10 @@ function setupFixture(): FixtureLayout {
   }
   USER_DIR = path.join(TEMP_ROOT, '_user_empty');
   SYSTEM_DIR = path.join(TEMP_ROOT, '_system_empty');
+  VERSIONS_DIR = path.join(TEMP_ROOT, '_versions');
   fs.mkdirSync(USER_DIR, { recursive: true });
   fs.mkdirSync(SYSTEM_DIR, { recursive: true });
+  fs.mkdirSync(VERSIONS_DIR, { recursive: true });
   return {
     repoRoot: path.join(TEMP_ROOT, 'repo'),
     siblingRoot: path.join(TEMP_ROOT, 'sibling'),
@@ -215,6 +232,47 @@ describe('project-resources: resolveResource project precedence', () => {
     const { siblingRoot } = setupFixture();
     const { resolveResource } = await import('../src/lib/resources.js');
     expect(resolveResource('commands', 'myproj', siblingRoot)).toBeNull();
+  });
+});
+
+describe('project-resources: syncResourcesToVersion orphan-sweep', () => {
+  // RUSH-670 — when the agent shim runs in project A (which has
+  // .agents/commands/proj-a-only.md), then later in project B (which has no
+  // .agents/), the project-A command must NOT linger in the shared version
+  // home and fire silently inside project B. This test exercises the sweep
+  // added to syncResourcesToVersion alongside the existing hooks/plugins
+  // sweeps.
+  it('removes a project command from version home after cwd moves to a project without that command', async () => {
+    const { repoRoot, siblingRoot } = setupFixture();
+    const { syncResourcesToVersion } = await import('../src/lib/versions.js');
+
+    // First sync: cwd=repoRoot. The project command `myproj` resolves and
+    // lands in the version home.
+    syncResourcesToVersion('claude', '99.99.99', undefined, { cwd: repoRoot, force: true });
+
+    const versionCmd = path.join(VERSIONS_DIR, 'claude', '99.99.99', 'home', '.claude', 'commands', 'myproj.md');
+    expect(fs.existsSync(versionCmd)).toBe(true);
+
+    // Second sync: cwd=siblingRoot. No project .agents/ → no `myproj` in the
+    // resolved set. Pre-fix: the file lingers. Post-fix: orphan sweep removes
+    // it.
+    syncResourcesToVersion('claude', '99.99.99', undefined, { cwd: siblingRoot, force: true });
+
+    expect(fs.existsSync(versionCmd)).toBe(false);
+  });
+
+  it('removes a project skill from version home after cwd moves to a project without that skill', async () => {
+    const { repoRoot, siblingRoot } = setupFixture();
+    const { syncResourcesToVersion } = await import('../src/lib/versions.js');
+
+    syncResourcesToVersion('claude', '99.99.99', undefined, { cwd: repoRoot, force: true });
+
+    const versionSkill = path.join(VERSIONS_DIR, 'claude', '99.99.99', 'home', '.claude', 'skills', 'myskill');
+    expect(fs.existsSync(versionSkill)).toBe(true);
+
+    syncResourcesToVersion('claude', '99.99.99', undefined, { cwd: siblingRoot, force: true });
+
+    expect(fs.existsSync(versionSkill)).toBe(false);
   });
 });
 

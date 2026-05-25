@@ -1814,6 +1814,29 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
     result.commands = syncedCommands.length > 0;
   }
 
+  // Orphan-sweep stale top-level command files from previous syncs under a
+  // different cwd. Only runs in "full sync" mode — i.e. when the caller did
+  // not pass an explicit `selection`. Callers that pass explicit selections
+  // are using the incremental/additive API (sync exactly these; leave others
+  // alone), so the sweep would be a contract violation there. The
+  // cross-project leak fixed by RUSH-670 always comes from the no-selection
+  // shim auto-sync at launch.
+  if (!userPassedSelection && COMMANDS_CAPABLE_AGENTS.includes(agent) && !shouldInstallCommandAsSkill(agent, version)) {
+    const commandsTargetSweep = path.join(agentDir, agentConfig.commandsSubdir);
+    if (fs.existsSync(commandsTargetSweep)) {
+      const ext = agentConfig.format === 'toml' ? '.toml' : '.md';
+      const trustedCommands = new Set(commandsToSync);
+      for (const entry of fs.readdirSync(commandsTargetSweep, { withFileTypes: true })) {
+        if (!entry.isFile() || entry.name.startsWith('.')) continue;
+        if (!entry.name.endsWith(ext)) continue;
+        const name = entry.name.slice(0, -ext.length);
+        if (!trustedCommands.has(name)) {
+          removePath(safeJoin(commandsTargetSweep, entry.name));
+        }
+      }
+    }
+  }
+
   // Sync skills (skip if agent natively reads ~/.agents/skills/)
   if (agentConfig.nativeAgentsSkillsDir) {
     // Clean up stale skills symlink/dir — agent reads from ~/.agents/skills/ directly
@@ -1850,6 +1873,21 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
         syncedSkills.push(skill);
       }
       result.skills = syncedSkills.length > 0;
+    }
+
+    // Orphan-sweep stale skill directories from previous syncs under a
+    // different cwd. Only runs in "full sync" mode (no explicit selection) —
+    // see the matching guard on the commands sweep above for why. Skip
+    // dot-dirs to keep plugin-managed subtrees (.plugins/, .promptcuts) intact.
+    const skillsTargetSweep = path.join(agentDir, 'skills');
+    if (!userPassedSelection && fs.existsSync(skillsTargetSweep) && !fs.lstatSync(skillsTargetSweep).isSymbolicLink()) {
+      const trustedSkills = new Set(skillsToSync);
+      for (const entry of fs.readdirSync(skillsTargetSweep, { withFileTypes: true })) {
+        if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+        if (!trustedSkills.has(entry.name)) {
+          removePath(safeJoin(skillsTargetSweep, entry.name));
+        }
+      }
     }
   }
 
@@ -2033,6 +2071,28 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
           }
         }
       } catch { /* resource sync failed for this item */ }
+    }
+
+    // Orphan-sweep stale subagents. Same selection-mode guard as the
+    // commands/skills sweeps above. Claude stores them as flat .md files
+    // under `<agentDir>/agents/`; OpenClaw stores them as subdirs at the
+    // same level as commands/skills/hooks/plugins (no isolated parent dir),
+    // which means a directory-readdir sweep would unsafely hit unrelated
+    // resources. For OpenClaw we lean on the existing per-name copy path —
+    // if the user wants strict isolation on OpenClaw, track via manifest.
+    if (!userPassedSelection && agent === 'claude') {
+      const claudeAgentsDir = path.join(agentDir, 'agents');
+      if (fs.existsSync(claudeAgentsDir)) {
+        const trustedSubagents = new Set(subagentsToSync);
+        for (const entry of fs.readdirSync(claudeAgentsDir, { withFileTypes: true })) {
+          if (!entry.isFile() || entry.name.startsWith('.')) continue;
+          if (!entry.name.endsWith('.md')) continue;
+          const name = entry.name.slice(0, -'.md'.length);
+          if (!trustedSubagents.has(name)) {
+            removePath(safeJoin(claudeAgentsDir, entry.name));
+          }
+        }
+      }
     }
 
     // subagent patterns already written via ensureVersionResourcePatterns above.
