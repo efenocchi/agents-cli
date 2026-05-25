@@ -21,18 +21,40 @@ describe('prune command', () => {
   it('surfaces prune in top-level help', () => {
     const helpText = runCli(['--help']);
 
-    expect(helpText).toContain('prune [target]');
-    expect(helpText).toContain('Remove orphan resources and older duplicate version installs');
+    expect(helpText).toContain('prune <agent>[@version]');
+    expect(helpText).toContain('Uninstall a version');
+    expect(helpText).toContain('remove <agent>[@version]');
+    expect(helpText).toContain('Alias for prune');
+    expect(helpText).toContain('prune cleanup [target]');
   });
 
-  it('shows dedicated help for agents prune', () => {
+  it('shows dedicated help for version prune', () => {
     const helpText = runCli(['prune', '--help']);
 
-    expect(helpText).toContain('Usage: agents prune [options] [target]');
-    expect(helpText).toContain('--dry-run');
-    expect(helpText).toContain('agents prune --dry-run');
+    expect(helpText).toContain('Usage: agents prune [options] <specs...>');
+    expect(helpText).toContain('Uninstall agent CLI versions');
+    expect(helpText).toContain('agents prune claude@2.0.50');
     expect(helpText).toContain('agents prune claude');
-    expect(helpText).toContain('agents prune skills');
+    expect(helpText).toContain('cleanup [options] [target]');
+    expect(helpText).not.toContain('Usage: agents [command] [options]');
+  });
+
+  it('shows remove as an alias for version prune', () => {
+    const helpText = runCli(['remove', '--help']);
+
+    expect(helpText).toContain('Usage: agents remove [options] <specs...>');
+    expect(helpText).toContain('Alias for agents prune');
+    expect(helpText).toContain('agents remove claude@2.0.50');
+  });
+
+  it('moves destructive cleanup help under agents prune cleanup', () => {
+    const helpText = runCli(['prune', 'cleanup', '--help']);
+
+    expect(helpText).toContain('Usage: agents prune cleanup [options] [target]');
+    expect(helpText).toContain('--dry-run');
+    expect(helpText).toContain('agents prune cleanup --dry-run');
+    expect(helpText).toContain('agents prune cleanup claude');
+    expect(helpText).toContain('agents prune cleanup skills');
     expect(helpText).not.toContain('Usage: agents [command] [options]');
   });
 

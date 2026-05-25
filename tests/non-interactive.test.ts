@@ -112,6 +112,53 @@ function runAgents(home: string, args: string[], extraEnv: Record<string, string
   });
 }
 
+function runSessionDbScript(home: string, body: string): string {
+  const result = spawnSync('node', ['--import', 'tsx', '--input-type=module', '--eval', body], {
+    cwd: REPO_ROOT,
+    env: {
+      ...process.env,
+      HOME: home,
+      SHELL: '/bin/zsh',
+    },
+    encoding: 'utf-8',
+  });
+  if (result.status !== 0) {
+    throw new Error(`session db script failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+  }
+  return result.stdout.trim();
+}
+
+function seedSessionRow(home: string, id: string, agent: string, version: string, filePath: string): void {
+  runSessionDbScript(home, `
+    import { getDB, closeDB } from './src/lib/session/db.ts';
+    const db = getDB();
+    db.prepare(\`
+      INSERT OR REPLACE INTO sessions
+        (id, short_id, agent, version, timestamp, file_path, is_team_origin)
+      VALUES (?, ?, ?, ?, ?, ?, 0)
+    \`).run(
+      ${JSON.stringify(id)},
+      ${JSON.stringify(id.slice(0, 8))},
+      ${JSON.stringify(agent)},
+      ${JSON.stringify(version)},
+      '2026-05-25T12:00:00.000Z',
+      ${JSON.stringify(filePath)}
+    );
+    closeDB();
+  `);
+}
+
+function readSessionFilePath(home: string, id: string): string | null {
+  const output = runSessionDbScript(home, `
+    import { getDB, closeDB } from './src/lib/session/db.ts';
+    const db = getDB();
+    const row = db.prepare('SELECT file_path FROM sessions WHERE id = ?').get(${JSON.stringify(id)});
+    console.log(row?.file_path ?? '');
+    closeDB();
+  `);
+  return output.length > 0 ? output : null;
+}
+
 function seedNewerUpdateCache(home: string, futureVersion: string): void {
   const cacheDir = path.join(home, '.agents', '.cache');
   fs.mkdirSync(cacheDir, { recursive: true });
@@ -147,6 +194,90 @@ describe('non-interactive CLI usage', () => {
     expect(result.status).toBe(1);
     expect(combined).toContain('Selecting a command to view requires an interactive terminal.');
     expect(combined).toContain('agents commands view README');
+  });
+
+  it('prunes a specific version while preserving home data and session rows', () => {
+    const home = makeTempHome();
+    tempHomes.push(home);
+    const version = '2.1.139';
+    const sessionId = 'prune-session-row';
+    writeFakeManagedVersion(home, 'claude', version, 'claude');
+
+    const versionDir = path.join(home, '.agents', '.history', 'versions', 'claude', version);
+    const sessionFile = path.join(versionDir, 'home', '.claude', 'projects', 'demo', `${sessionId}.jsonl`);
+    fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+    fs.writeFileSync(sessionFile, '{"type":"user","message":{"content":"keep me"}}\n');
+    seedSessionRow(home, sessionId, 'claude', version, sessionFile);
+
+    const result = runAgents(home, ['prune', `claude@${version}`]);
+    const combined = `${result.stdout}\n${result.stderr}`;
+
+    expect(result.status).toBe(0);
+    expect(combined).toContain(`Removed Claude@${version}`);
+    expect(fs.existsSync(versionDir)).toBe(false);
+
+    const trashAgentDir = path.join(home, '.agents', '.history', 'trash', 'versions', 'claude', version);
+    const stamps = fs.readdirSync(trashAgentDir);
+    expect(stamps.length).toBe(1);
+    const trashed = path.join(trashAgentDir, stamps[0]);
+
+    const trashedSessionFile = path.join(trashed, 'home', '.claude', 'projects', 'demo', `${sessionId}.jsonl`);
+    expect(fs.existsSync(path.join(trashed, 'node_modules', '.bin', 'claude'))).toBe(true);
+    expect(fs.existsSync(trashedSessionFile)).toBe(true);
+
+    const storedPath = readSessionFilePath(home, sessionId);
+    expect(storedPath).toBe(trashedSessionFile);
+    expect(fs.existsSync(storedPath!)).toBe(true);
+  });
+
+  it('keeps remove as an alias for version prune', () => {
+    const home = makeTempHome();
+    tempHomes.push(home);
+    const version = '0.130.0';
+    writeFakeManagedVersion(home, 'codex', version, 'codex');
+
+    const versionDir = path.join(home, '.agents', '.history', 'versions', 'codex', version);
+    const result = runAgents(home, ['remove', `codex@${version}`]);
+    const combined = `${result.stdout}\n${result.stderr}`;
+
+    expect(result.status).toBe(0);
+    expect(combined).toContain(`Removed Codex@${version}`);
+    expect(fs.existsSync(versionDir)).toBe(false);
+    expect(fs.existsSync(path.join(home, '.agents', '.history', 'trash', 'versions', 'codex', version))).toBe(true);
+  });
+
+  it('does not hard-delete trash entries through cleanup', () => {
+    const home = makeTempHome();
+    tempHomes.push(home);
+    const trashEntry = path.join(home, '.agents', '.history', 'trash', 'versions', 'grok', '1.0.0', 'old-stamp');
+    const homeFile = path.join(trashEntry, 'home', '.grok', 'session.jsonl');
+    fs.mkdirSync(path.dirname(homeFile), { recursive: true });
+    fs.writeFileSync(homeFile, '{"type":"user"}\n');
+    fs.utimesSync(trashEntry, new Date('2024-01-01T00:00:00.000Z'), new Date('2024-01-01T00:00:00.000Z'));
+
+    const result = runAgents(home, ['prune', 'cleanup', 'trash', '--older-than', '0', '-y']);
+    const combined = `${result.stdout}\n${result.stderr}`;
+
+    expect(result.status).toBe(0);
+    expect(combined).toContain('Trash is durable');
+    expect(fs.existsSync(homeFile)).toBe(true);
+  });
+
+  it('does not hard-delete session rows through cleanup', () => {
+    const home = makeTempHome();
+    tempHomes.push(home);
+    const sessionId = 'durable-session-row';
+    const filePath = path.join(home, '.agents', '.history', 'trash', 'versions', 'antigravity', '1.0.0', 'stamp', 'home', '.gemini', 'antigravity-cli', 'session.jsonl');
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, '{"type":"user"}\n');
+    seedSessionRow(home, sessionId, 'antigravity', '1.0.0', filePath);
+
+    const result = runAgents(home, ['prune', 'cleanup', 'sessions', '--older-than', '0', '-y']);
+    const combined = `${result.stdout}\n${result.stderr}`;
+
+    expect(result.status).toBe(0);
+    expect(combined).toContain('Session history is durable');
+    expect(readSessionFilePath(home, sessionId)).toBe(filePath);
   });
 
   it('syncs central commands with --names in a non-interactive shell', () => {
