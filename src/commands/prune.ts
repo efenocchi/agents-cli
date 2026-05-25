@@ -1,5 +1,5 @@
 /**
- * Top-level `agents prune` — destructive cleanup across the install.
+ * `agents prune cleanup` — destructive cleanup across the install.
  *
  * Cleanup targets:
  *   - Resource orphans: command/skill/hook files inside a version home that no
@@ -7,8 +7,9 @@
  *     into the version install).
  *   - Version duplicates: older installed versions of an agent that share an
  *     account with a newer installed version of the same agent.
- *   - Trash: soft-deleted resources in ~/.agents/.trash/ older than N days.
- *   - Sessions: session records in sessions.db older than N days.
+ *   - Trash/session targets are retained as no-op compatibility shims: version
+ *     homes and session history are durable and must not be hard-deleted by
+ *     agents-cli.
  *   - Runs: routine execution logs, keeping only the last N per job.
  *
  * Sync (additive: copy missing/changed files into version homes) is no longer
@@ -21,7 +22,6 @@
  * to widen orphan cleanup to every installed version.
  */
 import * as fs from 'fs';
-import * as path from 'path';
 import type { Command } from 'commander';
 import chalk from 'chalk';
 import { confirm } from '@inquirer/prompts';
@@ -56,7 +56,6 @@ import { resolveAgentName, formatAgentError } from '../lib/agents.js';
 import { pruneDuplicates } from './view.js';
 import { isInteractiveTerminal, isPromptCancelled } from './utils.js';
 import { getTrashDir } from '../lib/state.js';
-import { countSessionsOlderThan, deleteSessionsOlderThan } from '../lib/session/db.js';
 import { previewRunsPrune, pruneRuns, countAllRuns } from '../lib/routines.js';
 
 type ResourceType = 'commands' | 'skills' | 'hooks' | 'plugins' | 'subagents';
@@ -191,32 +190,11 @@ function parseTarget(arg: string | undefined): ParsedTarget {
   process.exit(1);
 }
 
-function parseDays(value: string, defaultDays: number): number {
-  const match = value.match(/^(\d+)d?$/);
-  if (match) return parseInt(match[1], 10);
-  return defaultDays;
-}
-
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
-
-function getDirSize(dirPath: string): number {
-  if (!fs.existsSync(dirPath)) return 0;
-  let size = 0;
-  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = path.join(dirPath, entry.name);
-    if (entry.isDirectory()) {
-      size += getDirSize(fullPath);
-    } else {
-      try { size += fs.statSync(fullPath).size; } catch { /* ignore */ }
-    }
-  }
-  return size;
 }
 
 async function runTrashPrune(options: PruneOptions): Promise<void> {
@@ -226,108 +204,20 @@ async function runTrashPrune(options: PruneOptions): Promise<void> {
     return;
   }
 
-  const days = parseDays(options.olderThan || '30d', 30);
-  const cutoffMs = Date.now() - days * 24 * 60 * 60 * 1000;
-  const toPrune: Array<{ path: string; mtime: number; size: number }> = [];
-
-  function scanDir(dir: string): void {
-    if (!fs.existsSync(dir)) return;
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const fullPath = path.join(dir, entry.name);
-      try {
-        const stat = fs.statSync(fullPath);
-        if (stat.mtimeMs < cutoffMs) {
-          toPrune.push({ path: fullPath, mtime: stat.mtimeMs, size: entry.isDirectory() ? getDirSize(fullPath) : stat.size });
-        } else if (entry.isDirectory()) {
-          scanDir(fullPath);
-        }
-      } catch { /* skip inaccessible */ }
-    }
+  if (options.olderThan || options.yes || options.dryRun) {
+    console.log(chalk.gray('Trash expiry flags are accepted for compatibility but do not delete data.'));
   }
-
-  scanDir(trashDir);
-
-  if (toPrune.length === 0) {
-    console.log(chalk.green(`No trash entries older than ${days} days.`));
-    return;
-  }
-
-  const totalSize = toPrune.reduce((sum, e) => sum + e.size, 0);
-  console.log(chalk.bold(`Trash entries older than ${days} days\n`));
-  for (const entry of toPrune.slice(0, 20)) {
-    const age = Math.floor((Date.now() - entry.mtime) / (24 * 60 * 60 * 1000));
-    console.log(`  ${chalk.gray(`${age}d ago`)}  ${path.relative(trashDir, entry.path)}`);
-  }
-  if (toPrune.length > 20) {
-    console.log(chalk.gray(`  ... and ${toPrune.length - 20} more`));
-  }
-  console.log();
-
-  if (options.dryRun) {
-    console.log(chalk.gray(`${toPrune.length} entries (${formatBytes(totalSize)}). Run without --dry-run to delete.`));
-    return;
-  }
-
-  if (!options.yes) {
-    if (!isInteractiveTerminal()) {
-      console.log(chalk.yellow('Non-interactive shell: pass -y to confirm, or --dry-run to preview.'));
-      process.exit(1);
-    }
-    let ok = false;
-    try {
-      ok = await confirm({ message: `Delete ${toPrune.length} entries (${formatBytes(totalSize)})?`, default: false });
-    } catch (err) {
-      if (isPromptCancelled(err)) { console.log(chalk.gray('Cancelled')); return; }
-      throw err;
-    }
-    if (!ok) { console.log(chalk.gray('Cancelled')); return; }
-  }
-
-  let deleted = 0;
-  for (const entry of toPrune) {
-    try {
-      fs.rmSync(entry.path, { recursive: true, force: true });
-      deleted++;
-    } catch { /* ignore */ }
-  }
-
-  console.log(chalk.green(`Pruned ${deleted} trash entries (${formatBytes(totalSize)}).`));
+  console.log(chalk.yellow('Trash is durable. agents-cli does not hard-delete soft-deleted version data.'));
+  console.log(chalk.gray('Inspect recoverable versions with: agents trash list'));
+  console.log(chalk.gray(`Trash path: ${trashDir}`));
 }
 
 async function runSessionsPrune(options: PruneOptions): Promise<void> {
-  const days = parseDays(options.olderThan || '90d', 90);
-  const cutoffMs = Date.now() - days * 24 * 60 * 60 * 1000;
-  const count = countSessionsOlderThan(cutoffMs);
-
-  if (count === 0) {
-    console.log(chalk.green(`No sessions older than ${days} days.`));
-    return;
+  if (options.olderThan || options.yes || options.dryRun) {
+    console.log(chalk.gray('Session prune flags are accepted for compatibility but do not delete data.'));
   }
-
-  console.log(chalk.bold(`Sessions older than ${days} days: ${count}\n`));
-
-  if (options.dryRun) {
-    console.log(chalk.gray(`${count} session(s). Run without --dry-run to delete.`));
-    return;
-  }
-
-  if (!options.yes) {
-    if (!isInteractiveTerminal()) {
-      console.log(chalk.yellow('Non-interactive shell: pass -y to confirm, or --dry-run to preview.'));
-      process.exit(1);
-    }
-    let ok = false;
-    try {
-      ok = await confirm({ message: `Delete ${count} session records?`, default: false });
-    } catch (err) {
-      if (isPromptCancelled(err)) { console.log(chalk.gray('Cancelled')); return; }
-      throw err;
-    }
-    if (!ok) { console.log(chalk.gray('Cancelled')); return; }
-  }
-
-  const deleted = deleteSessionsOlderThan(cutoffMs);
-  console.log(chalk.green(`Pruned ${deleted} session records.`));
+  console.log(chalk.yellow('Session history is durable. agents-cli does not hard-delete session records.'));
+  console.log(chalk.gray('Browse sessions with: agents sessions'));
 }
 
 async function runRunsPrune(options: PruneOptions): Promise<void> {
@@ -447,13 +337,17 @@ async function runOrphanPrune(
 }
 
 export function registerPruneCommand(program: Command): void {
-  program
-    .command('prune [target]')
-    .description('Remove orphan resources, old versions, trash, sessions, or routine runs')
+  const pruneCmd = program.commands.find((cmd) => cmd.name() === 'prune') ?? program
+    .command('prune <specs...>')
+    .description('Uninstall agent CLI versions. Moves version data to trash for recovery.');
+
+  pruneCmd
+    .command('cleanup [target]')
+    .description('Remove orphan resources, old versions, or routine runs')
     .option('--all', 'For orphan cleanup: sweep every installed version (default: current default version per agent)')
     .option('--dry-run', 'Show what would be removed without deleting (default for state targets)')
     .option('-y, --yes', 'Skip confirmation prompt')
-    .option('--older-than <days>', 'For trash/sessions: delete entries older than N days (default: 30d for trash, 90d for sessions)')
+    .option('--older-than <days>', 'Deprecated for trash/sessions; accepted but no data is deleted')
     .option('--keep <n>', 'For runs: keep the last N runs per job (default: 10)')
     .addHelpText('after', `
 Targets:
@@ -463,46 +357,40 @@ Targets:
   hooks      Orphan hook scripts only
   versions   Older duplicate version installs only
   <agent>    Older duplicate versions for one agent (e.g. 'claude')
-  trash      Soft-deleted resources older than --older-than days (default 30)
-  sessions   Session records in sessions.db older than --older-than days (default 90)
+  trash      No-op compatibility target; trash is durable
+  sessions   No-op compatibility target; session history is durable
   runs       Routine execution logs, keeping only --keep per job (default 10)
 
 Examples:
   # Full sweep: orphan resources + duplicate versions for current defaults
-  agents prune
+  agents prune cleanup
 
   # Preview what a full sweep would remove
-  agents prune --dry-run
+  agents prune cleanup --dry-run
 
   # Just orphan skills
-  agents prune skills
+  agents prune cleanup skills
 
   # Just version dedup
-  agents prune versions
+  agents prune cleanup versions
 
   # Deduplicate versions for one agent only
-  agents prune claude
+  agents prune cleanup claude
 
   # Sweep every installed version's orphans, not only the defaults
-  agents prune --all
+  agents prune cleanup --all
 
-  # Preview trash entries older than 30 days
-  agents prune trash --dry-run
+  # Show the durable-trash notice
+  agents prune cleanup trash --dry-run
 
-  # Delete trash entries older than 60 days
-  agents prune trash --older-than 60 -y
-
-  # Preview session cleanup (90+ days old)
-  agents prune sessions --dry-run
-
-  # Delete sessions older than 180 days
-  agents prune sessions --older-than 180 -y
+  # Show the durable-session notice
+  agents prune cleanup sessions --dry-run
 
   # Preview runs cleanup (keeping last 10)
-  agents prune runs --dry-run
+  agents prune cleanup runs --dry-run
 
   # Keep only the last 5 runs per job
-  agents prune runs --keep 5 -y
+  agents prune cleanup runs --keep 5 -y
 
 What's an orphan?
   A command, skill, or hook present inside a version home but missing from every
@@ -510,10 +398,11 @@ What's an orphan?
   repos). Usually leftovers from a resource that was deleted or moved but never
   reconciled into the version install.
 
-Soft-delete:
-  Version directories are NEVER hard-deleted. \`prune\` moves them to
-  ~/.agents/.trash/versions/<agent>/<version>/<timestamp>/. Use
-  \`agents prune trash\` to expire old trash entries.
+Durability:
+  Version directories are NEVER hard-deleted by agents-cli. Version prune and
+  cleanup move them to ~/.agents/.history/trash/versions/<agent>/<version>/<timestamp>/.
+  Session records are also durable; the sessions target remains only as a no-op
+  compatibility shim.
 `)
     .action(async (target: string | undefined, options: PruneOptions) => {
       const parsed = parseTarget(target);
