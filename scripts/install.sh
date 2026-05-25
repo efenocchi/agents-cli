@@ -107,7 +107,9 @@ node -e "
 dim "  Packing tarball"
 (
   cd "$STAGE_DIR"
-  TARBALL_FILE=$(npm pack --silent 2>&1 | tail -1)
+  # --ignore-scripts: the package's prepack hook references files we don't
+  # stage (it's a publish-time check, not relevant for the dev tarball).
+  TARBALL_FILE=$(npm pack --silent --ignore-scripts 2>&1 | tail -1)
   echo "$STAGE_DIR/$TARBALL_FILE" > "$STAGE_DIR/.tarball-path"
 )
 TARBALL=$(cat "$STAGE_DIR/.tarball-path")

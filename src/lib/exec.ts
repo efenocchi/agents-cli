@@ -251,6 +251,27 @@ export const AGENT_COMMANDS: Record<AgentId, AgentCommandTemplate> = {
     },
     modelFlag: '--model',
   },
+  antigravity: {
+    base: ['agy'],
+    promptFlag: 'positional',
+    modeFlags: {
+      plan: [],
+      edit: [],
+      full: [],
+    },
+    modelFlag: '--model',
+  },
+  grok: {
+    base: ['grok'],
+    promptFlag: '-p',
+    modeFlags: {
+      plan: [],
+      edit: [],
+      full: [],
+    },
+    jsonFlags: ['--output-format', 'streaming-json'],
+    modelFlag: '--model',
+  },
 };
 
 /** Assemble the full CLI argument array for an agent invocation. */

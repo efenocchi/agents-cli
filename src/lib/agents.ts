@@ -360,6 +360,50 @@ export const AGENTS: Record<AgentId, AgentConfig> = {
     supportsHooks: false,
     capabilities: { hooks: false, mcp: true, allowlist: false, skills: true, commands: true, plugins: false },
   },
+  // Google Antigravity CLI (`agy`) — official replacement for Gemini CLI as of IO 2026.
+  // configDir nests inside `~/.gemini/` since agy shares the parent dir with the Gemini
+  // CLI but isolates its own state in the `antigravity-cli/` subdir. Per-version HOME
+  // isolation works because the shim's configDirName carries the full nested path.
+  antigravity: {
+    id: 'antigravity',
+    name: 'Antigravity',
+    color: 'blueBright',
+    cliCommand: 'agy',
+    npmPackage: '',
+    installScript: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
+    configDir: path.join(HOME, '.gemini', 'antigravity-cli'),
+    commandsDir: path.join(HOME, '.gemini', 'antigravity-cli', 'commands'),
+    commandsSubdir: 'commands',
+    skillsDir: path.join(HOME, '.gemini', 'antigravity-cli', 'skills'),
+    hooksDir: 'hooks',
+    instructionsFile: 'AGENTS.md',
+    format: 'markdown',
+    variableSyntax: '{{args}}',
+    supportsHooks: false,
+    nativeAgentsSkillsDir: true,
+    capabilities: { hooks: false, mcp: true, allowlist: false, skills: true, commands: true, plugins: false, rulesImports: false },
+  },
+  // xAI Grok Build CLI (`grok`) — early beta, SuperGrok Heavy. Auth via OAuth on
+  // first launch, or GROK_CODE_XAI_API_KEY env var for headless. MCP supported
+  // out of the box; exact config file path verified at first install.
+  grok: {
+    id: 'grok',
+    name: 'Grok',
+    color: 'whiteBright',
+    cliCommand: 'grok',
+    npmPackage: '',
+    installScript: 'curl -fsSL https://x.ai/cli/install.sh | bash',
+    configDir: path.join(HOME, '.grok'),
+    commandsDir: path.join(HOME, '.grok', 'commands'),
+    commandsSubdir: 'commands',
+    skillsDir: path.join(HOME, '.grok', 'skills'),
+    hooksDir: 'hooks',
+    instructionsFile: 'AGENTS.md',
+    format: 'markdown',
+    variableSyntax: '$ARGUMENTS',
+    supportsHooks: false,
+    capabilities: { hooks: false, mcp: true, allowlist: false, skills: true, commands: true, plugins: false },
+  },
 };
 
 /** All registered agent IDs derived from the AGENTS registry. */
@@ -1250,6 +1294,12 @@ function getUserMcpConfigPath(agentId: AgentId): string {
     case 'openclaw':
       // OpenClaw uses openclaw.json
       return path.join(agent.configDir, 'openclaw.json');
+    case 'antigravity':
+      // agy uses mcp_config.json inside its nested config dir (~/.gemini/antigravity-cli/)
+      return path.join(agent.configDir, 'mcp_config.json');
+    case 'grok':
+      // grok mcp.json — exact field schema verified at first install
+      return path.join(agent.configDir, 'mcp.json');
     default:
       // Gemini and others use settings.json
       return path.join(agent.configDir, 'settings.json');
@@ -1281,6 +1331,10 @@ export function getMcpConfigPathForHome(agentId: AgentId, home: string): string 
       return path.join(home, '.config', 'goose', 'config.yaml');
     case 'roo':
       return path.join(home, '.roo', 'mcp.json');
+    case 'antigravity':
+      return path.join(home, '.gemini', 'antigravity-cli', 'mcp_config.json');
+    case 'grok':
+      return path.join(home, '.grok', 'mcp.json');
     default:
       return path.join(home, `.${agentId}`, 'settings.json');
   }
@@ -1314,6 +1368,10 @@ function getProjectMcpConfigPath(agentId: AgentId, cwd: string = process.cwd()):
       return path.join(cwd, '.goose', 'config.yaml');
     case 'roo':
       return path.join(cwd, '.roo', 'mcp.json');
+    case 'antigravity':
+      return path.join(cwd, '.gemini', 'antigravity-cli', 'mcp_config.json');
+    case 'grok':
+      return path.join(cwd, '.grok', 'mcp.json');
     default:
       return path.join(cwd, `.${agentId}`, 'settings.json');
   }
@@ -1462,6 +1520,14 @@ export const AGENT_NAME_ALIASES: Record<string, AgentId> = {
   roo: 'roo',
   'roo-code': 'roo',
   roocode: 'roo',
+  antigravity: 'antigravity',
+  'google-antigravity': 'antigravity',
+  agy: 'antigravity',
+  ag: 'antigravity',
+  grok: 'grok',
+  'grok-build': 'grok',
+  'xai-grok': 'grok',
+  gk: 'grok',
 };
 
 /** Resolve a user-provided agent name (alias, shorthand, or canonical) to its AgentId. */

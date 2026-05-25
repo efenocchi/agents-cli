@@ -23,7 +23,7 @@ import {
 } from '../state.js';
 
 /** Agents from resources/types.ts that support MCP. */
-const MCP_CAPABLE_AGENTS: AgentId[] = ['claude', 'codex', 'gemini', 'cursor', 'opencode', 'openclaw'];
+const MCP_CAPABLE_AGENTS: AgentId[] = ['claude', 'codex', 'gemini', 'cursor', 'opencode', 'openclaw', 'antigravity', 'grok'];
 
 /**
  * MCP server item as stored in mcp/*.yaml files.
@@ -155,6 +155,11 @@ export function getMcpConfigPath(agent: AgentId, versionHome: string): string | 
       return path.join(versionHome, '.gemini', 'settings.json');
     case 'openclaw':
       return path.join(versionHome, '.openclaw', 'openclaw.json');
+    case 'antigravity':
+      // agy nests under ~/.gemini/antigravity-cli/ (shared parent with Gemini, distinct subdir).
+      return path.join(versionHome, '.gemini', 'antigravity-cli', 'mcp_config.json');
+    case 'grok':
+      return path.join(versionHome, '.grok', 'mcp.json');
     default:
       return null;
   }

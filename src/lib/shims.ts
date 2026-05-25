@@ -208,8 +208,12 @@ async function promptConflictStrategy(
  *   v12 — helper calls inside generated shims use the absolute agents-cli
  *         entrypoint instead of PATH-resolved `agents`.
  *   v13 — validate agents.yaml version strings before constructing binary paths.
+ *   v14 — derive `configDirName` from `agentConfig.configDir` relative to $HOME
+ *         instead of hardcoding `.${agent}`. Backwards-compatible for every
+ *         existing agent (their configDir is `~/.{agent}`); enables nested
+ *         layouts like Antigravity's `~/.gemini/antigravity-cli/`.
  */
-export const SHIM_SCHEMA_VERSION = 13;
+export const SHIM_SCHEMA_VERSION = 14;
 
 /** Internal marker string used to embed the schema version in shim scripts. */
 const SHIM_VERSION_MARKER = 'agents-shim-version:';
@@ -229,7 +233,11 @@ function getAgentsBinForGeneratedShim(): string {
 export function generateShimScript(agent: AgentId): string {
   const agentConfig = AGENTS[agent];
   const cliCommand = agentConfig.cliCommand;
-  const configDirName = `.${agent}`;
+  // Derive the relative config-dir path from the registry. For most agents
+  // this is just `.${agent}` (e.g., `.claude`, `.codex`); for nested layouts
+  // like Antigravity (`~/.gemini/antigravity-cli`) it carries the full
+  // subpath so per-version HOME symlinks reach the right place.
+  const configDirName = path.relative(os.homedir(), agentConfig.configDir);
   const agentsBin = shellQuote(getAgentsBinForGeneratedShim());
   const managedEnv = agent === 'claude'
     ? `
@@ -550,7 +558,9 @@ function assertSafeVersion(version: string): void {
 export function generateVersionedAliasScript(agent: AgentId, version: string): string {
   assertSafeVersion(version);
   const agentConfig = AGENTS[agent];
-  const configDirName = `.${agent}`;
+  // Same derivation as `generateShimScript` so nested layouts (e.g.,
+  // Antigravity's `~/.gemini/antigravity-cli`) land in the right place.
+  const configDirName = path.relative(os.homedir(), agentConfig.configDir);
   const managedEnv = agent === 'claude'
     ? `
 # Claude stores OAuth credentials in the macOS keychain. Scope them to this
@@ -694,7 +704,9 @@ function getAgentConfigPath(agent: AgentId): string {
 function getVersionConfigPath(agent: AgentId, version: string): string {
   const agentConfig = AGENTS[agent];
   const versionsDir = getVersionsDir();
-  const configDirName = `.${agent}`; // .claude, .codex, etc.
+  // Carry the agent's full configDir subpath so nested layouts work.
+  // e.g., antigravity → `.gemini/antigravity-cli`, claude → `.claude`.
+  const configDirName = path.relative(os.homedir(), agentConfig.configDir);
   return path.join(versionsDir, agent, version, 'home', configDirName);
 }
 
@@ -774,6 +786,7 @@ export async function switchConfigSymlink(
       }
       // Different target - update it
       fs.unlinkSync(configPath);
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
       fs.symlinkSync(versionConfigPath, configPath);
       return { success: true };
     } else if (stat.isDirectory()) {
@@ -787,7 +800,7 @@ export async function switchConfigSymlink(
       fs.mkdirSync(agentBackupDir, { recursive: true });
       fs.renameSync(configPath, finalBackupPath);
 
-      // Create symlink
+      // Create symlink (parent already exists since the dir we just moved was here)
       fs.symlinkSync(versionConfigPath, configPath);
 
       return { success: true, backupPath: finalBackupPath };
@@ -796,7 +809,10 @@ export async function switchConfigSymlink(
     }
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      // Config path doesn't exist - create symlink
+      // Config path doesn't exist - create symlink.
+      // For nested layouts (e.g., ~/.gemini/antigravity-cli) the parent dir
+      // may also be missing if the parent agent (Gemini) is not installed.
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
       fs.symlinkSync(versionConfigPath, configPath);
       return { success: true };
     }

@@ -84,8 +84,24 @@ describe('addShimsToPath', () => {
 });
 
 describe('SHIM_SCHEMA_VERSION', () => {
-  it('is 13 (agents.yaml version is validated before shim writes)', () => {
-    expect(SHIM_SCHEMA_VERSION).toBe(13);
+  it('is 14 (configDirName derived from agentConfig.configDir for nested layouts)', () => {
+    expect(SHIM_SCHEMA_VERSION).toBe(14);
+  });
+});
+
+describe('generateShimScript — configDirName derivation', () => {
+  it('produces the unchanged ".claude" subdir for claude (regression guard)', () => {
+    const script = generateShimScript('claude');
+    expect(script).toContain('home/.claude');
+    expect(script).not.toContain('home/./.claude');
+  });
+
+  it('produces the nested ".gemini/antigravity-cli" path for antigravity', () => {
+    // antigravity's configDir nests inside gemini's parent. The version-home
+    // path must carry the full subpath so per-version sync lands correctly.
+    const { generateVersionedAliasScript } = require('../shims.js');
+    const script = generateVersionedAliasScript('antigravity', '1.0.1');
+    expect(script).toContain('versions/antigravity/1.0.1');
   });
 });
 

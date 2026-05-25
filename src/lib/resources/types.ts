@@ -6,7 +6,7 @@
  * - Override on name conflict: Higher layer wins (project > user > system)
  */
 
-export type AgentId = 'claude' | 'codex' | 'gemini' | 'cursor' | 'opencode' | 'openclaw';
+export type AgentId = 'claude' | 'codex' | 'gemini' | 'cursor' | 'opencode' | 'openclaw' | 'antigravity' | 'grok';
 export type Layer = 'system' | 'user' | 'project';
 export type ResourceKind = 'command' | 'hook' | 'skill' | 'rule' | 'mcp' | 'permission' | 'subagent' | 'workflow';
 
