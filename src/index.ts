@@ -141,9 +141,10 @@ Quick start:
 Agent versions:
   add <agent>[@version]           Install an agent CLI (e.g. agents add codex)
   import <agent>                  Adopt an existing global install (npm/homebrew) into agents-cli
-  remove <agent>[@version]        Uninstall a version
+  prune <agent>[@version]         Uninstall a version
+  remove <agent>[@version]        Alias for prune
   use <agent>@<version>           Set the default version
-  prune [target]                  Remove orphan resources and older duplicate version installs (targets: commands, sessions, runs, trash)
+  prune cleanup [target]          Remove orphan resources and older duplicate version installs
   trash                           Inspect and restore soft-deleted version directories
   view [agent[@version]]          List versions, or inspect one in detail
 

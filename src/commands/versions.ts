@@ -1,8 +1,9 @@
 /**
  * Version management commands for installing, switching, and removing agent CLIs.
  *
- * Implements `agents add`, `agents remove`, `agents use`, and the deprecated
- * `agents list`. Handles npm-based installation, shim creation, config symlink
+ * Implements `agents add`, `agents prune`, `agents remove` (alias),
+ * `agents use`, and the deprecated `agents list`. Handles npm-based installation,
+ * shim creation, config symlink
  * switching, resource sync prompts, and project-level version pinning.
  */
 import type { Command } from 'commander';
@@ -148,7 +149,144 @@ function warnIfShimShadowed(agent: AgentId): void {
   console.log(chalk.gray(`  ${getPathSetupInstructions().split('\n').join('\n  ')}`));
 }
 
-/** Register `agents add`, `agents remove`, `agents use`, and `agents list` (deprecated). */
+type VersionPruneVerb = 'prune' | 'remove';
+
+async function versionPruneAction(
+  specs: string[],
+  options: { project?: boolean },
+  commandName: VersionPruneVerb,
+): Promise<void> {
+  const isProject = options.project;
+
+  for (const spec of specs) {
+    const parsed = parseAgentSpec(spec);
+    if (!parsed) {
+      console.log(chalk.red(`Invalid agent: ${spec}`));
+      console.log(chalk.gray(`Format: <agent>[@version]. Available: ${ALL_AGENT_IDS.join(', ')}`));
+      continue;
+    }
+
+    const { agent, version } = parsed;
+    const agentConfig = AGENTS[agent];
+
+    if (version === 'latest' || !spec.includes('@')) {
+      const versions = listInstalledVersions(agent);
+      if (versions.length === 0) {
+        console.log(chalk.gray(`No versions of ${agentLabel(agentConfig.id)} installed`));
+        continue;
+      }
+
+      if (!isInteractiveTerminal()) {
+        requireInteractiveSelection(`Selecting ${agentLabel(agentConfig.id)} versions to ${commandName}`, [
+          `agents ${commandName} ${agent}@${versions[0]}`,
+        ]);
+      }
+
+      const globalDefault = getGlobalDefault(agent);
+
+      const sortedVersions = [...versions].sort((a, b) => {
+        if (a === globalDefault) return -1;
+        if (b === globalDefault) return 1;
+        return 0;
+      });
+
+      try {
+        const toRemove = await checkbox({
+          message: `Select ${agentLabel(agentConfig.id)} versions to ${commandName}:`,
+          choices: sortedVersions.map((v) => ({
+            name: v === globalDefault ? `${v} ${chalk.green('(default)')}` : v,
+            value: v,
+            checked: false,
+          })),
+        });
+
+        if (toRemove.length === 0) {
+          console.log(chalk.gray('No versions selected'));
+          continue;
+        }
+
+        for (const v of toRemove) {
+          const versionDir = getVersionDir(agent, v);
+          removeVersion(agent, v);
+          fixSessionFilePaths(agent, v, versionDir);
+          console.log(chalk.green(`Removed ${agentLabel(agentConfig.id)}@${v}`));
+        }
+
+        if (globalDefault && toRemove.includes(globalDefault)) {
+          setGlobalDefault(agent, undefined);
+          console.log(chalk.yellow(`Default version removed. Run: agents use ${agent}@<version> to set a new default`));
+        }
+
+        const remaining = listInstalledVersions(agent);
+        if (remaining.length === 0) {
+          removeShim(agent);
+        }
+      } catch (err) {
+        if (isPromptCancelled(err)) {
+          console.log(chalk.gray('Cancelled'));
+          continue;
+        }
+        throw err;
+      }
+    } else if (!isVersionInstalled(agent, version)) {
+      console.log(chalk.gray(`${agentLabel(agentConfig.id)}@${version} not installed`));
+    } else {
+      const versionDir = getVersionDir(agent, version);
+      removeVersion(agent, version);
+      fixSessionFilePaths(agent, version, versionDir);
+      console.log(chalk.green(`Removed ${agentLabel(agentConfig.id)}@${version}`));
+
+      const remaining = listInstalledVersions(agent);
+      if (remaining.length === 0) {
+        removeShim(agent);
+      }
+    }
+
+    if (isProject) {
+      const projectManifestPath = path.join(process.cwd(), '.agents', 'agents.yaml');
+      if (fs.existsSync(projectManifestPath)) {
+        const manifest = readManifest(process.cwd());
+        if (manifest?.agents?.[agent]) {
+          delete manifest.agents[agent];
+          writeManifest(process.cwd(), manifest);
+          console.log(chalk.gray(`  Removed from .agents/agents.yaml`));
+        }
+      }
+    }
+  }
+}
+
+function configureVersionPruneCommand(cmd: Command, commandName: VersionPruneVerb): void {
+  const isAlias = commandName === 'remove';
+  cmd
+    .description(isAlias
+      ? 'Alias for agents prune. Uninstalls agent CLI versions.'
+      : 'Uninstall agent CLI versions. Moves version data to trash for recovery.')
+    .option('-p, --project', 'Also clear the pinned version from .agents/agents.yaml in the current project');
+
+  setHelpSections(cmd, {
+    examples: `
+      # Prune a specific version
+      agents ${commandName} claude@2.0.50
+
+      # Pick interactively if you omit the version
+      agents ${commandName} claude
+
+      # Prune and also clear the project pin
+      agents ${commandName} claude@2.0.50 --project
+    `,
+    notes: `
+      - Pruned version directories move to trash with their home/ data intact.
+      - Session file paths are rewritten so session history remains readable.
+      - Removing the default version unsets the default; run 'agents use' to pick a new one.
+      - Reinstall any time with 'agents add'.
+    `,
+  });
+
+  cmd.action((specs: string[], options) => versionPruneAction(specs, options, commandName));
+}
+
+/** Register `agents add`, `agents prune`, `agents remove`, `agents use`, and `agents list` (deprecated). */
 export function registerVersionsCommands(program: Command): void {
   const addCmd = program
     .command('add <specs...>')
@@ -375,137 +513,8 @@ export function registerVersionsCommands(program: Command): void {
       }
     });
 
-  const removeCmd = program
-    .command('remove <specs...>')
-    .description('Uninstall agent CLI versions. Frees disk space and removes the version\'s auth token.')
-    .option('-p, --project', 'Also clear the pinned version from .agents/agents.yaml in the current project');
-
-  setHelpSections(removeCmd, {
-    examples: `
-      # Remove a specific version
-      agents remove claude@2.0.50
-
-      # Pick interactively if you omit the version
-      agents remove claude
-
-      # Remove and also clear the project pin
-      agents remove claude@2.0.50 --project
-    `,
-    notes: `
-      - Removing the default version unsets the default; run 'agents use' to pick a new one.
-      - Reinstall any time with 'agents add'.
-    `,
-  });
-
-  removeCmd.action(async (specs: string[], options) => {
-      const isProject = options.project;
-
-      for (const spec of specs) {
-        const parsed = parseAgentSpec(spec);
-        if (!parsed) {
-          console.log(chalk.red(`Invalid agent: ${spec}`));
-          console.log(chalk.gray(`Format: <agent>[@version]. Available: ${ALL_AGENT_IDS.join(', ')}`));
-          continue;
-        }
-
-        const { agent, version } = parsed;
-        const agentConfig = AGENTS[agent];
-
-        if (version === 'latest' || !spec.includes('@')) {
-          // Show picker for which versions to remove
-          const versions = listInstalledVersions(agent);
-          if (versions.length === 0) {
-            console.log(chalk.gray(`No versions of ${agentLabel(agentConfig.id)} installed`));
-            continue;
-          }
-
-          if (!isInteractiveTerminal()) {
-            requireInteractiveSelection(`Selecting ${agentLabel(agentConfig.id)} versions to remove`, [
-              `agents remove ${agent}@${versions[0]}`,
-            ]);
-          }
-
-          const globalDefault = getGlobalDefault(agent);
-
-          // Sort versions with default first
-          const sortedVersions = [...versions].sort((a, b) => {
-            if (a === globalDefault) return -1;
-            if (b === globalDefault) return 1;
-            return 0;
-          });
-
-          try {
-            const toRemove = await checkbox({
-              message: `Select ${agentLabel(agentConfig.id)} versions to remove:`,
-              choices: sortedVersions.map((v) => ({
-                name: v === globalDefault ? `${v} ${chalk.green('(default)')}` : v,
-                value: v,
-                checked: false, // All unchecked by default
-              })),
-            });
-
-            if (toRemove.length === 0) {
-              console.log(chalk.gray('No versions selected'));
-              continue;
-            }
-
-            for (const v of toRemove) {
-              const versionDir = getVersionDir(agent, v);
-              removeVersion(agent, v);
-              fixSessionFilePaths(agent, v, versionDir);
-              console.log(chalk.green(`Removed ${agentLabel(agentConfig.id)}@${v}`));
-            }
-
-            // Check if default was removed
-            if (globalDefault && toRemove.includes(globalDefault)) {
-              setGlobalDefault(agent, undefined);
-              console.log(chalk.yellow(`Default version removed. Run: agents use ${agent}@<version> to set a new default`));
-            }
-
-            // Remove shim if no versions left
-            const remaining = listInstalledVersions(agent);
-            if (remaining.length === 0) {
-              removeShim(agent);
-            }
-          } catch (err) {
-            if (isPromptCancelled(err)) {
-              console.log(chalk.gray('Cancelled'));
-              continue;
-            }
-            throw err;
-          }
-        } else {
-          // Remove specific version
-          if (!isVersionInstalled(agent, version)) {
-            console.log(chalk.gray(`${agentLabel(agentConfig.id)}@${version} not installed`));
-          } else {
-            const versionDir = getVersionDir(agent, version);
-            removeVersion(agent, version);
-            fixSessionFilePaths(agent, version, versionDir);
-            console.log(chalk.green(`Removed ${agentLabel(agentConfig.id)}@${version}`));
-
-            // Remove shim if no versions left
-            const remaining = listInstalledVersions(agent);
-            if (remaining.length === 0) {
-              removeShim(agent);
-            }
-          }
-        }
-
-        // Update project manifest if -p flag
-        if (isProject) {
-          const projectManifestPath = path.join(process.cwd(), '.agents', 'agents.yaml');
-          if (fs.existsSync(projectManifestPath)) {
-            const manifest = readManifest(process.cwd());
-            if (manifest?.agents?.[agent]) {
-              delete manifest.agents[agent];
-              writeManifest(process.cwd(), manifest);
-              console.log(chalk.gray(`  Removed from .agents/agents.yaml`));
-            }
-          }
-        }
-      }
-    });
+  configureVersionPruneCommand(program.command('prune <specs...>'), 'prune');
+  configureVersionPruneCommand(program.command('remove <specs...>', { hidden: true }), 'remove');
 
   const useCmd = program
     .command('use <agent> [version]')
