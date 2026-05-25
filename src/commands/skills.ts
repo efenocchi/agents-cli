@@ -488,18 +488,18 @@ Examples:
     .action(() => {
       console.error(chalk.red('"agents skills sync" is gone.'));
       console.error(chalk.gray('Sync runs automatically when you launch the agent.'));
-      console.error(chalk.gray('To remove orphans, use:  agents prune skills'));
+      console.error(chalk.gray('To remove orphans, use:  agents prune cleanup skills'));
       process.exit(1);
     });
 
-  // `skills prune` moved to the top-level `agents prune` command.
+  // `skills prune` moved to the top-level `agents prune cleanup` command.
   skillsCmd
     .command('prune', { hidden: true })
     .allowUnknownOption()
     .allowExcessArguments()
     .action(() => {
       console.error(chalk.red('"agents skills prune" moved.'));
-      console.error(chalk.gray('Use:  agents prune skills   (or `agents prune` for everything)'));
+      console.error(chalk.gray('Use:  agents prune cleanup skills   (or `agents prune cleanup` for everything)'));
       process.exit(1);
     });
 

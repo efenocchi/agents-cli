@@ -1086,9 +1086,9 @@ export async function pruneDuplicates(
       if (!isInteractiveTerminal()) {
         console.log(chalk.red('Refusing to prune in a non-interactive shell without --yes.'));
         if (filterAgentId) {
-          console.log(chalk.gray(`Re-run with: agents prune ${filterAgentId} --dry-run`));
+          console.log(chalk.gray(`Re-run with: agents prune cleanup ${filterAgentId} --dry-run`));
         } else {
-          console.log(chalk.gray('Re-run with: agents prune --dry-run'));
+          console.log(chalk.gray('Re-run with: agents prune cleanup --dry-run'));
         }
         process.exit(1);
       }
@@ -1249,4 +1249,3 @@ Output:
 `)
     .action((agentArg: string | undefined, options: { json?: boolean; prune?: boolean; yes?: boolean; dryRun?: boolean }) => viewAction(agentArg, options));
 }
-

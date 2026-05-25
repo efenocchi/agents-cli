@@ -607,18 +607,18 @@ Examples:
     .action(() => {
       console.error(chalk.red('"agents hooks sync" is gone.'));
       console.error(chalk.gray('Sync runs automatically when you launch the agent.'));
-      console.error(chalk.gray('To remove orphans, use:  agents prune hooks'));
+      console.error(chalk.gray('To remove orphans, use:  agents prune cleanup hooks'));
       process.exit(1);
     });
 
-  // `hooks prune` moved to the top-level `agents prune` command.
+  // `hooks prune` moved to the top-level `agents prune cleanup` command.
   hooksCmd
     .command('prune', { hidden: true })
     .allowUnknownOption()
     .allowExcessArguments()
     .action(() => {
       console.error(chalk.red('"agents hooks prune" moved.'));
-      console.error(chalk.gray('Use:  agents prune hooks   (or `agents prune` for everything)'));
+      console.error(chalk.gray('Use:  agents prune cleanup hooks   (or `agents prune cleanup` for everything)'));
       process.exit(1);
     });
 

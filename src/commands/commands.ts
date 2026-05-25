@@ -475,18 +475,18 @@ Examples:
     .action(() => {
       console.error(chalk.red('"agents commands sync" is gone.'));
       console.error(chalk.gray('Sync runs automatically when you launch the agent.'));
-      console.error(chalk.gray('To remove orphans, use:  agents prune commands'));
+      console.error(chalk.gray('To remove orphans, use:  agents prune cleanup commands'));
       process.exit(1);
     });
 
-  // `commands prune` moved to the top-level `agents prune` command.
+  // `commands prune` moved to the top-level `agents prune cleanup` command.
   commandsCmd
     .command('prune', { hidden: true })
     .allowUnknownOption()
     .allowExcessArguments()
     .action(() => {
       console.error(chalk.red('"agents commands prune" moved.'));
-      console.error(chalk.gray('Use:  agents prune commands   (or `agents prune` for everything)'));
+      console.error(chalk.gray('Use:  agents prune cleanup commands   (or `agents prune cleanup` for everything)'));
       process.exit(1);
     });
 

@@ -15,7 +15,7 @@
  *      unified diff body for each divergent file. Mirrors the resolution that
  *      the shim drives at runtime: project > user > system > extras.
  *
- * Read-only: doctor never mutates state. Run `agents prune` to act on orphan
+ * Read-only: doctor never mutates state. Run `agents prune cleanup` to act on orphan
  * readouts, or just launch the agent to apply pending sync.
  */
 import type { Command } from 'commander';
@@ -169,7 +169,7 @@ function renderOverviewText(
       const label = `${AGENT_NAMES[row.agent] || row.agent}@${row.version}`;
       console.log(`  ${chalk.yellow('warn ')}  ${label}  ${chalk.gray(parts.join(', '))}`);
     }
-    console.log(chalk.gray('  Run `agents prune` to remove.'));
+    console.log(chalk.gray('  Run `agents prune cleanup` to remove.'));
   }
 }
 
@@ -367,7 +367,7 @@ function renderTargetText(report: VersionResourceReport, options: { showDiff: bo
     console.log(chalk.green(`  Verdict: ${ok} resource${ok === 1 ? '' : 's'} reconciled. Version home matches resolved sources.`));
   } else {
     console.log(`  Verdict: ${verdictParts.join(', ')}.`);
-    console.log(chalk.gray(`  Run \`agents sync --agent ${report.agent} --agent-version ${report.version}\` to reconcile, or \`agents prune\` to drop extras.`));
+    console.log(chalk.gray(`  Run \`agents sync --agent ${report.agent} --agent-version ${report.version}\` to reconcile, or \`agents prune cleanup\` to drop extras.`));
   }
 }
 

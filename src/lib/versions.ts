@@ -24,7 +24,7 @@ import chalk from 'chalk';
 import * as TOML from 'smol-toml';
 import { checkbox, select, confirm } from '@inquirer/prompts';
 import type { AgentId, VersionResources } from './types.js';
-import { getVersionsDir, getShimsDir, ensureAgentsDir, readMeta, writeMeta, getCommandsDir, getSkillsDir, getHooksDir, getResolvedRulesDir, getUserRulesDir, getPermissionsDir, getSubagentsDir, clearVersionResources, getVersionResources, recordVersionResources, ensureVersionResourcePatterns, getMcpDir, getProjectAgentsDir, getPromptcutsPath, getUserPromptcutsPath, getEnabledExtraRepos, getAgentsDir, getOptionalUserAgentsDir, getUserAgentsDir, getTrashVersionsDir, getActiveRulesPreset } from './state.js';
+import { getVersionsDir, getShimsDir, ensureAgentsDir, readMeta, writeMeta, getCommandsDir, getSkillsDir, getHooksDir, getResolvedRulesDir, getUserRulesDir, getPermissionsDir, getSubagentsDir, getVersionResources, recordVersionResources, ensureVersionResourcePatterns, getMcpDir, getProjectAgentsDir, getPromptcutsPath, getUserPromptcutsPath, getEnabledExtraRepos, getAgentsDir, getOptionalUserAgentsDir, getUserAgentsDir, getTrashVersionsDir, getActiveRulesPreset } from './state.js';
 import { defaultPatterns, expandPatterns } from './resource-patterns.js';
 import { resolveResource, listResources } from './resources.js';
 import { AGENTS, getAccountEmail, MCP_CAPABLE_AGENTS, COMMANDS_CAPABLE_AGENTS, getMcpConfigPathForHome, parseMcpConfig, resolveAgentName, formatAgentError } from './agents.js';
@@ -1035,7 +1035,7 @@ export function listInstalledVersions(agent: AgentId): string[] {
  * List every version directory for an agent, including ones missing the
  * binary (typically home-only leftovers from a prior `removeVersion`).
  *
- * Used by `agents prune` to surface stale installs that the regular
+ * Used by `agents prune cleanup` to surface stale installs that the regular
  * `listInstalledVersions` filters out. Do NOT use elsewhere — every other
  * call site assumes a working binary.
  */
@@ -1260,9 +1260,6 @@ export function removeVersion(agent: AgentId, version: string): boolean {
 
   // Remove versioned alias (e.g., claude@2.0.65)
   removeVersionedAlias(agent, version);
-
-  // Clear resource tracking for this version
-  clearVersionResources(agent, version);
 
   // Clear default if it was the removed version - user must explicitly pick a new one
   if (getGlobalDefault(agent) === version) {
