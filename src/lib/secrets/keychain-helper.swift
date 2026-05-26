@@ -1,6 +1,5 @@
 import Foundation
 import Security
-import LocalAuthentication
 
 func writeStderr(_ message: String) {
     FileHandle.standardError.write(Data((message + "\n").utf8))
@@ -46,31 +45,9 @@ func buildSelfTrustedAccess() -> SecAccess? {
     return access
 }
 
-// LocalAuthentication gate. Used by `get-batch` and `get-auth` so a single
-// Touch ID prompt unlocks all reads in this process invocation. Falls back
-// to device passcode when biometry is unavailable.
-func authenticateOrDie(reason: String) {
-    let ctx = LAContext()
-    var laError: NSError?
-    let canBio = ctx.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &laError)
-    let policy: LAPolicy = canBio ? .deviceOwnerAuthenticationWithBiometrics : .deviceOwnerAuthentication
-    let sem = DispatchSemaphore(value: 0)
-    var ok = false
-    var authErr: Error?
-    ctx.evaluatePolicy(policy, localizedReason: reason) { success, error in
-        ok = success
-        authErr = error
-        sem.signal()
-    }
-    sem.wait()
-    if !ok {
-        die(4, "Authentication failed: \(authErr?.localizedDescription ?? "denied")")
-    }
-}
-
 let args = CommandLine.arguments
 guard args.count >= 2 else {
-    die(2, "Usage: agents-keychain <get|get-auth|get-batch|set|delete|has|list> ...")
+    die(2, "Usage: agents-keychain <get|set|delete|has|list> ...")
 }
 
 let cmd = args[1]
@@ -114,59 +91,6 @@ case "get":
     guard let value = findItem(service: service, account: account, synchronizable: kSecAttrSynchronizableAny) else { exit(1) }
     print(value, terminator: "")
 
-case "get-auth":
-    // Authenticated single-item read. Same as `get` but gates behind
-    // LocalAuthentication. Used when callers want Touch ID on individual
-    // reads outside of a batch.
-    //
-    // Usage: get-auth <service> <account> [--reason "text"]
-    guard args.count == 4 || args.count == 6 else {
-        die(2, "Usage: agents-keychain get-auth <service> <account> [--reason \"text\"]")
-    }
-    let (service, account) = (args[2], args[3])
-    var reasonAuth = "read an agents-cli secret"
-    if args.count == 6 && args[4] == "--reason" {
-        reasonAuth = args[5]
-    }
-    authenticateOrDie(reason: reasonAuth)
-    guard let value = findItem(service: service, account: account, synchronizable: kSecAttrSynchronizableAny) else { exit(1) }
-    print(value, terminator: "")
-
-case "get-batch":
-    // Authenticated batch read. One Touch ID prompt unlocks every requested
-    // service in this process. Output format, one record per service in
-    // input order:
-    //   V <service>\n<value>\n
-    //   M <service>\n
-    // Service names are validated by the TS write path to exclude NUL, '=',
-    // CR, LF (index.ts setKeychainToken). Values are validated newline-free
-    // by the same path. So newline-delimited records are unambiguous.
-    //
-    // Usage: get-batch <account> [--reason "text"] <service1> [service2...]
-    guard args.count >= 4 else {
-        die(2, "Usage: agents-keychain get-batch <account> [--reason \"text\"] <service1> [service2...]")
-    }
-    let account = args[2]
-    var idx = 3
-    var reasonBatch = "unlock agents-cli secrets"
-    if args.count >= idx + 2 && args[idx] == "--reason" {
-        reasonBatch = args[idx + 1]
-        idx += 2
-    }
-    guard idx < args.count else {
-        die(2, "Usage: agents-keychain get-batch <account> [--reason \"text\"] <service1> [service2...]")
-    }
-    let services = Array(args[idx...])
-    authenticateOrDie(reason: reasonBatch)
-    for service in services {
-        if let v = findItem(service: service, account: account, synchronizable: kSecAttrSynchronizableAny) {
-            print("V \(service)")
-            print(v)
-        } else {
-            print("M \(service)")
-        }
-    }
-
 case "has":
     guard args.count == 4 else { die(2, "Usage: agents-keychain has <service> <account>") }
     let (service, account) = (args[2], args[3])
@@ -206,7 +130,13 @@ case "set":
             kSecAttrSynchronizable: syncFlag,
             kSecValueData: valueData,
         ]
-        if let acc = access { addAttrs[kSecAttrAccess] = acc }
+        // kSecAttrAccess (legacy trusted-app ACL) is incompatible with
+        // kSecAttrSynchronizable=true — SecItemAdd returns errSecParam (-50)
+        // when both are set. iCloud-synced items use device-level keychain
+        // unlock instead of a per-item ACL. Only attach the ACL to non-sync
+        // (device-local) items, where it stops the legacy "enter password"
+        // sheet on each helper read.
+        if let acc = access, syncFlag == kCFBooleanFalse! { addAttrs[kSecAttrAccess] = acc }
         status = SecItemAdd(addAttrs as CFDictionary, nil)
     }
     if status == errSecNotAvailable {
