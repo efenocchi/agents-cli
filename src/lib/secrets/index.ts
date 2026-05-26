@@ -153,18 +153,33 @@ export function getKeychainToken(item: string, sync = false): string {
   if (backend) return backend.get(item, sync);
   assertSupportedPlatform();
   if (isLinux()) return linuxBackend.get(item, sync);
-  // macOS: Try security first (no prompts for local items)
-  const secResult = spawnSync('security', ['find-generic-password', '-a', os.userInfo().username, '-s', item, '-w'], {
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  if (secResult.status === 0) {
-    const token = secResult.stdout?.toString().trim();
-    if (token) return token;
+  // macOS: read through the signed helper FIRST. The helper holds the
+  // keychain-access-group entitlement (so it reads iCloud-synced items) and is
+  // the trusted app on the SecAccess ACLs we attach to device-local writes — it
+  // reads both silently, via the unauthenticated `get` path (no Touch ID gate).
+  //
+  // Bare `security` is only a fallback for when the helper bundle is absent
+  // (e.g. a dev build without the .app). It must NOT be tried first: macOS
+  // shows the "security wants to access … enter keychain password" sheet on any
+  // item whose ACL doesn't list `security`, which is every item we write. That
+  // security-first ordering is exactly what made bundle reads prompt on every
+  // `secrets exec`.
+  let bin: string;
+  try {
+    bin = ensureKeychainHelper();
+  } catch {
+    // Helper bundle missing — degrade to security. Reads items security created
+    // without a prompt; restrictive items may still prompt (dev-build only).
+    const secResult = spawnSync('security', ['find-generic-password', '-a', os.userInfo().username, '-s', item, '-w'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    if (secResult.status === 0) {
+      const token = secResult.stdout?.toString().trim();
+      if (token) return token;
+    }
+    throw new Error(`Keychain item '${item}' not found.`);
   }
-  // Fallback: binary searches both synced and non-synced via kSecAttrSynchronizableAny.
-  // `get` is the unauthenticated path — no LocalAuthentication prompt. Used by
-  // profiles.ts (OAuth refresh) where biometric on every API call is too noisy.
-  const bin = ensureKeychainHelper();
+  // Helper searches both synced and non-synced via kSecAttrSynchronizableAny.
   const result = spawnSync(bin, ['get', item, os.userInfo().username], {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
