@@ -179,70 +179,28 @@ export function getKeychainToken(item: string, sync = false): string {
 }
 
 /**
- * Batch-read multiple keychain items behind a single LocalAuthentication
- * prompt. macOS shows ONE Touch ID prompt and every requested item is
- * unlocked in the same process. Returns a Map keyed by item name. Missing
- * items are absent from the map (caller decides whether that's an error).
+ * Read multiple keychain items, returning a Map keyed by item name. Missing or
+ * unreadable items are simply absent from the map (the caller decides whether a
+ * given key was required).
  *
- * `reason` is shown to the user under the Touch ID prompt — e.g.
- * "read 'hetzner.com' secrets for agent 'claude'". Apple's HIG recommends
- * a lowercase verb phrase that completes the sentence "X is required to ___".
- *
- * On Linux or when a test backend is installed, falls back to individual
- * `get` calls — no biometric prompt path on those platforms.
+ * Each item is read through the security-first single-read path
+ * ({@link getKeychainToken}): `/usr/bin/security` resolves items with no prompt,
+ * and the unauthenticated helper `get` is the fallback for anything it can't
+ * see. This deliberately does NOT use the helper's `get-batch` Touch-ID gate.
+ * That gate fired the macOS keychain *password* sheet whenever an item's
+ * trusted-app ACL didn't list the reading helper — which, with deprecated
+ * trusted-app ACLs across dev/global helper copies, was effectively every read.
+ * `security` reads the same items with no prompt at all, so routing through it
+ * keeps bundle resolution silent. The `reason` arg is retained for signature
+ * compatibility but unused now that there is no biometric prompt.
  */
-export function getKeychainTokensBatch(items: string[], _sync = false, reason?: string): Map<string, string> {
+export function getKeychainTokensBatch(items: string[], sync = false, _reason?: string): Map<string, string> {
   const result = new Map<string, string>();
-  if (items.length === 0) return result;
-  if (backend) {
-    for (const item of items) {
-      try { result.set(item, backend.get(item, _sync)); } catch { /* missing — skip */ }
-    }
-    return result;
-  }
-  assertSupportedPlatform();
-  if (isLinux()) {
-    for (const item of items) {
-      try { result.set(item, linuxBackend.get(item, _sync)); } catch { /* missing — skip */ }
-    }
-    return result;
-  }
-  // macOS: single helper invocation with Touch ID gate.
-  const bin = ensureKeychainHelper();
-  const helperArgs = ['get-batch', os.userInfo().username];
-  if (reason) helperArgs.push('--reason', reason);
-  helperArgs.push(...items);
-  const child = spawnSync(bin, helperArgs, {
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  if (child.status !== 0) {
-    const msg = child.stderr?.toString().trim();
-    throw new Error(msg || `Failed to batch-read ${items.length} keychain items.`);
-  }
-  const out = child.stdout?.toString() ?? '';
-  // Parser. Output is a sequence of records:
-  //   "V <service>\n<value>\n"   (present)
-  //   "M <service>\n"            (missing)
-  // Service names cannot contain '\n' (validated at write time); values are
-  // also newline-free (rejected by setKeychainToken). So splitting on '\n'
-  // and walking line-by-line is unambiguous.
-  const lines = out.split('\n');
-  // Last entry from split is the empty string after a trailing newline.
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    if (line === '' && i === lines.length - 1) break;
-    if (line.startsWith('V ')) {
-      const service = line.slice(2);
-      const value = lines[i + 1] ?? '';
-      result.set(service, value);
-      i += 2;
-    } else if (line.startsWith('M ')) {
-      i += 1;
-    } else if (line === '') {
-      i += 1;
-    } else {
-      throw new Error(`Malformed get-batch output line: ${JSON.stringify(line)}`);
+  for (const item of items) {
+    try {
+      result.set(item, getKeychainToken(item, sync));
+    } catch {
+      // Missing or unreadable — skip; the caller reports which key is missing.
     }
   }
   return result;
