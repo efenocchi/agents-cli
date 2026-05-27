@@ -538,7 +538,7 @@ Every agent run, version install, browser launch, and secrets access is logged t
 }
 ```
 
-**What's logged:** Operation type, agent, version, timing, truncated prompts (first 200 chars), exit codes, errors. **What's NOT logged:** Full prompts, outputs, file contents, secret values (only bundle names).
+**What's logged:** Operation type, agent, version, timing, truncated prompts (first 200 chars), exit codes, errors, and secret bundle/key names with caller context. **What's NOT logged:** Full prompts, outputs, file contents, or secret values.
 
 **Permissions:** Logs directory is `0700` (owner-only), files are `0600`. Only you can read them.
 
