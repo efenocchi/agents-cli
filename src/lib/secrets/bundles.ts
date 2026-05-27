@@ -201,7 +201,12 @@ export function readBundle(name: string): SecretsBundle {
   return bundle;
 }
 
-export function writeBundle(bundle: SecretsBundle): void {
+export interface WriteBundleOptions {
+  /** Emit a secrets.set audit event. Internal bookkeeping writes turn this off. */
+  emitEvent?: boolean;
+}
+
+export function writeBundle(bundle: SecretsBundle, opts: WriteBundleOptions = {}): void {
   validateBundleName(bundle.name);
   for (const key of Object.keys(bundle.vars)) {
     validateEnvKey(key);
@@ -238,7 +243,9 @@ export function writeBundle(bundle: SecretsBundle): void {
   };
   const json = JSON.stringify(payload);
   setKeychainToken(bundleMetaItem(bundle.name), json, Boolean(bundle.icloud_sync));
-  emit('secrets.set', { bundle: bundle.name });
+  if (opts.emitEvent !== false) {
+    emit('secrets.set', { bundle: bundle.name });
+  }
 }
 
 export function deleteBundle(name: string): boolean {
@@ -304,7 +311,7 @@ function stampLastUsed(bundle: SecretsBundle): void {
   }
   try {
     bundle.last_used = new Date(nowMs).toISOString();
-    writeBundle(bundle);
+    writeBundle(bundle, { emitEvent: false });
   } catch {
     // Swallow — telemetry must never block secret resolution.
   }
@@ -334,16 +341,34 @@ export function resolveBundleEnv(bundle: SecretsBundle, opts: ResolveBundleOptio
   type Parsed = { literal: string } | { ref: SecretRef };
   const parsedByKey = new Map<string, Parsed>();
   const keychainItemsToFetch: string[] = [];
-  const keychainItemToKey = new Map<string, string>();
+  const keychainKeys: string[] = [];
+  const kindCounts: Record<string, number> = {};
   for (const [key, raw] of Object.entries(bundle.vars)) {
     const parsed = parseBundleValue(raw);
     parsedByKey.set(key, parsed);
+    const kind = 'literal' in parsed ? 'literal' : parsed.ref.provider;
+    kindCounts[kind] = (kindCounts[kind] ?? 0) + 1;
     if ('ref' in parsed && parsed.ref.provider === 'keychain') {
       const item = secretsKeychainItem(bundle.name, parsed.ref.value);
       keychainItemsToFetch.push(item);
-      keychainItemToKey.set(item, key);
+      keychainKeys.push(key);
     }
   }
+  const keys = Object.keys(bundle.vars).sort();
+  keychainKeys.sort();
+
+  const emitReadAudit = (status: 'success' | 'error', err?: unknown) => {
+    emit('secrets.get', {
+      bundle: bundle.name,
+      caller: opts.caller,
+      status,
+      keyCount: keys.length,
+      keys,
+      keychainKeys,
+      kindCounts,
+      error: err instanceof Error ? err.message : (err ? String(err) : undefined),
+    });
+  };
 
   // Build the localizedReason shown under the Touch ID prompt. Lowercase verb
   // phrase per Apple HIG — the system prepends "<App> is required to ".
@@ -351,43 +376,49 @@ export function resolveBundleEnv(bundle: SecretsBundle, opts: ResolveBundleOptio
     ? `read ${bundle.name} secrets (for ${opts.caller})`
     : `read ${bundle.name} secrets`;
 
-  // Single helper invocation, one biometric prompt.
-  const fetched = keychainItemsToFetch.length > 0
-    ? getKeychainTokensBatch(keychainItemsToFetch, bundle.icloud_sync, reason)
-    : new Map<string, string>();
+  try {
+    // Single helper invocation, one biometric prompt.
+    const fetched = keychainItemsToFetch.length > 0
+      ? getKeychainTokensBatch(keychainItemsToFetch, bundle.icloud_sync, reason)
+      : new Map<string, string>();
 
-  // Second pass: assemble env. Keychain values come from the batch; everything
-  // else is resolved inline (literals and env/file/exec refs don't prompt).
-  const env: Record<string, string> = {};
-  for (const [key, raw] of Object.entries(bundle.vars)) {
-    const parsed = parsedByKey.get(key)!;
-    if ('literal' in parsed) {
-      env[key] = parsed.literal;
-      continue;
-    }
-    if (parsed.ref.provider === 'keychain') {
-      const item = secretsKeychainItem(bundle.name, parsed.ref.value);
-      const value = fetched.get(item);
-      if (value === undefined) {
-        throw new Error(
-          `Bundle '${bundle.name}' key '${key}': keychain item '${item}' not found. ` +
-          `Run: agents secrets add ${bundle.name} ${key}`
-        );
+    // Second pass: assemble env. Keychain values come from the batch; everything
+    // else is resolved inline (literals and env/file/exec refs don't prompt).
+    const env: Record<string, string> = {};
+    for (const [key] of Object.entries(bundle.vars)) {
+      const parsed = parsedByKey.get(key)!;
+      if ('literal' in parsed) {
+        env[key] = parsed.literal;
+        continue;
       }
-      env[key] = value;
-      continue;
+      if (parsed.ref.provider === 'keychain') {
+        const item = secretsKeychainItem(bundle.name, parsed.ref.value);
+        const value = fetched.get(item);
+        if (value === undefined) {
+          throw new Error(
+            `Bundle '${bundle.name}' key '${key}': keychain item '${item}' not found. ` +
+            `Run: agents secrets add ${bundle.name} ${key}`
+          );
+        }
+        env[key] = value;
+        continue;
+      }
+      try {
+        env[key] = resolveRef(parsed.ref, {
+          allowExec: bundle.allow_exec,
+          iCloudSync: bundle.icloud_sync,
+          keychainItemFor: (shortId: string) => secretsKeychainItem(bundle.name, shortId),
+        });
+      } catch (err) {
+        throw new Error(`Bundle '${bundle.name}' key '${key}': ${(err as Error).message}`);
+      }
     }
-    try {
-      env[key] = resolveRef(parsed.ref, {
-        allowExec: bundle.allow_exec,
-        iCloudSync: bundle.icloud_sync,
-        keychainItemFor: (shortId: string) => secretsKeychainItem(bundle.name, shortId),
-      });
-    } catch (err) {
-      throw new Error(`Bundle '${bundle.name}' key '${key}': ${(err as Error).message}`);
-    }
+    emitReadAudit('success');
+    return env;
+  } catch (err) {
+    emitReadAudit('error', err);
+    throw err;
   }
-  return env;
 }
 
 // Build a keychain ref expression from a bundle+key pair, for storage in the bundle metadata.
