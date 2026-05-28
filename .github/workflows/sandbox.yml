@@ -1,0 +1,29 @@
+name: Sandbox tests
+
+# Runs on the phnx-labs org self-hosted runner pool (cpx41, 4 ephemeral
+# runner processes). Infra lives at agents/infra/ci-runner.
+#
+# Tool versions are NOT pinned here — setup-bun and any future setup-* steps
+# read the source of truth out of package.json / go.mod / etc.
+
+on:
+  pull_request:
+    branches: ['main', 'release/**']
+
+concurrency:
+  group: sandbox-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - run: bun run test
