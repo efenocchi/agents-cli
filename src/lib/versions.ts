@@ -1854,13 +1854,25 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
 
     const syncedCommands: string[] = [];
     for (const cmd of commandsToSync) {
-      const resolved = resolveResource('commands', `${cmd}.md`, cwd);
-      if (!resolved || fs.lstatSync(resolved.path).isSymbolicLink()) continue;
-      const srcFile = resolved.path;
+      // Commands are content that gets injected into the agent's prompt
+      // surface (slash commands, skill bodies). We intentionally do NOT pull
+      // from the project's own .agents/commands/ directory: a cloned public
+      // repo could ship a command whose body instructs the agent to do
+      // something harmful the next time the user invokes it. Commands must
+      // come from the user's central ~/.agents/commands/, the system layer,
+      // or an explicitly enabled extra repo. Same defense as hooks below.
+      const candidates: Array<string | null> = [
+        safeJoin(path.join(userAgentsDir, 'commands'), `${cmd}.md`),
+        safeJoin(getCommandsDir(), `${cmd}.md`),
+        ...extraRepos.map((e) => safeJoin(path.join(e.dir, 'commands'), `${cmd}.md`)),
+      ];
+      const srcFile = candidates.find((p) => p && fs.existsSync(p) && !fs.lstatSync(p).isSymbolicLink()) || null;
+      if (!srcFile) continue;
 
       if (commandsAsSkills) {
+        // Project skills dir is intentionally excluded for the same reason
+        // commands are: the body of a project skill becomes agent context.
         const skillSourceDirs = [
-          projectAgentsDir ? path.join(projectAgentsDir, 'skills') : null,
           path.join(userAgentsDir, 'skills'),
           getSkillsDir(),
           ...extraRepos.map((e) => path.join(e.dir, 'skills')),
@@ -1926,10 +1938,21 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
 
       const syncedSkills: string[] = [];
       for (const skill of skillsToSync) {
-        const resolved = resolveResource('skills', skill, cwd);
-        const srcDir = resolved && fs.existsSync(resolved.path) && fs.lstatSync(resolved.path).isDirectory()
-          ? resolved.path
-          : null;
+        // Same defense as commands and hooks: don't pull skills from the
+        // project's .agents/skills/ directory. A skill's contents (SKILL.md
+        // and any auxiliary scripts) get loaded into the agent's tool/context
+        // surface, and a malicious public repo could ship a SKILL.md whose
+        // body coerces the agent. Trusted layers only.
+        const skillCandidates: Array<string> = [
+          safeJoin(path.join(userAgentsDir, 'skills'), skill),
+          safeJoin(getSkillsDir(), skill),
+          ...extraRepos.map((e) => safeJoin(path.join(e.dir, 'skills'), skill)),
+        ];
+        const srcDir = skillCandidates.find((p) =>
+          fs.existsSync(p) &&
+          !fs.lstatSync(p).isSymbolicLink() &&
+          fs.lstatSync(p).isDirectory()
+        ) || null;
         if (!srcDir) continue;
 
         const destDir = safeJoin(skillsTarget, skill);
@@ -2054,6 +2077,10 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
   // ~/.agents/permissions/presets/<name>.yaml pick a subset via `includes:`.
   // If AGENTS_PERMISSION_PRESET is set, we resolve that recipe and use its
   // includes list as the group filter (intersected with groups on disk).
+  // Note: discoverPermissionGroups intentionally reads from user + system
+  // only — never from a project's .agents/permissions/. Permissions gate
+  // every other action, so a cloned public repo must not be able to widen
+  // its own sandbox by shipping a permissions group. Same defense as hooks.
   const permissionGroups = discoverPermissionGroups();
   const allGroupNames = permissionGroups.map(g => g.name);
   const activePresetName = getActivePermissionPresetName();
@@ -2098,9 +2125,22 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
   // Install MCP servers (if agent supports them)
   // For Claude/Codex: uses CLI commands (claude mcp add, codex mcp add)
   // For others: edits config files directly
-  const mcpToSync = selection
+  //
+  // Mirror the hooks defense: exclude project-scoped MCPs from the sync. An
+  // MCP server is an executable invoked under the agent's authority, so a
+  // cloned public repo's .agents/mcp/foo.yaml could install an arbitrary
+  // command. We pre-compute the set of project-scoped names and drop them
+  // before handing the list to installMcpServers. (The deeper helper-side
+  // dedup in lib/mcp.ts still lets a project entry shadow a same-named
+  // user entry, so name-collision shadowing is not fully closed here —
+  // tracked separately for a follow-up in lib/mcp.ts.)
+  const projectScopedMcpNames = new Set(
+    getScopedMcpResources(cwd).filter(r => r.scope === 'project').map(r => r.name)
+  );
+  const mcpToSyncAll = selection
     ? resolveSelection(selection.mcp, available.mcp)
     : (MCP_CAPABLE_AGENTS.includes(agent) ? available.mcp : []);
+  const mcpToSync = mcpToSyncAll.filter(n => !projectScopedMcpNames.has(n));
 
   if (mcpToSync.length > 0 && MCP_CAPABLE_AGENTS.includes(agent)) {
     const mcpResult = installMcpServers(agent, version, versionHome, mcpToSync, { cwd });
@@ -2108,7 +2148,11 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
     // mcp patterns already written via ensureVersionResourcePatterns above.
   }
 
-  // Sync subagents (claude and openclaw only)
+  // Sync subagents (claude and openclaw only).
+  // Note: listInstalledSubagents (used to populate the map below) reads only
+  // user + system layers — never project. Subagents bundle prompts that fire
+  // when the agent delegates work, so a cloned public repo must not be able
+  // to plant a subagent the user later invokes. Same defense as hooks.
   const subagentsToSync = selection
     ? resolveSelection(selection.subagents, available.subagents)
     : (SUBAGENT_CAPABLE_AGENTS.includes(agent) ? available.subagents : []);
