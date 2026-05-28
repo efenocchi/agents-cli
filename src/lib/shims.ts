@@ -1277,7 +1277,7 @@ export function getPathShadowingExecutable(agent: AgentId): string | null {
  * Delete the legacy ~/.agents/shims/<cli> file if it exists, returning whether
  * anything was removed. Pre-split installs put shims under ~/.agents/shims/;
  * the new layout uses ~/.agents-system/shims/. The leftover file causes the
- * repair-prompt loop reported in EXAMPLE-664 — `getPathShadowingExecutable` flags
+ * repair-prompt loop reported in PROJ-789 — `getPathShadowingExecutable` flags
  * it as a shadow but `addShimsToPath` only edits rc files, never the file
  * itself. Removing it ends the loop.
  */
