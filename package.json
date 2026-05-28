@@ -24,7 +24,6 @@
     "dist/**/*.js",
     "dist/**/*.d.ts",
     "dist/lib/secrets/Agents CLI.app/**",
-    "npm-shrinkwrap.json",
     "scripts/postinstall.js",
     "CHANGELOG.md",
     "README.md",
