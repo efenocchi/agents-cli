@@ -71,6 +71,7 @@ import { registerSkillsCommands } from './commands/skills.js';
 import { registerRulesCommands } from './commands/rules.js';
 import { registerPermissionsCommands } from './commands/permissions.js';
 import { registerMcpCommands } from './commands/mcp.js';
+import { registerCliCommands } from './commands/cli.js';
 import { registerVersionsCommands } from './commands/versions.js';
 import { registerImportCommand } from './commands/import.js';
 import { registerPackagesCommands } from './commands/packages.js';
@@ -575,6 +576,7 @@ program
   });
 
 registerMcpCommands(program);
+registerCliCommands(program);
 registerSubagentsCommands(program);
 registerPluginsCommands(program);
 registerWorkflowsCommands(program);
