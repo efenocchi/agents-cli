@@ -25,17 +25,19 @@ PROFILE="${CRABBOX_PROFILE:-$(awk '/^profile:/ {print $2; exit}' "$REPO_ROOT/.cr
 PROFILE="${PROFILE:-default}"
 export PROFILE
 
-# GitHub .agents repo for syncing skills/commands. Must be set explicitly.
-AGENTS_REPO="${AGENTS_REPO:?AGENTS_REPO must be set to your DotAgents repo (e.g. git@github.com:owner/.agents.git)}"
-
 die() { echo "error: $*" >&2; exit 1; }
 
-# Ensure deps
-command -v agents >/dev/null || die "agents-cli not installed"
+# Ensure deps. `agents` is only needed when secrets must be pulled from the
+# local Keychain — CI passes them in via env, so we don't require it there.
 command -v crabbox >/dev/null || die "crabbox not installed"
 
-# Load Hetzner token
-eval "$(agents secrets export hetzner.com 2>/dev/null)" || die "Failed to load hetzner.com secrets"
+# Load Hetzner token. Prefer an already-set HCLOUD_TOKEN (CI workflow path);
+# otherwise fall back to the agents-cli Keychain bundle (local dev path).
+if [[ -z "${HCLOUD_TOKEN:-}" ]]; then
+  command -v agents >/dev/null || die "HCLOUD_TOKEN not set and agents-cli not installed"
+  eval "$(agents secrets export hetzner.com 2>/dev/null)" || die "Failed to load hetzner.com secrets"
+fi
+[[ -n "${HCLOUD_TOKEN:-}" ]] || die "HCLOUD_TOKEN is empty after secret resolution"
 export HCLOUD_TOKEN
 
 # Generate GitHub App token for private repo access.
@@ -102,11 +104,17 @@ if [[ "$PR_MODE" == "1" ]]; then
   export TOKEN_REPO="$REPO_SLUG"
 fi
 
-GITHUB_TOKEN=$(generate_github_token || true)
-[[ -n "$GITHUB_TOKEN" ]] || echo "warn: failed to generate GitHub App token (private repos won't clone)" >&2
+# Prefer a pre-set GITHUB_TOKEN (CI injects ${{ secrets.GITHUB_TOKEN }} or a PAT).
+# Otherwise mint one from the GitHub App via the Keychain bundle.
+if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+  GITHUB_TOKEN=$(generate_github_token || true)
+fi
+[[ -n "$GITHUB_TOKEN" ]] || echo "warn: no GITHUB_TOKEN available (private repos won't clone)" >&2
 
-# Load Claude token for running agents on sandbox
-eval "$(agents secrets export anthropic.com 2>/dev/null)" || true
+# Load Claude token for running agents on sandbox. Honor a pre-set env var first.
+if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]] && command -v agents >/dev/null; then
+  eval "$(agents secrets export anthropic.com 2>/dev/null)" || true
+fi
 CLAUDE_CODE_OAUTH_TOKEN="${CLAUDE_CODE_OAUTH_TOKEN:-}"
 
 # Pick the slug of a running box matching $PROFILE, or empty if none.
