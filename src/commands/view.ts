@@ -48,6 +48,7 @@ import {
   promptNewResourceSelection,
   syncResourcesToVersion,
   removeVersion,
+  printTrashFooter,
 } from '../lib/versions.js';
 import {
   getShimsDir,
@@ -985,14 +986,13 @@ async function buildAgentPrunePlan(agentId: AgentId): Promise<AgentPrunePlan> {
   return { agentId, toPrune, skippedDefaults };
 }
 
-async function executePrunePlan(plan: AgentPrunePlan): Promise<number> {
-  let removed = 0;
+async function executePrunePlan(plan: AgentPrunePlan): Promise<Array<{ agent: AgentId; version: string }>> {
+  const moved: Array<{ agent: AgentId; version: string }> = [];
   for (const p of plan.toPrune) {
-    console.log(chalk.gray(`Removing ${agentLabel(p.agentId)}@${p.version}...`));
     const ok = removeVersion(p.agentId, p.version);
     if (ok) {
-      console.log(chalk.green(`Removed ${agentLabel(p.agentId)}@${p.version}`));
-      removed++;
+      console.log(chalk.green(`Moved ${agentLabel(p.agentId)}@${p.version} to trash`));
+      moved.push({ agent: p.agentId, version: p.version });
     } else {
       console.log(chalk.yellow(`Already gone: ${agentLabel(p.agentId)}@${p.version}`));
     }
@@ -1000,7 +1000,7 @@ async function executePrunePlan(plan: AgentPrunePlan): Promise<number> {
   if (listInstalledVersions(plan.agentId).length === 0) {
     removeShim(plan.agentId);
   }
-  return removed;
+  return moved;
 }
 
 function printPrunePlan(plan: AgentPrunePlan, isFirst: boolean): void {
@@ -1063,7 +1063,7 @@ export async function pruneDuplicates(
   }
 
   const totalCandidates = actionable.reduce((n, plan) => n + plan.toPrune.length, 0);
-  let totalRemoved = 0;
+  const allMoved: Array<{ agent: AgentId; version: string }> = [];
   let isFirst = true;
   let processedAny = false;
 
@@ -1112,7 +1112,7 @@ export async function pruneDuplicates(
       }
     }
 
-    totalRemoved += await executePrunePlan(plan);
+    allMoved.push(...(await executePrunePlan(plan)));
     processedAny = true;
     isFirst = false;
     console.log();
@@ -1124,7 +1124,8 @@ export async function pruneDuplicates(
   }
 
   if (processedAny) {
-    console.log(chalk.bold(`Pruned ${totalRemoved} version${totalRemoved === 1 ? '' : 's'}.`));
+    console.log(chalk.bold(`Pruned ${allMoved.length} version${allMoved.length === 1 ? '' : 's'}.`));
+    printTrashFooter(allMoved);
   }
 }
 
