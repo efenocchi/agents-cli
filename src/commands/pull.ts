@@ -58,6 +58,12 @@ import {
   type ResourceSelection,
 } from '../lib/versions.js';
 import {
+  listCliStatus,
+  installCli,
+  describeMethod,
+  selectInstallMethod,
+} from '../lib/cli-resources.js';
+import {
   ensureShimCurrent,
   isShimsInPath,
   addShimsToPath,
@@ -67,7 +73,7 @@ import {
 } from '../lib/shims.js';
 import { parseHookManifest, registerHooksToSettings } from '../lib/hooks.js';
 import { setHelpSections } from '../lib/help.js';
-import { select } from '@inquirer/prompts';
+import { select, confirm } from '@inquirer/prompts';
 import { isInteractiveTerminal, isPromptCancelled } from './utils.js';
 
 /**
@@ -441,6 +447,56 @@ export function registerPullCommand(program: Command): void {
             }
             switchHomeFileSymlinks(agentId, version);
             console.log(chalk.green(`Set ${agentLabel(agent.id)}@${version} as default`));
+          }
+        }
+
+        // Report (and optionally install) any declared CLIs that are missing
+        // from the host. Skipped under -y so non-interactive pulls don't trigger
+        // package-manager prompts.
+        try {
+          const { statuses, errors } = listCliStatus(process.cwd());
+          for (const err of errors) {
+            console.log(chalk.yellow(`  CLI manifest parse error: ${err.file}: ${err.reason}`));
+          }
+          const missing = statuses.filter((s) => !s.installed);
+          if (missing.length > 0) {
+            console.log(chalk.bold('\nDeclared CLIs missing from this host:'));
+            for (const s of missing) {
+              const method = selectInstallMethod(s.manifest);
+              const action = method ? describeMethod(method) : chalk.red('no compatible install method');
+              console.log(`  ${chalk.cyan(s.manifest.name.padEnd(20))} ${chalk.gray(action)}`);
+            }
+            console.log('');
+
+            if (!skipPrompts) {
+              const proceed = await confirm({ message: `Install ${missing.length} missing CLI(s) now?`, default: true });
+              if (proceed) {
+                for (const s of missing) {
+                  console.log(chalk.bold(`\n→ ${s.manifest.name}`));
+                  const result = installCli(s.manifest);
+                  if (result.error) {
+                    console.log(chalk.red(`  ${result.error}`));
+                    continue;
+                  }
+                  if (result.installed) {
+                    console.log(chalk.green(`  installed`));
+                    if (s.manifest.postInstall) {
+                      console.log(chalk.gray(s.manifest.postInstall.trim().split('\n').map((l) => '  ' + l).join('\n')));
+                    }
+                  } else {
+                    console.log(chalk.yellow(`  install ran but \`${s.manifest.check}\` still fails`));
+                  }
+                }
+              } else {
+                console.log(chalk.gray(`Skipped. Run 'agents cli install' later.`));
+              }
+            } else {
+              console.log(chalk.gray(`Run 'agents cli install' to install them.`));
+            }
+          }
+        } catch (err) {
+          if (!isPromptCancelled(err)) {
+            console.log(chalk.yellow(`CLI install skipped: ${(err as Error).message}`));
           }
         }
 

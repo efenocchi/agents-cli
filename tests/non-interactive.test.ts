@@ -215,7 +215,9 @@ describe('non-interactive CLI usage', () => {
     const combined = `${result.stdout}\n${result.stderr}`;
 
     expect(result.status).toBe(0);
-    expect(combined).toContain(`Removed Claude@${version}`);
+    expect(combined).toContain(`Moved Claude@${version} to trash`);
+    expect(combined).toContain('Sessions remain accessible via `agents sessions`.');
+    expect(combined).toContain(`Restore with: agents trash restore claude@${version}`);
     expect(fs.existsSync(versionDir)).toBe(false);
 
     const trashAgentDir = path.join(home, '.agents', '.history', 'trash', 'versions', 'claude', version);
@@ -244,7 +246,7 @@ describe('non-interactive CLI usage', () => {
     const combined = `${result.stdout}\n${result.stderr}`;
 
     expect(result.status).toBe(0);
-    expect(combined).toContain(`Removed Codex@${version}`);
+    expect(combined).toContain(`Moved Codex@${version} to trash`);
     expect(fs.existsSync(versionDir)).toBe(false);
     expect(fs.existsSync(path.join(home, '.agents', '.history', 'trash', 'versions', 'codex', version))).toBe(true);
   });

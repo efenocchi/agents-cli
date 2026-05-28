@@ -51,6 +51,7 @@ import {
   getActuallySyncedResources,
   getNewResources,
   hasNewResources,
+  printTrashFooter,
   type ResourceSelection,
 } from '../lib/versions.js';
 import {
@@ -157,6 +158,7 @@ async function versionPruneAction(
   commandName: VersionPruneVerb,
 ): Promise<void> {
   const isProject = options.project;
+  const moved: Array<{ agent: AgentId; version: string }> = [];
 
   for (const spec of specs) {
     const parsed = parseAgentSpec(spec);
@@ -209,7 +211,8 @@ async function versionPruneAction(
           const versionDir = getVersionDir(agent, v);
           removeVersion(agent, v);
           fixSessionFilePaths(agent, v, versionDir);
-          console.log(chalk.green(`Removed ${agentLabel(agentConfig.id)}@${v}`));
+          console.log(chalk.green(`Moved ${agentLabel(agentConfig.id)}@${v} to trash`));
+          moved.push({ agent, version: v });
         }
 
         if (globalDefault && toRemove.includes(globalDefault)) {
@@ -234,7 +237,8 @@ async function versionPruneAction(
       const versionDir = getVersionDir(agent, version);
       removeVersion(agent, version);
       fixSessionFilePaths(agent, version, versionDir);
-      console.log(chalk.green(`Removed ${agentLabel(agentConfig.id)}@${version}`));
+      console.log(chalk.green(`Moved ${agentLabel(agentConfig.id)}@${version} to trash`));
+      moved.push({ agent, version });
 
       const remaining = listInstalledVersions(agent);
       if (remaining.length === 0) {
@@ -254,6 +258,8 @@ async function versionPruneAction(
       }
     }
   }
+
+  printTrashFooter(moved);
 }
 
 function configureVersionPruneCommand(cmd: Command, commandName: VersionPruneVerb): void {

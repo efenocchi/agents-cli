@@ -1339,6 +1339,22 @@ export function removeVersion(agent: AgentId, version: string): boolean {
 }
 
 /**
+ * Print the standard footer after one or more versions were soft-deleted to
+ * trash. Reminds the user that sessions stay readable and how to restore.
+ */
+export function printTrashFooter(moved: Array<{ agent: AgentId; version: string }>): void {
+  if (moved.length === 0) return;
+  console.log();
+  console.log(chalk.gray('Sessions remain accessible via `agents sessions`.'));
+  if (moved.length === 1) {
+    const { agent, version } = moved[0];
+    console.log(chalk.gray(`Restore with: agents trash restore ${agent}@${version}`));
+  } else {
+    console.log(chalk.gray('Restore with: agents trash restore <agent>@<version>  (run `agents trash list` to see)'));
+  }
+}
+
+/**
  * Remove all versions of an agent. Preserves each version's `home/` directory
  * so conversation history is never deleted; the per-version folders (now
  * containing only `home/`) remain under the agent dir.
