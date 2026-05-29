@@ -21,6 +21,7 @@ import {
   readDaemonPid,
   readDaemonLog,
 } from '../lib/daemon.js';
+import { humanizeCron, humanizeNextRun, formatRepoLink } from '../lib/routines-format.js';
 import {
   listJobs as listAllJobs,
   deleteJob,
@@ -160,21 +161,51 @@ export function registerRoutinesCommands(program: Command): void {
 
       console.log(chalk.bold('Scheduled Jobs\n'));
 
-      const header = `  ${'Name'.padEnd(24)} ${'Agent'.padEnd(10)} ${'Schedule'.padEnd(20)} ${'Enabled'.padEnd(10)} ${'Next Run'.padEnd(24)} ${'Last Status'}`;
+      // OSC 8 hyperlink helper — renders as a clickable link in supporting terminals.
+      // In terminals that do not support OSC 8 the escape sequences are ignored and
+      // the label is displayed as plain text.
+      const link = (label: string, url: string | null): string =>
+        url ? `\x1b]8;;${url}\x07${label}\x1b]8;;\x07` : label;
+
+      const now = new Date();
+
+      const NAME_W = 24;
+      const AGENT_W = 10;
+      const REPO_W = 24;
+      const SCHED_W = 22;
+      const ENABLED_W = 10;
+      const NEXT_W = 22;
+
+      const header =
+        `  ${'Name'.padEnd(NAME_W)} ${'Agent'.padEnd(AGENT_W)} ${'Repo'.padEnd(REPO_W)} ${'Schedule'.padEnd(SCHED_W)} ${'Enabled'.padEnd(ENABLED_W)} ${'Next Run'.padEnd(NEXT_W)} Last Status`;
       console.log(chalk.gray(header));
-      console.log(chalk.gray('  ' + '-'.repeat(110)));
+      console.log(chalk.gray('  ' + '-'.repeat(NAME_W + AGENT_W + REPO_W + SCHED_W + ENABLED_W + NEXT_W + 20)));
 
       for (const job of jobs) {
         const nextRun = scheduler.getNextRun(job.name);
-        const nextStr = nextRun ? nextRun.toLocaleString() : '-';
+        const nextStr = humanizeNextRun(nextRun ?? null, now, job.timezone);
+        const schedStr = humanizeCron(job.schedule, job.timezone);
         const latestRun = getLatestRun(job.name);
         const lastStatus = latestRun?.status || '-';
 
+        const repoInfo = formatRepoLink(job.repo);
+        const repoCell = link(repoInfo.display, repoInfo.href);
+        // Pad based on the display string, not the raw cell (which may include escape codes).
+        const repoPadding = Math.max(0, REPO_W - repoInfo.display.length);
+
         const enabledStr = job.enabled ? chalk.green('yes') : chalk.gray('no');
-        const statusColor = lastStatus === 'completed' ? chalk.green : lastStatus === 'failed' ? chalk.red : lastStatus === 'timeout' ? chalk.yellow : chalk.gray;
+        // chalk adds escape codes; pad the raw word and let chalk wrap it.
+        const enabledWord = job.enabled ? 'yes' : 'no';
+        const enabledPad = Math.max(0, ENABLED_W - enabledWord.length);
+
+        const statusColor =
+          lastStatus === 'completed' ? chalk.green
+          : lastStatus === 'failed' ? chalk.red
+          : lastStatus === 'timeout' ? chalk.yellow
+          : chalk.gray;
 
         console.log(
-          `  ${chalk.cyan(job.name.padEnd(24))} ${job.agent.padEnd(10)} ${job.schedule.padEnd(20)} ${enabledStr.padEnd(10 + 10)} ${chalk.gray(nextStr.padEnd(24))} ${statusColor(lastStatus)}`
+          `  ${chalk.cyan(job.name.padEnd(NAME_W))} ${job.agent.padEnd(AGENT_W)} ${repoCell}${' '.repeat(repoPadding)} ${schedStr.padEnd(SCHED_W)} ${enabledStr}${' '.repeat(enabledPad)} ${chalk.gray(nextStr.padEnd(NEXT_W))} ${statusColor(lastStatus)}`
         );
       }
 
