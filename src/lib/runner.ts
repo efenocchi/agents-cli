@@ -44,7 +44,7 @@ export function buildJobCommand(config: JobConfig, resolvedPrompt: string): stri
   // appendModelAndReasoning is intentionally skipped — the workflow frontmatter
   // owns model selection. No --timeout flag: the runner enforces its own SIGTERM/SIGKILL.
   if (config.workflow) {
-    const cmd = ['agents', 'run', config.workflow, resolvedPrompt, '--mode', config.mode, '--non-interactive'];
+    const cmd = ['agents', 'run', config.workflow, resolvedPrompt, '--mode', config.mode];
     return cmd;
   }
 
