@@ -73,7 +73,7 @@
     "npm": ">=9"
   },
   "dependencies": {
-    "@inquirer/prompts": "7.10.1",
+    "@inquirer/prompts": "8.5.1",
     "@types/proper-lockfile": "4.1.4",
     "@xterm/headless": "6.0.0",
     "@zed-industries/agent-client-protocol": "0.4.5",
