@@ -35,6 +35,7 @@ export interface JobConfig {
   enabled: boolean;
   prompt: string;
   timezone?: string;
+  repo?: string;
   variables?: Record<string, string>;
   sandbox?: boolean;
   allow?: JobAllowConfig;
