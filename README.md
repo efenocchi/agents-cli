@@ -156,7 +156,7 @@ Supports plan (read-only) and edit modes, effort levels, JSON output for scripti
 agents run claude "review this diff" --acp --json
 ```
 
-`--acp` routes through the [Agent Client Protocol](https://agentclientprotocol.com/) so you get a unified event stream -- `agent_message_chunk`, `tool_call`, `plan_update`, `stop_reason` -- instead of writing a parser per CLI. File writes and shell commands flow through agents-cli, which means `--mode plan` becomes a real sandbox: the write RPC is denied, not just unused.
+`--acp` routes through the [Agent Client Protocol](https://github.com/zed-industries/agent-client-protocol) so you get a unified event stream -- `agent_message_chunk`, `tool_call`, `plan_update`, `stop_reason` -- instead of writing a parser per CLI. File writes and shell commands flow through agents-cli, which means `--mode plan` becomes a real sandbox: the write RPC is denied, not just unused.
 
 ACP adapters are documented for claude, codex, gemini, cursor, opencode, openclaw, and grok. Other harnesses keep running on the direct-exec path.
 
@@ -283,7 +283,7 @@ A workflow is a directory:
 ---
 name: Code Review
 description: Evidence-grounded PR review with file:line citations.
-model: claude-opus-4-7
+model: opus
 tools:
   - Read
   - Grep
@@ -435,6 +435,9 @@ agents browser profiles create cloud \
 ---
 
 ## Secrets
+
+> **Platform:** `agents secrets` requires macOS Keychain or Linux libsecret.
+> On Windows (non-WSL), use environment variables or a `.env` file instead.
 
 ```bash
 # API keys in Keychain, not in .env files.
