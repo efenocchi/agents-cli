@@ -95,7 +95,7 @@ async function pickJob(
       message,
       choices: jobs.map((job) => ({
         value: job.name,
-        name: `${job.name} ${chalk.gray(`(${job.agent}, ${job.schedule})`)}`,
+        name: `${job.name} ${chalk.gray(`(${job.workflow ? `wf:${job.workflow}` : job.agent}, ${job.schedule})`)}`,
       })),
     });
   } catch (err) {
@@ -204,8 +204,11 @@ export function registerRoutinesCommands(program: Command): void {
           : lastStatus === 'timeout' ? chalk.yellow
           : chalk.gray;
 
+        const agentLabelPadded = job.workflow
+          ? chalk.magenta(`wf:${job.workflow}`.padEnd(10))
+          : (job.agent || '').padEnd(10);
         console.log(
-          `  ${chalk.cyan(job.name.padEnd(NAME_W))} ${job.agent.padEnd(AGENT_W)} ${repoCell}${' '.repeat(repoPadding)} ${schedStr.padEnd(SCHED_W)} ${enabledStr}${' '.repeat(enabledPad)} ${chalk.gray(nextStr.padEnd(NEXT_W))} ${statusColor(lastStatus)}`
+          `  ${chalk.cyan(job.name.padEnd(NAME_W))} ${agentLabelPadded} ${repoCell}${' '.repeat(repoPadding)} ${schedStr.padEnd(SCHED_W)} ${enabledStr}${' '.repeat(enabledPad)} ${chalk.gray(nextStr.padEnd(NEXT_W))} ${statusColor(lastStatus)}`
         );
       }
 
@@ -218,22 +221,29 @@ export function registerRoutinesCommands(program: Command): void {
     .description('Create a new routine from a YAML file or inline flags. Starts the scheduler automatically if it is not already running.')
     .option('-s, --schedule <cron>', 'Cron schedule in standard format (5 fields: minute hour day month weekday)')
     .option('-a, --agent <agent>', 'Which agent runs this routine: claude, codex, gemini, cursor, or opencode')
+    .option('--workflow <name>', 'Run an installed workflow (~/.agents/workflows/<name>) via `agents run`. Mutually exclusive with --agent.')
     .option('-p, --prompt <prompt>', 'Task instruction for the agent')
     .option('-m, --mode <mode>', 'Execution mode: plan (read-only) or edit (can write files)', 'plan')
     .option('-e, --effort <effort>', 'Reasoning effort: low | medium | high | xhigh | max | auto', 'auto')
-    .option('-t, --timeout <timeout>', 'Kill the agent if it runs longer than this (e.g., 30m, 2h)', '30m')
+    .option('-t, --timeout <timeout>', 'Kill the agent if it runs longer than this (e.g., 10m, 2h, 3d, 1w; max 1w)', '10m')
     .option('--timezone <tz>', 'Interpret schedule in this timezone (e.g., America/Los_Angeles)')
     .option('--at <time>', 'One-shot mode: run once at this time (e.g., "14:30" or "2026-02-24 09:00"), then disable')
     .option('--disabled', 'Create the routine but keep it paused (enable later with resume)')
     .action(async (nameOrPath: string | undefined, options) => {
       // Check if inline mode (has flags) or file mode
-      const hasInlineFlags = options.schedule || options.agent || options.prompt || options.at;
+      const hasInlineFlags = options.schedule || options.agent || options.workflow || options.prompt || options.at;
 
       if (hasInlineFlags) {
         // Inline mode: create job from flags
         if (!nameOrPath) {
           console.log(chalk.red('Job name is required'));
           console.log(chalk.gray('Usage: agents routines add <name> --schedule "..." --agent <agent> --prompt "..."'));
+          process.exit(1);
+        }
+
+        // Validate mutually exclusive --agent / --workflow
+        if (options.agent && options.workflow) {
+          console.log(chalk.red('--agent and --workflow are mutually exclusive; specify exactly one'));
           process.exit(1);
         }
 
@@ -257,8 +267,8 @@ export function registerRoutinesCommands(program: Command): void {
           process.exit(1);
         }
 
-        if (!options.agent) {
-          console.log(chalk.red('Agent is required (use --agent)'));
+        if (!options.agent && !options.workflow) {
+          console.log(chalk.red('An agent or workflow is required (use --agent or --workflow)'));
           process.exit(1);
         }
 
@@ -271,6 +281,7 @@ export function registerRoutinesCommands(program: Command): void {
           name: nameOrPath,
           schedule,
           agent: options.agent,
+          ...(options.workflow ? { workflow: options.workflow } : {}),
           mode: options.mode,
           effort: options.effort,
           timeout: options.timeout,
@@ -335,7 +346,7 @@ export function registerRoutinesCommands(program: Command): void {
         const config: JobConfig = {
           mode: 'plan',
           effort: 'auto',
-          timeout: '30m',
+          timeout: '10m',
           enabled: true,
           ...parsed,
         } as JobConfig;
@@ -489,7 +500,8 @@ export function registerRoutinesCommands(program: Command): void {
         process.exit(1);
       }
 
-      console.log(chalk.bold(`Running job '${name}' (agent: ${job.agent}, mode: ${job.mode})\n`));
+      const runLabel = job.workflow ? `workflow: ${job.workflow}` : `agent: ${job.agent}`;
+      console.log(chalk.bold(`Running job '${name}' (${runLabel}, mode: ${job.mode})\n`));
       const spinner = ora('Executing...').start();
 
       try {

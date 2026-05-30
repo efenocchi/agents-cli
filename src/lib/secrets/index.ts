@@ -59,8 +59,9 @@ export function serializeRef(ref: SecretRef): string {
 function assertSupportedPlatform(): void {
   if (process.platform !== 'darwin' && process.platform !== 'linux') {
     throw new Error(
-      'Secure credential storage requires macOS or Linux. ' +
-      'On Windows, use environment variables or .env files instead.'
+      'agents secrets requires macOS Keychain or Linux libsecret.\n' +
+      'Windows is not supported — use environment variables or a .env file instead.\n' +
+      'WSL2 is supported (libsecret via gnome-keyring).'
     );
   }
 }
