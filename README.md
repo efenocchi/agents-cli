@@ -353,7 +353,8 @@ Plugins live in the user repo (`~/.agents/plugins/`), not inside any single vers
 Give agents access to a real browser — no relay extension, no cloud service, no Playwright getting blocked.
 
 ```bash
-# Create an isolated profile for automation
+# Create an isolated profile pointing at a real browser on your machine
+# (chrome, comet, brave, chromium, edge, or custom).
 agents browser profiles create work --browser chrome
 
 # Start a task once, then bind it to this shell — every later command picks it up.
