@@ -339,13 +339,20 @@ export function getActuallySyncedResources(agent: AgentId, version: string, opti
     promptcuts: false,
   };
 
-  // Commands - check what files exist in version home
-  const commandsDir = path.join(configDir, agentConfig.commandsSubdir);
-  if (fs.existsSync(commandsDir)) {
-    const ext = agentConfig.format === 'toml' ? '.toml' : '.md';
-    result.commands = fs.readdirSync(commandsDir)
-      .filter(f => f.endsWith(ext))
-      .map(f => f.replace(new RegExp(`\\${ext}$`), ''));
+  // Commands - check what files exist in version home.
+  // For agent/version pairs that store commands as converted skills (e.g. Codex >= 0.117.0),
+  // detect them via the agents_command marker in skills/<name>/SKILL.md — otherwise the
+  // diff falsely reports every command as "new" every run and re-prompts on `agents view`.
+  if (shouldInstallCommandAsSkill(agent, version)) {
+    result.commands = listCommandSkillsInVersion(path.join(configDir));
+  } else {
+    const commandsDir = path.join(configDir, agentConfig.commandsSubdir);
+    if (fs.existsSync(commandsDir)) {
+      const ext = agentConfig.format === 'toml' ? '.toml' : '.md';
+      result.commands = fs.readdirSync(commandsDir)
+        .filter(f => f.endsWith(ext))
+        .map(f => f.replace(new RegExp(`\\${ext}$`), ''));
+    }
   }
 
   // Skills - check what directories exist AND content matches central source
@@ -611,11 +618,17 @@ export function hasNewResources(diff: AvailableResources, agent?: AgentId, versi
  * Build a summary string of new resources.
  * E.g., "2 commands, 5 permission groups"
  */
-function buildNewResourcesSummary(newResources: AvailableResources, agent: AgentId): string {
+function buildNewResourcesSummary(newResources: AvailableResources, agent: AgentId, version?: string): string {
   const agentConfig = AGENTS[agent];
   const parts: string[] = [];
 
-  if (newResources.commands.length > 0 && COMMANDS_CAPABLE_AGENTS.includes(agent)) {
+  // Use version-aware gates so Codex >= 0.117.0 (which converts commands to skills) doesn't
+  // double-count and so "16 commands" never appears in the summary when commands have
+  // already been emitted as skills in the version home.
+  const commandsApply = version ? supports(agent, 'commands', version).ok : COMMANDS_CAPABLE_AGENTS.includes(agent);
+  const commandsAsSkills = version ? shouldInstallCommandAsSkill(agent, version) : false;
+
+  if (newResources.commands.length > 0 && (commandsApply || commandsAsSkills)) {
     parts.push(`${newResources.commands.length} command${newResources.commands.length === 1 ? '' : 's'}`);
   }
   if (newResources.skills.length > 0) {
@@ -624,7 +637,7 @@ function buildNewResourcesSummary(newResources: AvailableResources, agent: Agent
   if (newResources.hooks.length > 0 && agentConfig.supportsHooks) {
     parts.push(`${newResources.hooks.length} hook${newResources.hooks.length === 1 ? '' : 's'}`);
   }
-  if (newResources.memory.length > 0 && COMMANDS_CAPABLE_AGENTS.includes(agent)) {
+  if (newResources.memory.length > 0 && (commandsApply || commandsAsSkills)) {
     parts.push(`${newResources.memory.length} rule file${newResources.memory.length === 1 ? '' : 's'}`);
   }
   if (newResources.mcp.length > 0 && MCP_CAPABLE_AGENTS.includes(agent)) {
@@ -652,10 +665,18 @@ function buildNewResourcesSummary(newResources: AvailableResources, agent: Agent
  */
 export async function promptNewResourceSelection(
   agent: AgentId,
-  newResources: AvailableResources
+  newResources: AvailableResources,
+  version?: string
 ): Promise<ResourceSelection | null> {
   const agentConfig = AGENTS[agent];
   const selection: ResourceSelection = {};
+
+  // Version-aware gates. When version is known, prefer per-version capability checks; the
+  // commands branch is allowed when either native commands are supported OR when the
+  // version emits commands as converted skills (Codex >= 0.117.0).
+  const commandsApply = version ? supports(agent, 'commands', version).ok : COMMANDS_CAPABLE_AGENTS.includes(agent);
+  const commandsAsSkills = version ? shouldInstallCommandAsSkill(agent, version) : false;
+  const commandsBranch = commandsApply || commandsAsSkills;
 
   // Get permission group info for display
   const permissionGroups = discoverPermissionGroups();
@@ -663,7 +684,7 @@ export async function promptNewResourceSelection(
   const totalNewPermissionRules = newPermissionGroups.reduce((sum, g) => sum + g.ruleCount, 0);
 
   // Build the summary
-  const summary = buildNewResourcesSummary(newResources, agent);
+  const summary = buildNewResourcesSummary(newResources, agent, version);
   console.log(chalk.cyan(`\nNew resources available:`));
   console.log(chalk.gray(`  ${summary}`));
 
@@ -684,10 +705,10 @@ export async function promptNewResourceSelection(
 
   if (action === 'all') {
     // Sync all new resources
-    if (newResources.commands.length > 0 && COMMANDS_CAPABLE_AGENTS.includes(agent)) selection.commands = newResources.commands;
+    if (newResources.commands.length > 0 && commandsBranch) selection.commands = newResources.commands;
     if (newResources.skills.length > 0) selection.skills = newResources.skills;
     if (newResources.hooks.length > 0 && agentConfig.supportsHooks) selection.hooks = newResources.hooks;
-    if (newResources.memory.length > 0 && COMMANDS_CAPABLE_AGENTS.includes(agent)) selection.memory = newResources.memory;
+    if (newResources.memory.length > 0 && commandsBranch) selection.memory = newResources.memory;
     if (newResources.mcp.length > 0 && MCP_CAPABLE_AGENTS.includes(agent)) selection.mcp = newResources.mcp;
     if (newResources.permissions.length > 0 && PERMISSIONS_CAPABLE_AGENTS.includes(agent)) selection.permissions = newResources.permissions;
     if (newResources.subagents.length > 0 && SUBAGENT_CAPABLE_AGENTS.includes(agent)) selection.subagents = newResources.subagents;
@@ -697,7 +718,7 @@ export async function promptNewResourceSelection(
   }
 
   // Select specific items for each category
-  if (newResources.commands.length > 0 && COMMANDS_CAPABLE_AGENTS.includes(agent)) {
+  if (newResources.commands.length > 0 && commandsBranch) {
     const selected = await checkbox({
       message: 'Select new commands to sync:',
       choices: newResources.commands.map(c => ({ name: c, value: c, checked: true })),
@@ -721,7 +742,7 @@ export async function promptNewResourceSelection(
     if (selected.length > 0) selection.hooks = selected;
   }
 
-  if (newResources.memory.length > 0 && COMMANDS_CAPABLE_AGENTS.includes(agent)) {
+  if (newResources.memory.length > 0 && commandsBranch) {
     const selected = await checkbox({
       message: 'Select new rule files to sync:',
       choices: newResources.memory.map(m => ({ name: m, value: m, checked: true })),
