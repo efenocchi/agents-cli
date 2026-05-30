@@ -144,8 +144,12 @@ export function hasKeychainToken(item: string, sync = false): boolean {
   if (backend) return backend.has(item, sync);
   assertSupportedPlatform();
   if (isLinux()) return linuxBackend.has(item, sync);
-  // macOS: Try security first (no prompts for local items), fall back to binary for synced items.
-  if (spawnSync('security', ['find-generic-password', '-a', os.userInfo().username, '-s', item, '-w'], {
+  // macOS: `security find-generic-password` *without* `-w` only reads item
+  // metadata, never the value, so it doesn't consult the item's ACL — no
+  // prompt. The previous code passed `-w`, which forced decryption and
+  // triggered the "security wants to access keychain" sheet on every item
+  // the helper had written. Existence checks never need the value.
+  if (spawnSync('security', ['find-generic-password', '-a', os.userInfo().username, '-s', item], {
     stdio: ['ignore', 'pipe', 'pipe'],
   }).status === 0) return true;
   // Fallback: binary searches both synced and non-synced via kSecAttrSynchronizableAny
@@ -294,12 +298,21 @@ export function deleteKeychainToken(item: string, sync = false): boolean {
   if (backend) return backend.delete(item, sync);
   assertSupportedPlatform();
   if (isLinux()) return linuxBackend.delete(item, sync);
-  // macOS: Try security first (no prompts for local items), fall back to binary for synced items.
-  if (!sync && spawnSync('security', ['delete-generic-password', '-a', os.userInfo().username, '-s', item], {
-    stdio: ['ignore', 'pipe', 'pipe'],
-  }).status === 0) return true;
-  // Fallback: binary deletes synced items via kSecAttrSynchronizableAny
-  const bin = ensureKeychainHelper();
+  // macOS: delete through the signed helper FIRST. `security delete-generic-password`
+  // prompts for keychain-password authorization on any item whose ACL doesn't list
+  // `security` — which is every item the helper writes. Same reasoning as
+  // getKeychainToken's helper-first ordering above. The helper also handles the
+  // synced keychain via kSecAttrSynchronizableAny in one call.
+  let bin: string;
+  try {
+    bin = ensureKeychainHelper();
+  } catch {
+    // Helper bundle missing (dev build). Fall back to security; it can only
+    // touch non-synced items and may prompt for items it didn't write.
+    return spawnSync('security', ['delete-generic-password', '-a', os.userInfo().username, '-s', item], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).status === 0;
+  }
   return spawnSync(bin, ['delete', item, os.userInfo().username], {
     stdio: ['ignore', 'pipe', 'pipe'],
   }).status === 0;
