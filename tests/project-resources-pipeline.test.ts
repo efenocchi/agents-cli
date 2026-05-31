@@ -236,7 +236,7 @@ describe('project-resources: resolveResource project precedence', () => {
 });
 
 describe('project-resources: syncResourcesToVersion orphan-sweep', () => {
-  // RUSH-670 — when the agent shim runs in project A (which has
+  // When the agent shim runs in project A (which has
   // .agents/commands/proj-a-only.md), then later in project B (which has no
   // .agents/), the project-A command must NOT linger in the shared version
   // home and fire silently inside project B. This test exercises the sweep

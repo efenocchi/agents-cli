@@ -518,7 +518,7 @@ export interface BrowserProfileConfig {
   viewport?: { width: number; height: number };
   /** Directory holding source-side JSONL logs (e.g. ~/.rush/logs). */
   logDir?: string;
-  /** Optional SSH host where logDir lives, e.g. "user@mac-mini". */
+  /** Optional SSH host where logDir lives, e.g. "user@remote-host". */
   logHost?: string;
 }
 

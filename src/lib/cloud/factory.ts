@@ -17,7 +17,7 @@ import type {
 /**
  * Factory/Droid cloud provider — stub for Phase 2.
  *
- * Integration path: `droid daemon` running on a remote machine (mac-mini, cloud VM, k8s pod).
+ * Integration path: `droid daemon` running on a remote machine (workstation, cloud VM, k8s pod).
  * Dispatch via HTTP to the daemon, stream output, cancel via HTTP DELETE.
  *
  * Not yet implemented because:

@@ -78,7 +78,7 @@ Examples:
   agents cloud run "add pytest fixtures for the new billing module" --provider codex --env env_a1b2c3 --agent codex --timeout 30m
 
   # Factory pod targeting a specific computer (Droid)
-  agents cloud run "QA the new onboarding flow end-to-end" --provider factory --computer mac-mini-1 --agent droid
+  agents cloud run "QA the new onboarding flow end-to-end" --provider factory --computer linux-vm-1 --agent droid
 
   # See every cloud task you've dispatched (most recent first)
   agents cloud list

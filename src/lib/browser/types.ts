@@ -2,15 +2,15 @@ export type BrowserType = 'chrome' | 'comet' | 'chromium' | 'brave' | 'edge' | '
 
 /**
  * A single named endpoint preset within a profile. Lets one profile cover
- * the local + remote variants of the same app (e.g. Rush on this Mac vs.
- * Rush on mac-mini) instead of forcing two parallel profiles.
+ * the local + remote variants of the same app (e.g. an Electron app on this
+ * Mac vs. on a remote host) instead of forcing two parallel profiles.
  *
  * Per-endpoint overrides take precedence over profile-level fields.
  */
 export interface EndpointPreset {
   /** CDP URL — `cdp://host:port` or `ssh://host?port=N` */
   target: string;
-  /** Override the profile-level binary (e.g. mac-mini has no local binary). */
+  /** Override the profile-level binary (e.g. a remote host has no local binary). */
   binary?: string;
   /** Override the profile-level targetFilter (Electron app builds may diverge). */
   targetFilter?: string;
@@ -40,7 +40,7 @@ export interface BrowserProfile {
   viewport?: { width: number; height: number; x?: number; y?: number };
   /** Directory holding source-side JSONL logs (e.g. ~/.rush/logs). */
   logDir?: string;
-  /** Optional SSH host where logDir lives, e.g. "user@mac-mini". */
+  /** Optional SSH host where logDir lives, e.g. "user@remote-host". */
   logHost?: string;
 }
 

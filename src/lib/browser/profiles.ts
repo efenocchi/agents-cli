@@ -327,12 +327,12 @@ export function resolveEndpoint(
  * Returns undefined for endpoint shapes that don't carry a port (e.g. ws:// without one).
  *
  * Ports are scoped by host: a `cdp://127.0.0.1:9222` profile (local Chrome on
- * this machine) and an `ssh://mac-mini:9222` profile (Comet on mac-mini)
- * point at different physical ports — the host disambiguates them.
+ * this machine) and an `ssh://remote-host:9222` profile (Comet on a remote
+ * host) point at different physical ports — the host disambiguates them.
  *
  * Accepts both `scheme://host:port` and `scheme://host?port=N` shapes (the
  * latter is the documented form in `types.ts` for `ssh://`). Without this,
- * `ssh://mac-mini?port=18805` would silently fall back to 9222 and every
+ * `ssh://remote-host?port=18805` would silently fall back to 9222 and every
  * `?port=`-style SSH profile would collide on creation.
  */
 export function extractConfiguredEndpoint(

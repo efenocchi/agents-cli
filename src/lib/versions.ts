@@ -1917,8 +1917,8 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
   // not pass an explicit `selection`. Callers that pass explicit selections
   // are using the incremental/additive API (sync exactly these; leave others
   // alone), so the sweep would be a contract violation there. The
-  // cross-project leak fixed by RUSH-670 always comes from the no-selection
-  // shim auto-sync at launch.
+  // cross-project leak always comes from the no-selection shim auto-sync at
+  // launch.
   if (!userPassedSelection && COMMANDS_CAPABLE_AGENTS.includes(agent) && !shouldInstallCommandAsSkill(agent, version)) {
     const commandsTargetSweep = path.join(agentDir, agentConfig.commandsSubdir);
     if (fs.existsSync(commandsTargetSweep)) {
