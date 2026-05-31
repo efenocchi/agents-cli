@@ -104,7 +104,7 @@ const CaptionOverlay: React.FC<{
   );
 };
 
-// Finale: Phoenix logo + agents-cli wordmark + CTA.
+// Finale: agents 'a' mark + wordmark + CTA.
 const Finale: React.FC<{ frameInScene: number; fps: number }> = ({
   frameInScene,
   fps,
@@ -166,7 +166,7 @@ const Finale: React.FC<{ frameInScene: number; fps: number }> = ({
           }}
         />
         <Img
-          src={staticFile("phoenix-logo.png")}
+          src={staticFile("agents-logo.png")}
           style={{
             width: "100%",
             height: "100%",
@@ -202,7 +202,7 @@ const Finale: React.FC<{ frameInScene: number; fps: number }> = ({
           marginTop: -8,
         }}
       >
-        the open client for AI coding agents
+        One CLI for every coding agent.
       </div>
 
       <div
