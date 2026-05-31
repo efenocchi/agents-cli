@@ -55,3 +55,6 @@ scripts/scrub-history.sh
 
 # Plugin executables — built/installed artifacts, never committed
 **/plugins/*/bin/
+
+# Cloudflare Worker local state
+**/.wrangler/

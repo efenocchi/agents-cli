@@ -95,7 +95,7 @@ const CaptionOverlay: React.FC<{
             width: 14,
             height: 28,
             marginLeft: 4,
-            background: cursorOn ? "#b3ff0c" : "transparent",
+            background: cursorOn ? "#a3e635" : "transparent",
             transform: "translateY(2px)",
           }}
         />
@@ -104,7 +104,7 @@ const CaptionOverlay: React.FC<{
   );
 };
 
-// Finale: Phoenix logo + agents-cli wordmark + CTA.
+// Finale: agents 'a' mark + wordmark + CTA.
 const Finale: React.FC<{ frameInScene: number; fps: number }> = ({
   frameInScene,
   fps,
@@ -161,12 +161,12 @@ const Finale: React.FC<{ frameInScene: number; fps: number }> = ({
           style={{
             position: "absolute",
             inset: -40,
-            background: `radial-gradient(circle, rgba(179,255,12,${0.08 + glowPulse * 0.06}) 0%, transparent 65%)`,
+            background: `radial-gradient(circle, rgba(163,230,53,${0.08 + glowPulse * 0.06}) 0%, transparent 65%)`,
             filter: "blur(20px)",
           }}
         />
         <Img
-          src={staticFile("phoenix-logo.png")}
+          src={staticFile("agents-logo.png")}
           style={{
             width: "100%",
             height: "100%",
@@ -202,7 +202,7 @@ const Finale: React.FC<{ frameInScene: number; fps: number }> = ({
           marginTop: -8,
         }}
       >
-        the open client for AI coding agents
+        One CLI for every coding agent.
       </div>
 
       <div
@@ -211,12 +211,12 @@ const Finale: React.FC<{ frameInScene: number; fps: number }> = ({
           transform: `translateY(${(1 - ctaFade) * 10}px)`,
           fontFamily: "'JetBrains Mono', ui-monospace, monospace",
           fontSize: 22,
-          color: "#b3ff0c",
+          color: "#a3e635",
           marginTop: 32,
           padding: "14px 28px",
-          border: "1px solid rgba(179,255,12,0.3)",
+          border: "1px solid rgba(163,230,53,0.3)",
           borderRadius: 8,
-          background: "rgba(179,255,12,0.04)",
+          background: "rgba(163,230,53,0.04)",
         }}
       >
         $ curl -fsSL agents-cli.sh | sh
@@ -292,7 +292,7 @@ export const AgentsDemo: React.FC = () => {
       <AbsoluteFill
         style={{
           backgroundImage:
-            "linear-gradient(rgba(179,255,12,0.02) 1px, transparent 1px), linear-gradient(90deg, rgba(179,255,12,0.02) 1px, transparent 1px)",
+            "linear-gradient(rgba(163,230,53,0.02) 1px, transparent 1px), linear-gradient(90deg, rgba(163,230,53,0.02) 1px, transparent 1px)",
           backgroundSize: "60px 60px",
           opacity: 0.5,
         }}
