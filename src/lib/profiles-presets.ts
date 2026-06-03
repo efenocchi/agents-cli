@@ -7,6 +7,21 @@
 
 import type { AgentId } from './types.js';
 
+export interface PresetVar {
+  /** Env var name to set in the resulting profile. */
+  envVar: string;
+  /** User-facing prompt text. */
+  prompt: string;
+  /** True for secrets — wizard will mask input and store in keychain. */
+  secret?: boolean;
+  /** Default value (shown in prompt). */
+  default?: string;
+  /** Optional regex pattern — input validated against it. */
+  pattern?: string;
+  /** Optional hint text shown beside the prompt. */
+  hint?: string;
+}
+
 /** A pre-configured profile template for a model provider. */
 export interface Preset {
   name: string;
@@ -14,8 +29,10 @@ export interface Preset {
   provider: string;
   host: AgentId;
   env: Record<string, string>;
+  vars?: PresetVar[];
   authEnvVar: string;
   signupUrl?: string;
+  docPath?: string;
 }
 
 // Model IDs verified against openrouter.ai/api/v1/models on 2026-04-20.
@@ -141,7 +158,159 @@ export const PRESETS: Preset[] = [
       // TODO: confirm model id — antigravity defaults are managed by the CLI itself
     },
   },
+  // ----- Gateway / enterprise / self-hosted -----
+  {
+    name: 'truefoundry',
+    description: 'TrueFoundry AI Gateway routing to Anthropic-compatible backends (often Bedrock). Strips experimental headers + disables prompt caching to satisfy Bedrock validation.',
+    provider: 'truefoundry',
+    host: 'claude',
+    authEnvVar: 'ANTHROPIC_AUTH_TOKEN',
+    signupUrl: 'https://www.truefoundry.com',
+    docPath: 'truefoundry',
+    env: {
+      CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '1',
+      CLAUDE_CODE_ATTRIBUTION_HEADER: '0',
+      DISABLE_PROMPT_CACHING: '1',
+      API_TIMEOUT_MS: '600000',
+      CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: '1',
+    },
+    vars: [
+      {
+        envVar: 'ANTHROPIC_BASE_URL',
+        prompt: 'TrueFoundry gateway base URL',
+        hint: 'e.g. https://<tenant>.truefoundry.cloud/api/llm',
+      },
+      {
+        envVar: 'ANTHROPIC_MODEL',
+        prompt: 'Model ID',
+        hint: 'provider-account/model-id',
+      },
+    ],
+  },
+  {
+    name: 'bedrock',
+    description: 'AWS Bedrock — Claude Code native Bedrock mode.',
+    provider: 'bedrock',
+    host: 'claude',
+    authEnvVar: 'AWS_BEARER_TOKEN_BEDROCK',
+    signupUrl: 'https://aws.amazon.com/bedrock/',
+    env: {
+      CLAUDE_CODE_USE_BEDROCK: '1',
+      DISABLE_PROMPT_CACHING: '1',
+    },
+    vars: [
+      {
+        envVar: 'AWS_REGION',
+        prompt: 'AWS region',
+        default: 'us-east-1',
+      },
+    ],
+  },
+  {
+    name: 'vertex',
+    description: 'Google Vertex AI — Claude Code native Vertex mode.',
+    provider: 'vertex',
+    host: 'claude',
+    authEnvVar: 'GOOGLE_APPLICATION_CREDENTIALS',
+    signupUrl: 'https://cloud.google.com/vertex-ai',
+    env: {
+      CLAUDE_CODE_USE_VERTEX: '1',
+    },
+    vars: [
+      {
+        envVar: 'CLOUD_ML_REGION',
+        prompt: 'Vertex region',
+        default: 'us-east5',
+      },
+      {
+        envVar: 'ANTHROPIC_VERTEX_PROJECT_ID',
+        prompt: 'GCP project ID',
+      },
+    ],
+  },
+  {
+    name: 'foundry',
+    description: 'Microsoft Azure AI Foundry — Anthropic models hosted on Azure. Distinct from TrueFoundry.',
+    provider: 'foundry',
+    host: 'claude',
+    authEnvVar: 'ANTHROPIC_FOUNDRY_API_KEY',
+    signupUrl: 'https://ai.azure.com',
+    env: {
+      CLAUDE_CODE_USE_FOUNDRY: '1',
+    },
+    vars: [
+      {
+        envVar: 'ANTHROPIC_FOUNDRY_BASE_URL',
+        prompt: 'Azure AI Foundry base URL',
+        hint: '<resource>.services.ai.azure.com/anthropic',
+      },
+    ],
+  },
+  {
+    name: 'litellm',
+    description: 'LiteLLM proxy in Anthropic-compatible mode.',
+    provider: 'litellm',
+    host: 'claude',
+    authEnvVar: 'ANTHROPIC_AUTH_TOKEN',
+    env: {
+      API_TIMEOUT_MS: '600000',
+    },
+    vars: [
+      { envVar: 'ANTHROPIC_BASE_URL', prompt: 'LiteLLM base URL' },
+      { envVar: 'ANTHROPIC_MODEL', prompt: 'Model ID' },
+    ],
+  },
+  {
+    name: 'vllm',
+    description: 'Self-hosted vLLM with native Anthropic-compatible endpoint.',
+    provider: 'vllm',
+    host: 'claude',
+    authEnvVar: 'ANTHROPIC_AUTH_TOKEN',
+    env: {
+      API_TIMEOUT_MS: '600000',
+    },
+    vars: [
+      {
+        envVar: 'ANTHROPIC_BASE_URL',
+        prompt: 'vLLM base URL',
+        default: 'http://127.0.0.1:8000',
+      },
+      { envVar: 'ANTHROPIC_MODEL', prompt: 'Model ID' },
+    ],
+  },
+  {
+    name: 'ollama',
+    description: 'Local Ollama via Codex CLI (OpenAI-compatible). Codex host because Anthropic translation through CCR/LiteLLM drops tool_use.',
+    provider: 'ollama',
+    host: 'codex',
+    authEnvVar: 'OPENAI_API_KEY',
+    env: {},
+    vars: [
+      {
+        envVar: 'OPENAI_BASE_URL',
+        prompt: 'Ollama base URL',
+        default: 'http://127.0.0.1:11434/v1',
+      },
+      {
+        envVar: 'OPENAI_MODEL',
+        prompt: 'Model ID',
+        default: 'qwen3-coder:30b',
+      },
+    ],
+  },
 ];
+
+export interface ResolvedPresetEnv {
+  /** Env vars from preset.env — always set, no user input. */
+  static: Record<string, string>;
+  /** Vars the wizard needs to prompt for. */
+  prompts: PresetVar[];
+}
+
+/** Split a preset into static env vars and prompts needed from the user. */
+export function expandPreset(p: Preset): ResolvedPresetEnv {
+  return { static: { ...p.env }, prompts: p.vars ?? [] };
+}
 
 /** Look up a preset by name (case-sensitive). */
 export function getPreset(name: string): Preset | undefined {

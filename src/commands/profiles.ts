@@ -10,6 +10,7 @@
 import type { Command } from 'commander';
 import chalk from 'chalk';
 import * as fs from 'fs';
+import { spawn } from 'child_process';
 import {
   listProfiles,
   readProfile,
@@ -17,9 +18,11 @@ import {
   deleteProfile,
   profileExists,
   profileFromPreset,
+  validateProfileName,
   getPresetForProfile,
+  type Profile,
 } from '../lib/profiles.js';
-import { getPreset, listPresets } from '../lib/profiles-presets.js';
+import { getPreset, listPresets, expandPreset, type Preset } from '../lib/profiles-presets.js';
 import {
   hasKeychainToken,
   keychainItemName,
@@ -27,6 +30,31 @@ import {
   deleteKeychainToken,
 } from '../lib/secrets/profiles.js';
 import { isInteractiveTerminal } from './utils.js';
+
+/**
+ * Pure helper: builds a Profile from collected wizard inputs. Extracted so the
+ * shape of preset->profile mapping for the `create` wizard is unit-testable
+ * without mocking @inquirer/prompts.
+ */
+export function buildProfileFromCollection(
+  name: string,
+  preset: Preset,
+  collected: Record<string, string>,
+  version?: string,
+): Profile {
+  return {
+    name,
+    host: { agent: preset.host, version },
+    env: { ...preset.env, ...collected },
+    auth: {
+      envVar: preset.authEnvVar,
+      keychainItem: keychainItemName(preset.provider),
+    },
+    description: preset.description,
+    preset: preset.name,
+    provider: preset.provider,
+  };
+}
 
 /** Prompt the user for a secret value with masked input. Requires an interactive TTY. */
 async function promptForSecret(message: string): Promise<string> {
@@ -105,7 +133,8 @@ Built-in presets (via OpenRouter, one shared key):
 Run 'agents profiles presets' for the full list with pricing and context sizes.
 
 Typical flow:
-  agents profiles add kimi             # prompts for OpenRouter key, stored in Keychain
+  agents profiles create               # interactive wizard for any provider
+  agents profiles add kimi             # one-line preset (existing)
   agents run kimi "refactor this"      # Claude Code UI, Kimi model responses
   agents profiles add deepseek         # reuses OpenRouter key, no re-prompt
 
@@ -219,6 +248,115 @@ Examples:
       } catch (err) {
         console.error(chalk.red((err as Error).message));
         process.exit(1);
+      }
+    });
+
+  cmd
+    .command('create')
+    .description('Interactive profile creation wizard (any provider, with prompts for endpoints + keys).')
+    .option('--name <name>', 'Profile name (skips the name prompt)')
+    .option('--provider <provider>', 'Provider preset name (skips the provider prompt)')
+    .option('--no-smoke-test', 'Skip the post-create smoke test prompt')
+    .action(async (opts: { name?: string; provider?: string; smokeTest?: boolean }) => {
+      if (!isInteractiveTerminal()) {
+        console.error(
+          chalk.red(
+            'agents profiles create requires an interactive terminal. Use `agents profiles add <preset>` for scriptable creation.',
+          ),
+        );
+        process.exit(1);
+      }
+
+      const { input, select, confirm } = await import('@inquirer/prompts');
+
+      const name = opts.name
+        ? opts.name
+        : await input({
+            message: 'Profile name',
+            validate: (v) =>
+              /^[a-z0-9][a-z0-9-_]{0,48}$/i.test(v) || 'lowercase alphanumeric + -_ only, max 48 chars',
+          });
+      validateProfileName(name);
+
+      if (profileExists(name)) {
+        const overwrite = await confirm({
+          message: `Profile '${name}' already exists. Overwrite?`,
+          default: false,
+        });
+        if (!overwrite) {
+          console.log(chalk.gray('Cancelled.'));
+          return;
+        }
+      }
+
+      const presets = listPresets();
+      const providerName = opts.provider
+        ? opts.provider
+        : await select({
+            message: 'Provider',
+            choices: presets.map((p) => ({
+              name: `${p.name.padEnd(18)} ${chalk.gray(p.description.slice(0, 70))}`,
+              value: p.name,
+            })),
+          });
+      const preset = getPreset(providerName);
+      if (!preset) {
+        console.error(
+          chalk.red(`Unknown provider '${providerName}'. Run 'agents profiles presets' for the list.`),
+        );
+        process.exit(1);
+      }
+
+      const expanded = expandPreset(preset);
+      const collected: Record<string, string> = {};
+
+      for (const v of expanded.prompts) {
+        if (v.secret) {
+          collected[v.envVar] = await promptForSecret(v.prompt);
+        } else {
+          const value = await input({
+            message: v.hint ? `${v.prompt}  ${chalk.gray('(' + v.hint + ')')}` : v.prompt,
+            default: v.default,
+            validate: v.pattern
+              ? (val: string) => new RegExp(v.pattern!).test(val) || `must match ${v.pattern}`
+              : undefined,
+          });
+          collected[v.envVar] = value;
+        }
+      }
+
+      await ensureProviderToken(preset.provider, preset.signupUrl);
+
+      const profile = buildProfileFromCollection(name, preset, collected);
+      writeProfile(profile);
+      console.log(chalk.green(`Profile '${name}' created.`));
+      if (preset.docPath) {
+        console.log(chalk.gray(`See docs/profiles/${preset.docPath}.md for provider-specific caveats.`));
+      }
+
+      if (opts.smokeTest !== false) {
+        const run = await confirm({ message: 'Run smoke test now?', default: true });
+        if (run) {
+          console.log(
+            chalk.gray(`Spawning: agents run ${name} "say alive in one word" (60s timeout)`),
+          );
+          const child = spawn(
+            process.argv[0],
+            [
+              process.argv[1],
+              'run',
+              name,
+              'say alive in one word',
+              '--headless',
+              '--timeout',
+              '60s',
+            ],
+            { stdio: 'inherit' },
+          );
+          child.on('exit', (code) => process.exit(code ?? 0));
+        } else {
+          console.log(chalk.gray(`Try later: agents run ${name} "hello"`));
+        }
       }
     });
 
