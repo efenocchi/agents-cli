@@ -1127,40 +1127,49 @@ export async function installVersion(
 ): Promise<{ success: boolean; installedVersion: string; error?: string }> {
   const agentConfig = AGENTS[agent];
 
-  if (!agentConfig.npmPackage) {
-    // Support agents that provide an installScript (cursor, roo, goose, kiro, grok, etc.)
-    if (agentConfig.installScript) {
-      // For grok we give special love because the user asked for first-class support
-      if (agent === 'grok') {
-        onProgress?.(`Installing Grok ${version} via official installer...`);
-        try {
-          const script = agentConfig.installScript.replace('VERSION', version);
-          // The official installer supports -s <version>
-          const { exec } = await import('child_process');
-          const { promisify } = await import('util');
-          const execAsync = promisify(exec);
-          await execAsync(script, { timeout: 120000 });
-          onProgress?.('Grok binary installed. Setting up agents-cli version home for isolation...');
-        } catch (err: any) {
-          return { success: false, installedVersion: version, error: `Grok installer failed: ${err.message}` };
-        }
-      } else {
-        return {
-          success: false,
-          installedVersion: version,
-          error: `${agent} uses an external installer. Run: ${agentConfig.installScript}`,
-        };
-      }
-    } else {
-      return { success: false, installedVersion: version, error: 'Agent has no npm package' };
-    }
-  }
-
   // Validate before deriving filesystem paths or npm package specs. The CLI
   // parser already enforces this for user input; this guard protects direct
   // callers and tests the critical install path at the source.
   if (!VERSION_RE.test(version)) {
     throw new Error(`Invalid version: ${JSON.stringify(version)}`);
+  }
+
+  if (!agentConfig.npmPackage) {
+    if (!agentConfig.installScript) {
+      return { success: false, installedVersion: version, error: 'Agent has no npm package' };
+    }
+
+    if (version !== 'latest' && !agentConfig.installScript.includes('VERSION')) {
+      return {
+        success: false,
+        installedVersion: version,
+        error: `${agentConfig.name} installer does not support version-pinned installs. Use ${agent}@latest.`,
+      };
+    }
+
+    let installedVersion = version;
+    try {
+      const script = agentConfig.installScript.replaceAll('VERSION', version);
+      onProgress?.(`Installing ${agentConfig.name}@${version} via official installer...`);
+      await execAsync(script, { timeout: 120000 });
+
+      if (version === 'latest') {
+        installedVersion = await getCliVersionFromPath(agent) || version;
+      }
+
+      onProgress?.(`${agentConfig.name} installed. Setting up agents-cli version home for isolation...`);
+    } catch (err: any) {
+      emit('version.install', { agent, version, error: err.message });
+      return { success: false, installedVersion: version, error: `${agentConfig.name} installer failed: ${err.message}` };
+    }
+
+    ensureAgentsDir();
+    const versionDir = getVersionDir(agent, installedVersion);
+    fs.mkdirSync(versionDir, { recursive: true });
+    fs.mkdirSync(path.join(versionDir, 'home'), { recursive: true });
+    createVersionedAlias(agent, installedVersion);
+    emit('version.install', { agent, version: installedVersion });
+    return { success: true, installedVersion };
   }
 
   ensureAgentsDir();
@@ -1169,15 +1178,6 @@ export async function installVersion(
   // Create version directory and isolated home
   fs.mkdirSync(versionDir, { recursive: true });
   fs.mkdirSync(path.join(versionDir, 'home'), { recursive: true });
-
-  // For agents using external installers (especially grok), we don't do npm install.
-  // The binary is managed by the agent's own installer; we only manage the isolated home + resources.
-  if (agent === 'grok' || !agentConfig.npmPackage) {
-    // Grok (and similar) — binary already installed by the step above (or user ran external installer).
-    // We still want to record the version for config isolation.
-    createVersionedAlias(agent, version);
-    return { success: true, installedVersion: version };
-  }
 
   // Initialize package.json (only for real npm agents)
   const packageJson = {
@@ -1530,6 +1530,18 @@ export async function getInstalledVersion(agent: AgentId, version: string): Prom
     return match ? match[1] : version;
   } catch {
     return version;
+  }
+}
+
+async function getCliVersionFromPath(agent: AgentId): Promise<string | null> {
+  const agentConfig = AGENTS[agent];
+  try {
+    await execFileAsync('which', [agentConfig.cliCommand]);
+    const { stdout } = await execFileAsync(agentConfig.cliCommand, ['--version'], { timeout: 3000 });
+    const match = stdout.match(/(\d+\.\d+\.\d+)/);
+    return match ? match[1] : null;
+  } catch {
+    return null;
   }
 }
 
