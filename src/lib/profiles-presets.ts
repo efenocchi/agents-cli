@@ -31,6 +31,8 @@ export interface Preset {
   env: Record<string, string>;
   vars?: PresetVar[];
   authEnvVar: string;
+  /** True if the provider can function without a keychain token (e.g. Bedrock with SSO). */
+  authOptional?: boolean;
   signupUrl?: string;
   docPath?: string;
 }
@@ -124,41 +126,75 @@ export const PRESETS: Preset[] = [
   // ----- xAI Grok Build CLI (native host) -----
   {
     name: 'grok-fast',
-    description: 'xAI Grok Build CLI — fast tier. Native grok host, no OpenRouter wrapper.',
+    description: 'xAI Grok Build CLI — fast tier. Optimized for speed and low-latency coding tasks.',
     provider: 'xai',
     host: 'grok',
     authEnvVar: 'XAI_API_KEY',
     signupUrl: 'https://console.x.ai',
     env: {
-      // TODO: confirm model id (docs.x.ai/build/models, May 2026)
-      GROK_MODEL: 'grok-build-fast',
+      GROK_MODEL: 'grok-build-0.1',
     },
   },
   {
     name: 'grok-heavy',
-    description: 'xAI Grok Build CLI — heavy tier (SuperGrok). Native grok host.',
+    description: 'xAI Grok Build CLI — flagship tier (Grok 4.3). Best for complex reasoning and large context windows.',
     provider: 'xai',
     host: 'grok',
     authEnvVar: 'XAI_API_KEY',
     signupUrl: 'https://console.x.ai',
     env: {
-      // TODO: confirm model id (docs.x.ai/build/models, May 2026)
-      GROK_MODEL: 'grok-build',
+      GROK_MODEL: 'grok-4.3',
     },
   },
   // ----- Google Antigravity CLI (native host) -----
   {
     name: 'agy',
-    description: 'Google Antigravity CLI default. Auth via Google OAuth or ANTIGRAVITY_API_KEY.',
+    description: 'Google Antigravity CLI default (gemini-3.5-flash). Optimized for speed and large context.',
     provider: 'google',
     host: 'antigravity',
     authEnvVar: 'ANTIGRAVITY_API_KEY',
     signupUrl: 'https://antigravity.google',
     env: {
-      // TODO: confirm model id — antigravity defaults are managed by the CLI itself
+      // Antigravity defaults to gemini-3.5-flash as of June 2026
+    },
+  },
+  // ----- Direct Providers -----
+  {
+    name: 'anthropic',
+    description: 'Anthropic direct API — standard Claude Code experience with your own API key.',
+    provider: 'anthropic',
+    host: 'claude',
+    authEnvVar: 'ANTHROPIC_API_KEY',
+    signupUrl: 'https://console.anthropic.com',
+    env: {
+      ANTHROPIC_MODEL: 'claude-3-5-sonnet-latest',
+      ANTHROPIC_SMALL_FAST_MODEL: 'claude-3-5-haiku-latest',
     },
   },
   // ----- Gateway / enterprise / self-hosted -----
+  {
+    name: 'proxy',
+    description: 'Generic local proxy / gateway — points at a local router (CCR, LiteLLM) or internal corporate inference endpoint.',
+    provider: 'proxy',
+    host: 'claude',
+    authEnvVar: 'ANTHROPIC_AUTH_TOKEN',
+    authOptional: true,
+    env: {
+      API_TIMEOUT_MS: '600000',
+    },
+    vars: [
+      {
+        envVar: 'ANTHROPIC_BASE_URL',
+        prompt: 'Gateway base URL',
+        default: 'http://127.0.0.1:3456',
+      },
+      {
+        envVar: 'ANTHROPIC_MODEL',
+        prompt: 'Model ID',
+        default: 'claude-3-5-sonnet-latest',
+      },
+    ],
+  },
   {
     name: 'truefoundry',
     description: 'TrueFoundry AI Gateway routing to Anthropic-compatible backends (often Bedrock). Strips experimental headers + disables prompt caching to satisfy Bedrock validation.',
@@ -189,10 +225,11 @@ export const PRESETS: Preset[] = [
   },
   {
     name: 'bedrock',
-    description: 'AWS Bedrock — Claude Code native Bedrock mode.',
+    description: 'AWS Bedrock — Claude Code native Bedrock mode. Uses the standard AWS SDK credential chain (SSO, IAM roles, env). Set AWS_BEARER_TOKEN_BEDROCK only if your gateway requires a static token.',
     provider: 'bedrock',
     host: 'claude',
     authEnvVar: 'AWS_BEARER_TOKEN_BEDROCK',
+    authOptional: true,
     signupUrl: 'https://aws.amazon.com/bedrock/',
     env: {
       CLAUDE_CODE_USE_BEDROCK: '1',

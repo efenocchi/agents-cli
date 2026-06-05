@@ -316,6 +316,27 @@ export function formatUsageSummary(
   return parts.join('  ');
 }
 
+/**
+ * Compact colored badge for the account's overall usage status. Renders only
+ * when the account is throttled — \`available\` and \`null\` return ''.
+ *
+ * - \`out_of_credits\` → red "out of credits" (terminal account, all buckets dry)
+ * - \`rate_limited\`   → yellow "rate-limited" (transient throttling)
+ *
+ * The badge sits between the usage bars and \`lastActive\` in \`agents view\`, so
+ * a glance at the row tells the user whether the version can do useful work.
+ * The same signal is exposed as \`usageStatus\` in \`agents view --json\` for
+ * programmatic consumers (e.g. the swarmify panel's "resume in healthy agent").
+ */
+export function formatUsageStatusBadge(
+  usageStatus: 'available' | 'rate_limited' | 'out_of_credits' | null | undefined
+): string {
+  if (!usageStatus || usageStatus === 'available') return '';
+  if (usageStatus === 'out_of_credits') return chalk.red('out of credits');
+  if (usageStatus === 'rate_limited') return chalk.yellow('rate-limited');
+  return '';
+}
+
 /** Format a multi-line usage section for detailed agent views. */
 export function formatUsageSection(usage: UsageInfo): string[] {
   if (!usage.snapshot && !usage.error) {

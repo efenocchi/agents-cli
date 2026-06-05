@@ -325,7 +325,9 @@ Examples:
         }
       }
 
-      await ensureProviderToken(preset.provider, preset.signupUrl);
+      if (!preset.authOptional) {
+        await ensureProviderToken(preset.provider, preset.signupUrl);
+      }
 
       const profile = buildProfileFromCollection(name, preset, collected);
       writeProfile(profile);
@@ -383,7 +385,9 @@ Examples:
           process.exit(1);
         }
 
-        await ensureProviderToken(preset.provider, preset.signupUrl, opts.keyStdin);
+        if (!preset.authOptional) {
+          await ensureProviderToken(preset.provider, preset.signupUrl, opts.keyStdin);
+        }
 
         const profile = profileFromPreset(name, preset, opts.version);
         writeProfile(profile);

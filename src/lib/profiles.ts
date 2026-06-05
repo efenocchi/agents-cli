@@ -31,6 +31,13 @@ export interface Profile {
   provider?: string;
 }
 
+export interface ProfileSummary {
+  name: string;
+  host: string;
+  provider: string;
+  model: string;
+}
+
 const PROFILE_NAME_PATTERN = /^[a-z0-9][a-z0-9-_]{0,48}$/i;
 
 /** Get the directory where profile YAML files are stored. */
@@ -112,6 +119,38 @@ export function listProfiles(): Profile[] {
     }
   }
   return profiles.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Format the host harness and optional pinned version for display. */
+export function profileHostLabel(profile: Profile): string {
+  return profile.host.version ? `${profile.host.agent}@${profile.host.version}` : profile.host.agent;
+}
+
+/** Return the configured provider name, deriving it from the shared keychain item when needed. */
+export function profileProviderLabel(profile: Profile): string {
+  return profile.provider || profile.auth?.keychainItem?.split('.')[1] || '-';
+}
+
+/** Return the configured model env value for display. */
+export function profileModelLabel(profile: Profile): string {
+  for (const key of ['ANTHROPIC_MODEL', 'ANTHROPIC_SMALL_FAST_MODEL', 'OPENAI_MODEL', 'GEMINI_MODEL', 'GROK_MODEL']) {
+    const value = profile.env[key];
+    if (value) return value;
+  }
+  for (const [key, value] of Object.entries(profile.env)) {
+    if ((key === 'MODEL' || key.endsWith('_MODEL')) && value) return value;
+  }
+  return '-';
+}
+
+/** Build a stable, machine-readable summary for list and view surfaces. */
+export function profileSummary(profile: Profile): ProfileSummary {
+  return {
+    name: profile.name,
+    host: profileHostLabel(profile),
+    provider: profileProviderLabel(profile),
+    model: profileModelLabel(profile),
+  };
 }
 
 /**

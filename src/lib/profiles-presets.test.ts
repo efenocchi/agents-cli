@@ -35,8 +35,34 @@ describe('profiles-presets', () => {
 
   it('listProviders() includes all new gateway providers', () => {
     const providers = listProviders();
-    for (const name of ['truefoundry', 'bedrock', 'vertex', 'foundry', 'litellm', 'vllm', 'ollama']) {
+    for (const name of [
+      'truefoundry',
+      'bedrock',
+      'vertex',
+      'foundry',
+      'litellm',
+      'vllm',
+      'ollama',
+      'anthropic',
+      'proxy',
+    ]) {
       expect(providers).toContain(name);
     }
+  });
+
+  it('bedrock and proxy presets are authOptional', () => {
+    expect(getPreset('bedrock')?.authOptional).toBe(true);
+    expect(getPreset('proxy')?.authOptional).toBe(true);
+  });
+
+  it('grok presets have verified 2026 model IDs', () => {
+    expect(getPreset('grok-fast')?.env.GROK_MODEL).toBe('grok-build-0.1');
+    expect(getPreset('grok-heavy')?.env.GROK_MODEL).toBe('grok-4.3');
+  });
+
+  it('proxy preset is on claude host with two prompts', () => {
+    const p = getPreset('proxy')!;
+    expect(p.host).toBe('claude');
+    expect(expandPreset(p).prompts).toHaveLength(2);
   });
 });
