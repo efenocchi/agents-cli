@@ -7,6 +7,7 @@ import type { AccountInfo } from '../agents.js';
 import {
   buildCanonicalUsageContext,
   formatUsageSummary,
+  formatUsageStatusBadge,
   getClaudeKeychainService,
   readClaudeUsageCache,
   isClaudeUsageOrgMatch,
@@ -73,6 +74,13 @@ describe('usage formatting', () => {
     expect(summary).toContain('S:');
     expect(summary).toContain('W:');
     expect(summary).not.toContain('So:');
+  });
+
+  it('formatUsageStatusBadge renders only for throttled states', () => {
+    expect(formatUsageStatusBadge(null)).toBe('');
+    expect(formatUsageStatusBadge('available')).toBe('');
+    expect(stripAnsi(formatUsageStatusBadge('rate_limited'))).toBe('rate-limited');
+    expect(stripAnsi(formatUsageStatusBadge('out_of_credits'))).toBe('out of credits');
   });
 });
 

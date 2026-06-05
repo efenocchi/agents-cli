@@ -35,8 +35,28 @@ describe('profiles-presets', () => {
 
   it('listProviders() includes all new gateway providers', () => {
     const providers = listProviders();
-    for (const name of ['truefoundry', 'bedrock', 'vertex', 'foundry', 'litellm', 'vllm', 'ollama']) {
+    for (const name of [
+      'truefoundry',
+      'bedrock',
+      'vertex',
+      'foundry',
+      'litellm',
+      'vllm',
+      'ollama',
+      'yosemite',
+    ]) {
       expect(providers).toContain(name);
     }
+  });
+
+  it('bedrock and yosemite presets are authOptional', () => {
+    expect(getPreset('bedrock')?.authOptional).toBe(true);
+    expect(getPreset('yosemite')?.authOptional).toBe(true);
+  });
+
+  it('yosemite preset is on claude host with two prompts', () => {
+    const p = getPreset('yosemite')!;
+    expect(p.host).toBe('claude');
+    expect(expandPreset(p).prompts).toHaveLength(2);
   });
 });

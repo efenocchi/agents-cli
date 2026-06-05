@@ -31,6 +31,8 @@ export interface Preset {
   env: Record<string, string>;
   vars?: PresetVar[];
   authEnvVar: string;
+  /** True if the provider can function without a keychain token (e.g. Bedrock with SSO). */
+  authOptional?: boolean;
   signupUrl?: string;
   docPath?: string;
 }
@@ -189,10 +191,11 @@ export const PRESETS: Preset[] = [
   },
   {
     name: 'bedrock',
-    description: 'AWS Bedrock — Claude Code native Bedrock mode.',
+    description: 'AWS Bedrock — Claude Code native Bedrock mode. Uses the standard AWS SDK credential chain (SSO, IAM roles, env). Set AWS_BEARER_TOKEN_BEDROCK only if your gateway requires a static token.',
     provider: 'bedrock',
     host: 'claude',
     authEnvVar: 'AWS_BEARER_TOKEN_BEDROCK',
+    authOptional: true,
     signupUrl: 'https://aws.amazon.com/bedrock/',
     env: {
       CLAUDE_CODE_USE_BEDROCK: '1',

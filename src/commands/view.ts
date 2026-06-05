@@ -28,6 +28,7 @@ import type { AgentId } from '../lib/types.js';
 import {
   formatUsageSection,
   formatUsageSummary,
+  formatUsageStatusBadge,
   getUsageInfoForIdentity,
   getUsageInfoByIdentity,
   getUsageLookupKey,
@@ -44,6 +45,7 @@ import {
   getAvailableResources,
   getActuallySyncedResources,
   getNewResources,
+  getProjectOnlyResources,
   hasNewResources,
   promptNewResourceSelection,
   syncResourcesToVersion,
@@ -273,6 +275,7 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
     let maxEmail = 0;
     let maxPlanWidth = 3;
     let maxUsageWidth = 0;
+    let maxStatusWidth = 0;
     for (const agentId of versionManaged) {
       const versions = listInstalledVersions(agentId);
       const globalDefault = getGlobalDefault(agentId);
@@ -285,7 +288,7 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
         if (info?.plan) maxPlanWidth = Math.max(maxPlanWidth, info.plan.length);
       }
     }
-    // Second pass: compute max visible usage width (now that maxPlanWidth is settled)
+    // Second pass: compute max visible usage + status widths (now that maxPlanWidth is settled)
     for (const agentId of versionManaged) {
       const versions = listInstalledVersions(agentId);
       for (const v of versions) {
@@ -295,6 +298,8 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
         const usageInfo = usageKey ? usageByKey.get(usageKey) : undefined;
         const usageStr = formatUsageSummary(info?.plan || null, usageInfo?.snapshot || null, maxPlanWidth);
         maxUsageWidth = Math.max(maxUsageWidth, visibleWidth(usageStr));
+        const statusStr = formatUsageStatusBadge(info?.usageStatus);
+        maxStatusWidth = Math.max(maxStatusWidth, visibleWidth(statusStr));
       }
     }
 
@@ -347,6 +352,11 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
             const usagePad = ' '.repeat(Math.max(0, maxUsageWidth - visibleWidth(usageStr)));
             parts.push(usageStr + usagePad);
           }
+          const statusStr = formatUsageStatusBadge(vInfo?.usageStatus);
+          if (maxStatusWidth > 0) {
+            const statusPad = ' '.repeat(Math.max(0, maxStatusWidth - visibleWidth(statusStr)));
+            parts.push(statusStr + statusPad);
+          }
           if (hasActive) parts.push(activeStr);
         }
 
@@ -396,6 +406,8 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
       const gActiveStr = gInfo ? formatLastActive(gInfo.lastActive) : '';
       if (gInfo?.email || gUsageStr || gActiveStr) parts.push(gInfo?.email ? chalk.cyan(gInfo.email) : '');
       if (gUsageStr || gActiveStr) parts.push(gUsageStr);
+      const gStatusStr = formatUsageStatusBadge(gInfo?.usageStatus);
+      if (gStatusStr) parts.push(gStatusStr);
       if (gActiveStr) parts.push(gActiveStr);
       console.log(parts.join('  '));
       if (showPaths && cliState?.path) {
@@ -438,7 +450,8 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
     if (defaultVersion) {
       const available = getAvailableResources();
       const synced = getActuallySyncedResources(filterAgentId, defaultVersion);
-      const newResources = getNewResources(available, synced);
+      const projectOnly = getProjectOnlyResources();
+      const newResources = getNewResources(available, synced, projectOnly);
 
       if (hasNewResources(newResources, filterAgentId, defaultVersion)) {
         try {
@@ -802,6 +815,7 @@ export interface ViewJsonVersion {
   email: string | null;
   plan: string | null;
   usageStatus: 'available' | 'rate_limited' | 'out_of_credits' | null;
+  overageCredits: { amount: number; currency: string } | null;
   windows: Array<{
     key: 'session' | 'week' | 'sonnet_week';
     usedPercent: number;
@@ -874,6 +888,7 @@ async function collectAgentsJson(filterAgentId?: AgentId): Promise<ViewJsonAgent
       email: info.email,
       plan: info.plan,
       usageStatus: info.usageStatus,
+      overageCredits: info.overageCredits,
       windows: snapshot
         ? snapshot.windows.map((w) => ({
             key: w.key,
