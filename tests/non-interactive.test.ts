@@ -571,7 +571,7 @@ describe('non-interactive CLI usage', () => {
     tempHomes.push(home);
     writeFakeManagedVersion(home, 'claude', '2.1.143', 'claude');
     writeFakeManagedVersion(home, 'codex', '0.134.0', 'codex');
-    writeProfileYaml(home, 'yosemite', {
+    writeProfileYaml(home, 'test-proxy', {
       agent: 'claude',
       provider: 'truefoundry',
       env: { ANTHROPIC_MODEL: 'truefoundry/qwen3-coder' },
@@ -589,7 +589,7 @@ describe('non-interactive CLI usage', () => {
     // No separate "Profiles" section header — rows live under the harness.
     expect(combined).not.toMatch(/^Profiles\s*$/m);
     // Each profile row carries its name, the `profile` kind marker, and model.
-    expect(combined).toContain('yosemite');
+    expect(combined).toContain('test-proxy');
     expect(combined).toContain('truefoundry/qwen3-coder');
     expect(combined).toContain('ollama');
     expect(combined).toContain('qwen3-coder:30b');
@@ -601,7 +601,7 @@ describe('non-interactive CLI usage', () => {
     tempHomes.push(home);
     writeFakeManagedVersion(home, 'claude', '2.1.143', 'claude');
     writeFakeManagedVersion(home, 'codex', '0.134.0', 'codex');
-    writeProfileYaml(home, 'yosemite', {
+    writeProfileYaml(home, 'test-proxy', {
       agent: 'claude',
       env: { ANTHROPIC_MODEL: 'truefoundry/qwen3-coder' },
     });
@@ -614,7 +614,7 @@ describe('non-interactive CLI usage', () => {
     const combined = `${result.stdout}\n${result.stderr}`;
 
     expect(result.status, combined).toBe(0);
-    expect(combined).toContain('yosemite');
+    expect(combined).toContain('test-proxy');
     expect(combined).not.toContain('ollama');
   }, 30_000);
 
@@ -622,7 +622,7 @@ describe('non-interactive CLI usage', () => {
     const home = makeTempHome();
     tempHomes.push(home);
     writeFakeManagedVersion(home, 'claude', '2.1.143', 'claude');
-    writeProfileYaml(home, 'yosemite', {
+    writeProfileYaml(home, 'test-proxy', {
       agent: 'claude',
       provider: 'truefoundry',
       env: { ANTHROPIC_MODEL: 'truefoundry/qwen3-coder' },
@@ -641,7 +641,7 @@ describe('non-interactive CLI usage', () => {
     expect(claudeEntry.agent).toBe('claude');
     expect(claudeEntry.profiles).toEqual([
       expect.objectContaining({
-        name: 'yosemite',
+        name: 'test-proxy',
         agent: 'claude',
         model: 'truefoundry/qwen3-coder',
         provider: 'truefoundry',

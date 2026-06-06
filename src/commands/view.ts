@@ -208,7 +208,6 @@ function renderProfilesSection(profiles: ProfileSummary[]): void {
  * Called when: `agents view` or `agents view claude`
  */
 async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
-  const profileSummaries = getProfileSummaries(filterAgentId);
   const spinnerText = filterAgentId
     ? `Checking ${agentLabel(filterAgentId)} agents...`
     : 'Checking installed agents...';
@@ -371,13 +370,10 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
         maxUsageWidth = Math.max(maxUsageWidth, visibleWidth(usageStr));
         const statusStr = formatUsageStatusBadge(info?.usageStatus);
         maxStatusWidth = Math.max(maxStatusWidth, visibleWidth(statusStr));
-<<<<<<< HEAD
-=======
       }
       for (const profile of profilesByAgent.get(agentId) ?? []) {
         const usageEquivalent = profileKindAndModel(profile.model, maxPlanWidth);
         maxUsageWidth = Math.max(maxUsageWidth, visibleWidth(usageEquivalent));
->>>>>>> origin/main
       }
     }
 
@@ -510,14 +506,10 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
       if (gInfo?.email || gUsageStr || gActiveStr) parts.push(gInfo?.email ? chalk.cyan(gInfo.email) : '');
       if (gUsageStr || gActiveStr) parts.push(gUsageStr);
       const gStatusStr = formatUsageStatusBadge(gInfo?.usageStatus);
-<<<<<<< HEAD
-      if (gStatusStr) parts.push(gStatusStr);
-=======
       if (gMaxStatusWidth > 0) {
         const statusPad = ' '.repeat(Math.max(0, gMaxStatusWidth - visibleWidth(gStatusStr)));
         parts.push(gStatusStr + statusPad);
       }
->>>>>>> origin/main
       if (gActiveStr) parts.push(gActiveStr);
       console.log(parts.join('  '));
       if (showPaths && cliState?.path) {
@@ -549,12 +541,6 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
     }
   }
 
-<<<<<<< HEAD
-  renderProfilesSection(profileSummaries);
-
-  // If filtering to a specific agent and not found
-  if (filterAgentId && versionManaged.length === 0 && globallyInstalled.length === 0 && profileSummaries.length === 0) {
-=======
   // Agents with no install but with profiles defined — render under the same
   // harness header so users find them where they look.
   if (profileOnly.length > 0) {
@@ -588,15 +574,11 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
     globallyInstalled.length === 0 &&
     profileOnly.length === 0
   ) {
->>>>>>> origin/main
     console.log(`  ${chalk.bold(agentLabel(filterAgentId))}: ${chalk.gray('not installed')}`);
     console.log();
   }
 
   // No agents installed at all
-<<<<<<< HEAD
-  if (versionManaged.length === 0 && globallyInstalled.length === 0 && profileSummaries.length === 0 && !filterAgentId) {
-=======
   if (
     versionManaged.length === 0 &&
     globallyInstalled.length === 0 &&
@@ -604,7 +586,6 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
     profileSummaries.length === 0 &&
     !filterAgentId
   ) {
->>>>>>> origin/main
     console.log(chalk.gray('  No agent CLIs installed.'));
     console.log(chalk.gray('  Run: agents add claude@latest'));
     console.log();
@@ -992,14 +973,10 @@ export interface ViewJsonVersion {
   email: string | null;
   plan: string | null;
   usageStatus: 'available' | 'rate_limited' | 'out_of_credits' | null;
-<<<<<<< HEAD
-  overageCredits: { amount: number; currency: string } | null;
-=======
   // Optional so existing TypeScript consumers compiled against the prior
   // interface don't error on the new field; null means we know there are no
   // outstanding overage credits, undefined means we haven't fetched / can't say.
   overageCredits?: { amount: number; currency: string } | null;
->>>>>>> origin/main
   windows: Array<{
     key: 'session' | 'week' | 'sonnet_week';
     usedPercent: number;
@@ -1024,15 +1001,6 @@ export interface ViewJsonAgent {
  */
 async function collectAgentsJson(filterAgentId?: AgentId): Promise<ViewJsonAgent[]> {
   const agentsToShow = filterAgentId ? [filterAgentId] : ALL_AGENT_IDS;
-  const profileSummaries = new Map<AgentId, ProfileSummary[]>();
-  for (const profile of listProfiles()) {
-    if (filterAgentId && profile.host.agent !== filterAgentId) continue;
-    const summary = profileSummary(profile);
-    const existing = profileSummaries.get(profile.host.agent);
-    if (existing) existing.push(summary);
-    else profileSummaries.set(profile.host.agent, [summary]);
-  }
-
   const infoFetches: Promise<{ agentId: AgentId; version: string; home: string; info: AccountInfo }>[] = [];
   for (const agentId of agentsToShow) {
     for (const ver of listInstalledVersions(agentId)) {
@@ -1106,11 +1074,7 @@ async function collectAgentsJson(filterAgentId?: AgentId): Promise<ViewJsonAgent
       if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
       return compareVersions(b.version, a.version);
     });
-<<<<<<< HEAD
-    out.push({ agent: agentId, versions, profiles: profileSummaries.get(agentId) ?? [] });
-=======
     out.push({ agent: agentId, versions, profiles: profilesByAgent.get(agentId) ?? [] });
->>>>>>> origin/main
   }
   return out;
 }

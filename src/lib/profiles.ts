@@ -31,13 +31,6 @@ export interface Profile {
   provider?: string;
 }
 
-<<<<<<< HEAD
-export interface ProfileSummary {
-  name: string;
-  host: string;
-  provider: string;
-  model: string;
-=======
 /**
  * Stable, machine-readable summary used by `agents view` and `--json`.
  * `agent` is the underlying harness (claude/codex/...) so consumers can
@@ -51,7 +44,6 @@ export interface ProfileSummary {
   model: string;
   auth: string;
   path: string;
->>>>>>> origin/main
 }
 
 const PROFILE_NAME_PATTERN = /^[a-z0-9][a-z0-9-_]{0,48}$/i;
@@ -153,11 +145,6 @@ export function profileProviderLabel(profile: Profile): string {
   return profile.provider || profile.auth?.keychainItem?.split('.')[1] || '-';
 }
 
-<<<<<<< HEAD
-/** Return the configured model env value for display. */
-export function profileModelLabel(profile: Profile): string {
-  for (const key of ['ANTHROPIC_MODEL', 'ANTHROPIC_SMALL_FAST_MODEL', 'OPENAI_MODEL', 'GEMINI_MODEL', 'GROK_MODEL']) {
-=======
 const MODEL_ENV_KEYS = [
   'ANTHROPIC_MODEL',
   'ANTHROPIC_SMALL_FAST_MODEL',
@@ -169,7 +156,6 @@ const MODEL_ENV_KEYS = [
 /** Return the configured model env value for display. */
 export function profileModelLabel(profile: Profile): string {
   for (const key of MODEL_ENV_KEYS) {
->>>>>>> origin/main
     const value = profile.env[key];
     if (value) return value;
   }
@@ -179,8 +165,6 @@ export function profileModelLabel(profile: Profile): string {
   return '-';
 }
 
-<<<<<<< HEAD
-=======
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
   const parts = token.split('.');
   if (parts.length < 2) return null;
@@ -248,23 +232,16 @@ export function profileAuthLabel(profile: Profile): string {
   return provider;
 }
 
->>>>>>> origin/main
 /** Build a stable, machine-readable summary for list and view surfaces. */
 export function profileSummary(profile: Profile): ProfileSummary {
   return {
     name: profile.name,
-<<<<<<< HEAD
-    host: profileHostLabel(profile),
-    provider: profileProviderLabel(profile),
-    model: profileModelLabel(profile),
-=======
     agent: profile.host.agent,
     host: profileHostLabel(profile),
     provider: profileProviderLabel(profile),
     model: profileModelLabel(profile),
     auth: profileAuthLabel(profile),
     path: getProfilePath(profile.name),
->>>>>>> origin/main
   };
 }
 
