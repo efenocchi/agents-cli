@@ -4,6 +4,7 @@
 |---|---|---|---|
 | truefoundry | claude | Bedrock strict validation; corp cert chain | [truefoundry.md](truefoundry.md) |
 | bedrock | claude | strict validation (DISABLE_PROMPT_CACHING) | [bedrock.md](bedrock.md) |
+| yosemite | claude | local-proxy / CCR pattern | [yosemite.md](yosemite.md) |
 | vertex | claude | region-specific model availability | [vertex.md](vertex.md) |
 | foundry | claude | Microsoft Azure AI — not TrueFoundry | [foundry.md](foundry.md) |
 | openrouter | claude | print-safe vs reasoning models | [openrouter.md](openrouter.md) |

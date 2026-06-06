@@ -560,7 +560,11 @@ export function getActuallySyncedResources(agent: AgentId, version: string, opti
   return result;
 }
 
+<<<<<<< HEAD
 /** Resource names that only exist in the project's .agents/ layer, grouped by kind. */
+=======
+/** Resource names that only exist in the project's `.agents/` layer, grouped by kind. */
+>>>>>>> origin/main
 export interface ProjectOnlyResources {
   commands: Set<string>;
   skills: Set<string>;
@@ -571,7 +575,11 @@ export interface ProjectOnlyResources {
 }
 
 /**
+<<<<<<< HEAD
  * Names that exist ONLY in the project's .agents/ layer (no matching entry in
+=======
+ * Names that exist ONLY in the project's `.agents/` layer (no matching entry in
+>>>>>>> origin/main
  * user/system/extra layers). Sync intentionally skips project-layer commands,
  * skills, hooks, subagents, plugins, and workflows for security — see the
  * defense comments above each sync branch in syncResourcesToVersion. Without
@@ -628,6 +636,11 @@ export function getProjectOnlyResources(cwd: string = process.cwd()): ProjectOnl
   const trustedSkills = trustedNames('skills', (full) => isDir(full));
   for (const n of readProjectNames('skills', (full) => isDir(full))) if (!trustedSkills.has(n)) empty.skills.add(n);
 
+<<<<<<< HEAD
+=======
+  // Hooks: project entries are files; trusted entries are also files. Name match
+  // is filename-with-extension (sync compares by full filename, line 2031).
+>>>>>>> origin/main
   const trustedHooks = trustedNames('hooks', (full) => { try { return fs.statSync(full).isFile(); } catch { return false; } });
   for (const n of readProjectNames('hooks', (full) => { try { return fs.statSync(full).isFile(); } catch { return false; } })) {
     if (!trustedHooks.has(n)) empty.hooks.add(n);
@@ -656,7 +669,11 @@ export function getProjectOnlyResources(cwd: string = process.cwd()): ProjectOnl
  * Returns only NEW resources that haven't been synced yet.
  * Source of truth: the actual files/config, NOT agents.yaml tracking.
  *
+<<<<<<< HEAD
  * \`projectOnly\` (recommended): the result of \`getProjectOnlyResources(cwd)\`.
+=======
+ * `projectOnly` (recommended): the result of `getProjectOnlyResources(cwd)`.
+>>>>>>> origin/main
  * Names listed there are filtered out for kinds that sync intentionally
  * excludes the project layer — otherwise they would re-appear as "new"
  * on every run and "Yes, sync all new" would silently do nothing for them.

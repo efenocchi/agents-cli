@@ -71,6 +71,29 @@ import { listProfiles, profileSummary, type ProfileSummary } from '../lib/profil
 import { confirm } from '@inquirer/prompts';
 import { formatPath, isInteractiveTerminal, isPromptCancelled } from './utils.js';
 
+/**
+ * Group profile summaries by their host harness, optionally filtered to a
+ * single agent. Profile YAMLs that fail validation are silently skipped by
+ * `listProfiles` so this never throws on a malformed file.
+ */
+function getProfilesByAgent(filterAgentId?: AgentId): Map<AgentId, ProfileSummary[]> {
+  const byAgent = new Map<AgentId, ProfileSummary[]>();
+  for (const profile of listProfiles()) {
+    if (filterAgentId && profile.host.agent !== filterAgentId) continue;
+    const summary = profileSummary(profile);
+    const existing = byAgent.get(profile.host.agent);
+    if (existing) existing.push(summary);
+    else byAgent.set(profile.host.agent, [summary]);
+  }
+  return byAgent;
+}
+
+/** Build the usage-column equivalent for a profile row: "profile  <model>". */
+function profileKindAndModel(model: string, planWidth: number): string {
+  const kind = 'profile'.padEnd(Math.max(planWidth, 'profile'.length));
+  return `${kind}  ${model}`;
+}
+
 function termLink(text: string, filePath: string): string {
   const url = `file://${filePath}`;
   return `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
@@ -195,6 +218,8 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
 
   const agentsToShow = filterAgentId ? [filterAgentId] : ALL_AGENT_IDS;
   const showPaths = !!filterAgentId;
+  const profilesByAgent = getProfilesByAgent(filterAgentId);
+  const profileSummaries = [...profilesByAgent.values()].flat();
 
   // Auto-heal stale versioned aliases. Pre-v2 aliases (e.g. pre-CLAUDE_CONFIG_DIR
   // claude shims) silently route login through the default version's symlinked
@@ -292,15 +317,19 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
   // Separate version-managed from globally-installed agents
   const versionManaged: AgentId[] = [];
   const globallyInstalled: AgentId[] = [];
+  const profileOnly: AgentId[] = [];
 
   for (const agentId of agentsToShow) {
     const versions = listInstalledVersions(agentId);
     const cliState = cliStates[agentId];
+    const hasProfiles = (profilesByAgent.get(agentId)?.length ?? 0) > 0;
 
     if (versions.length > 0) {
       versionManaged.push(agentId);
     } else if (cliState?.installed) {
       globallyInstalled.push(agentId);
+    } else if (hasProfiles) {
+      profileOnly.push(agentId);
     }
   }
 
@@ -323,6 +352,12 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
         if (info?.email) maxEmail = Math.max(maxEmail, info.email.length);
         if (info?.plan) maxPlanWidth = Math.max(maxPlanWidth, info.plan.length);
       }
+      // Profile rows share these columns with version rows so they line up.
+      for (const profile of profilesByAgent.get(agentId) ?? []) {
+        maxVerLabel = Math.max(maxVerLabel, profile.name.length);
+        maxEmail = Math.max(maxEmail, profile.auth.length);
+        maxPlanWidth = Math.max(maxPlanWidth, 'profile'.length);
+      }
     }
     // Second pass: compute max visible usage + status widths (now that maxPlanWidth is settled)
     for (const agentId of versionManaged) {
@@ -336,6 +371,13 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
         maxUsageWidth = Math.max(maxUsageWidth, visibleWidth(usageStr));
         const statusStr = formatUsageStatusBadge(info?.usageStatus);
         maxStatusWidth = Math.max(maxStatusWidth, visibleWidth(statusStr));
+<<<<<<< HEAD
+=======
+      }
+      for (const profile of profilesByAgent.get(agentId) ?? []) {
+        const usageEquivalent = profileKindAndModel(profile.model, maxPlanWidth);
+        maxUsageWidth = Math.max(maxUsageWidth, visibleWidth(usageEquivalent));
+>>>>>>> origin/main
       }
     }
 
@@ -403,6 +445,19 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
         }
       }
 
+      // Profile rows share the same columns as versions: name | auth | "profile"+model.
+      // No status badge, no last-active — profiles don't accumulate usage state.
+      for (const profile of profilesByAgent.get(agentId) ?? []) {
+        const nameCol = chalk.cyan(profile.name.padEnd(maxVerLabel));
+        const authCol = chalk.gray(profile.auth.padEnd(maxEmail));
+        const usageEquivalent = profileKindAndModel(profile.model, maxPlanWidth);
+        const usagePad = ' '.repeat(Math.max(0, maxUsageWidth - visibleWidth(usageEquivalent)));
+        console.log(`    ${nameCol}  ${authCol}  ${chalk.gray(usageEquivalent + usagePad)}`);
+        if (showPaths) {
+          console.log(chalk.gray(`      ${profile.path}`));
+        }
+      }
+
       // Check for project override
       const projectVersion = getProjectVersionFromCwd(agentId);
       if (projectVersion && projectVersion !== globalDefault) {
@@ -424,6 +479,18 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
         return `${cliState?.version || 'installed'} (global)`.length;
       })
     );
+    // Pre-pass: max badge width so rows with `lastActive` line up whether or
+    // not THIS row carries a throttle badge. Without this, the row that DOES
+    // have "out of credits" shifts every other row's `lastActive` left by
+    // ~16 chars, exactly what the version-managed block at maxStatusWidth
+    // already solves above.
+    let gMaxStatusWidth = 0;
+    for (const agentId of globallyInstalled) {
+      const gInfoRaw = globalInfoMap.get(agentId);
+      const gInfo = gInfoRaw ? mergeCanonical(gInfoRaw) : undefined;
+      const w = visibleWidth(formatUsageStatusBadge(gInfo?.usageStatus));
+      if (w > gMaxStatusWidth) gMaxStatusWidth = w;
+    }
 
     for (const agentId of globallyInstalled) {
       const agent = AGENTS[agentId];
@@ -443,11 +510,37 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
       if (gInfo?.email || gUsageStr || gActiveStr) parts.push(gInfo?.email ? chalk.cyan(gInfo.email) : '');
       if (gUsageStr || gActiveStr) parts.push(gUsageStr);
       const gStatusStr = formatUsageStatusBadge(gInfo?.usageStatus);
+<<<<<<< HEAD
       if (gStatusStr) parts.push(gStatusStr);
+=======
+      if (gMaxStatusWidth > 0) {
+        const statusPad = ' '.repeat(Math.max(0, gMaxStatusWidth - visibleWidth(gStatusStr)));
+        parts.push(gStatusStr + statusPad);
+      }
+>>>>>>> origin/main
       if (gActiveStr) parts.push(gActiveStr);
       console.log(parts.join('  '));
       if (showPaths && cliState?.path) {
         console.log(chalk.gray(`      ${cliState.path}`));
+      }
+      // Profile rows under a globally-installed harness. Use a simpler
+      // alignment here since this section doesn't share column state with
+      // the version-managed block.
+      const profilesHere = profilesByAgent.get(agentId) ?? [];
+      if (profilesHere.length > 0) {
+        const nameWidth = Math.max(globalMaxVerLabel, ...profilesHere.map((p) => p.name.length));
+        const authWidth = Math.max(...profilesHere.map((p) => p.auth.length));
+        for (const profile of profilesHere) {
+          console.log(
+            `    ${chalk.cyan(profile.name.padEnd(nameWidth))}  ` +
+              `${chalk.gray(profile.auth.padEnd(authWidth))}  ` +
+              `${chalk.gray('profile')}  ` +
+              chalk.gray(profile.model),
+          );
+          if (showPaths) {
+            console.log(chalk.gray(`      ${profile.path}`));
+          }
+        }
       }
       if (agent.npmPackage && cliState?.version) {
         console.log(chalk.gray(`    Manage: agents add ${agentId}@${cliState.version} -y`));
@@ -456,16 +549,62 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
     }
   }
 
+<<<<<<< HEAD
   renderProfilesSection(profileSummaries);
 
   // If filtering to a specific agent and not found
   if (filterAgentId && versionManaged.length === 0 && globallyInstalled.length === 0 && profileSummaries.length === 0) {
+=======
+  // Agents with no install but with profiles defined — render under the same
+  // harness header so users find them where they look.
+  if (profileOnly.length > 0) {
+    if (versionManaged.length === 0 && globallyInstalled.length === 0) {
+      console.log(chalk.bold('Profile-only Agents\n'));
+    }
+    for (const agentId of profileOnly) {
+      const profilesHere = profilesByAgent.get(agentId) ?? [];
+      console.log(`  ${chalk.bold(agentLabel(agentId))}${chalk.yellow(' (profile only)')}`);
+      const nameWidth = Math.max(...profilesHere.map((p) => p.name.length));
+      const authWidth = Math.max(...profilesHere.map((p) => p.auth.length));
+      for (const profile of profilesHere) {
+        console.log(
+          `    ${chalk.cyan(profile.name.padEnd(nameWidth))}  ` +
+            `${chalk.gray(profile.auth.padEnd(authWidth))}  ` +
+            `${chalk.gray('profile')}  ` +
+            chalk.gray(profile.model),
+        );
+        if (showPaths) {
+          console.log(chalk.gray(`      ${profile.path}`));
+        }
+      }
+      console.log();
+    }
+  }
+
+  // If filtering to a specific agent and not found
+  if (
+    filterAgentId &&
+    versionManaged.length === 0 &&
+    globallyInstalled.length === 0 &&
+    profileOnly.length === 0
+  ) {
+>>>>>>> origin/main
     console.log(`  ${chalk.bold(agentLabel(filterAgentId))}: ${chalk.gray('not installed')}`);
     console.log();
   }
 
   // No agents installed at all
+<<<<<<< HEAD
   if (versionManaged.length === 0 && globallyInstalled.length === 0 && profileSummaries.length === 0 && !filterAgentId) {
+=======
+  if (
+    versionManaged.length === 0 &&
+    globallyInstalled.length === 0 &&
+    profileOnly.length === 0 &&
+    profileSummaries.length === 0 &&
+    !filterAgentId
+  ) {
+>>>>>>> origin/main
     console.log(chalk.gray('  No agent CLIs installed.'));
     console.log(chalk.gray('  Run: agents add claude@latest'));
     console.log();
@@ -853,7 +992,14 @@ export interface ViewJsonVersion {
   email: string | null;
   plan: string | null;
   usageStatus: 'available' | 'rate_limited' | 'out_of_credits' | null;
+<<<<<<< HEAD
   overageCredits: { amount: number; currency: string } | null;
+=======
+  // Optional so existing TypeScript consumers compiled against the prior
+  // interface don't error on the new field; null means we know there are no
+  // outstanding overage credits, undefined means we haven't fetched / can't say.
+  overageCredits?: { amount: number; currency: string } | null;
+>>>>>>> origin/main
   windows: Array<{
     key: 'session' | 'week' | 'sonnet_week';
     usedPercent: number;
@@ -952,6 +1098,7 @@ async function collectAgentsJson(filterAgentId?: AgentId): Promise<ViewJsonAgent
     else byAgent.set(agentId, [entry]);
   }
 
+  const profilesByAgent = getProfilesByAgent(filterAgentId);
   const out: ViewJsonAgent[] = [];
   for (const agentId of agentsToShow) {
     const versions = byAgent.get(agentId) ?? [];
@@ -959,7 +1106,11 @@ async function collectAgentsJson(filterAgentId?: AgentId): Promise<ViewJsonAgent
       if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
       return compareVersions(b.version, a.version);
     });
+<<<<<<< HEAD
     out.push({ agent: agentId, versions, profiles: profileSummaries.get(agentId) ?? [] });
+=======
+    out.push({ agent: agentId, versions, profiles: profilesByAgent.get(agentId) ?? [] });
+>>>>>>> origin/main
   }
   return out;
 }

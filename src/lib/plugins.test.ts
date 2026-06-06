@@ -112,6 +112,62 @@ describe('loadPluginManifest', () => {
   });
 });
 
+// ─── discoverPlugins ──────────────────────────────────────────────────────────
+
+describe('discoverPlugins', () => {
+  let tmpDir: string;
+  let pluginsDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-test-'));
+    pluginsDir = path.join(tmpDir, 'plugins');
+    fs.mkdirSync(pluginsDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('discovers plugin roots that are symlinked into the plugins directory', async () => {
+    const sourceRoot = makePluginRoot(tmpDir, { name: 'linked-plugin' });
+    fs.symlinkSync(sourceRoot, path.join(pluginsDir, 'linked-plugin'), 'dir');
+
+    vi.resetModules();
+    vi.doMock('./state.js', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('./state.js')>();
+      return { ...actual, getPluginsDir: () => pluginsDir };
+    });
+
+    try {
+      const { discoverPlugins: discover } = await import('./plugins.js');
+      const plugins = discover();
+      expect(plugins.map((plugin) => plugin.name)).toEqual(['linked-plugin']);
+      expect(plugins[0]?.root).toBe(path.join(pluginsDir, 'linked-plugin'));
+    } finally {
+      vi.doUnmock('./state.js');
+      vi.resetModules();
+    }
+  });
+
+  it('ignores broken symlinks in the plugins directory', async () => {
+    fs.symlinkSync(path.join(tmpDir, 'missing'), path.join(pluginsDir, 'missing-plugin'), 'dir');
+
+    vi.resetModules();
+    vi.doMock('./state.js', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('./state.js')>();
+      return { ...actual, getPluginsDir: () => pluginsDir };
+    });
+
+    try {
+      const { discoverPlugins: discover } = await import('./plugins.js');
+      expect(discover()).toEqual([]);
+    } finally {
+      vi.doUnmock('./state.js');
+      vi.resetModules();
+    }
+  });
+});
+
 // ─── discoverPluginCommands ───────────────────────────────────────────────────
 
 describe('discoverPluginCommands', () => {
@@ -532,7 +588,7 @@ describe('syncPluginToVersion (native marketplace install)', () => {
     const known = JSON.parse(fs.readFileSync(knownPath, 'utf-8'));
     expect(known['agents-cli']).toBeDefined();
     expect(known['agents-cli'].source).toEqual({
-      source: 'local',
+      source: 'directory',
       path: path.join(versionHome, '.claude', 'plugins', 'marketplaces', 'agents-cli'),
     });
   });

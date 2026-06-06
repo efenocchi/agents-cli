@@ -11,7 +11,7 @@ import * as path from 'path';
 import * as yaml from 'yaml';
 import type { AgentId } from './types.js';
 import { getUserAgentsDir } from './state.js';
-import { getKeychainToken, keychainItemName } from './secrets/profiles.js';
+import { getKeychainToken, hasKeychainToken, keychainItemName } from './secrets/profiles.js';
 import { getPreset, type Preset } from './profiles-presets.js';
 
 /** A named profile binding an agent host, env vars, and optional keychain auth. */
@@ -31,11 +31,27 @@ export interface Profile {
   provider?: string;
 }
 
+<<<<<<< HEAD
 export interface ProfileSummary {
   name: string;
   host: string;
   provider: string;
   model: string;
+=======
+/**
+ * Stable, machine-readable summary used by `agents view` and `--json`.
+ * `agent` is the underlying harness (claude/codex/...) so consumers can
+ * group profiles under installed agents without reparsing host strings.
+ */
+export interface ProfileSummary {
+  name: string;
+  agent: AgentId;
+  host: string;
+  provider: string;
+  model: string;
+  auth: string;
+  path: string;
+>>>>>>> origin/main
 }
 
 const PROFILE_NAME_PATTERN = /^[a-z0-9][a-z0-9-_]{0,48}$/i;
@@ -47,6 +63,12 @@ export function getProfilesDir(): string {
 
 function profilePath(name: string): string {
   return path.join(getProfilesDir(), `${name}.yml`);
+}
+
+/** Return the on-disk YAML path for a profile name. */
+export function getProfilePath(name: string): string {
+  validateProfileName(name);
+  return profilePath(name);
 }
 
 /** Validate a profile name against the allowed pattern. Throws on invalid input. */
@@ -131,9 +153,23 @@ export function profileProviderLabel(profile: Profile): string {
   return profile.provider || profile.auth?.keychainItem?.split('.')[1] || '-';
 }
 
+<<<<<<< HEAD
 /** Return the configured model env value for display. */
 export function profileModelLabel(profile: Profile): string {
   for (const key of ['ANTHROPIC_MODEL', 'ANTHROPIC_SMALL_FAST_MODEL', 'OPENAI_MODEL', 'GEMINI_MODEL', 'GROK_MODEL']) {
+=======
+const MODEL_ENV_KEYS = [
+  'ANTHROPIC_MODEL',
+  'ANTHROPIC_SMALL_FAST_MODEL',
+  'OPENAI_MODEL',
+  'GEMINI_MODEL',
+  'GROK_MODEL',
+] as const;
+
+/** Return the configured model env value for display. */
+export function profileModelLabel(profile: Profile): string {
+  for (const key of MODEL_ENV_KEYS) {
+>>>>>>> origin/main
     const value = profile.env[key];
     if (value) return value;
   }
@@ -143,13 +179,92 @@ export function profileModelLabel(profile: Profile): string {
   return '-';
 }
 
+<<<<<<< HEAD
+=======
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  const parts = token.split('.');
+  if (parts.length < 2) return null;
+  try {
+    const normalized = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    const decoded = Buffer.from(padded, 'base64').toString('utf-8');
+    const parsed = JSON.parse(decoded);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function maskToken(token: string): string {
+  if (token.length <= 12) return `${token.slice(0, 3)}...${token.slice(-2)}`;
+  return `${token.slice(0, 6)}...${token.slice(-4)}`;
+}
+
+const INLINE_AUTH_KEYS = [
+  'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_API_KEY',
+  'OPENAI_API_KEY',
+  'GEMINI_API_KEY',
+  'GOOGLE_API_KEY',
+  'XAI_API_KEY',
+] as const;
+
+function inlineAuthToken(profile: Profile): string | undefined {
+  if (profile.auth?.envVar && profile.env[profile.auth.envVar]) {
+    return profile.env[profile.auth.envVar];
+  }
+  for (const key of INLINE_AUTH_KEYS) {
+    const value = profile.env[key];
+    if (value) return value;
+  }
+  return undefined;
+}
+
+/**
+ * Build a non-secret auth identity/status label for list surfaces.
+ *
+ * - Inline JWT in env: decode locally and show email / preferred_username / sub.
+ * - Inline opaque token in env: masked prefix/suffix (user explicitly stored it
+ *   in the YAML, so they accept the leak in their own output).
+ * - Keychain-backed auth: provider + "stored" or "missing" (non-prompting).
+ * - No auth at all: provider only.
+ */
+export function profileAuthLabel(profile: Profile): string {
+  const provider = profileProviderLabel(profile);
+  const token = inlineAuthToken(profile);
+  if (token) {
+    const payload = decodeJwtPayload(token);
+    const identity =
+      payload?.email ||
+      payload?.preferred_username ||
+      payload?.username ||
+      payload?.sub;
+    if (typeof identity === 'string') return `${provider} ${identity}`;
+    return `${provider} ${maskToken(token)}`;
+  }
+  if (profile.auth) {
+    return `${provider} ${hasKeychainToken(profile.auth.keychainItem) ? 'stored' : 'missing'}`;
+  }
+  return provider;
+}
+
+>>>>>>> origin/main
 /** Build a stable, machine-readable summary for list and view surfaces. */
 export function profileSummary(profile: Profile): ProfileSummary {
   return {
     name: profile.name,
+<<<<<<< HEAD
     host: profileHostLabel(profile),
     provider: profileProviderLabel(profile),
     model: profileModelLabel(profile),
+=======
+    agent: profile.host.agent,
+    host: profileHostLabel(profile),
+    provider: profileProviderLabel(profile),
+    model: profileModelLabel(profile),
+    auth: profileAuthLabel(profile),
+    path: getProfilePath(profile.name),
+>>>>>>> origin/main
   };
 }
 

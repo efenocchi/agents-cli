@@ -54,6 +54,18 @@ export const PLUGIN_EXEC_SURFACE_LABELS: Record<keyof PluginCapabilities, string
   hasPermissions: 'permissions/',
 };
 
+function isPluginRootEntry(pluginsDir: string, entry: fs.Dirent): boolean {
+  if (entry.name.startsWith('.')) return false;
+  if (entry.isDirectory()) return true;
+  if (!entry.isSymbolicLink()) return false;
+
+  try {
+    return fs.statSync(path.join(pluginsDir, entry.name)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Discover all plugins in ~/.agents/plugins/.
  * A valid plugin has a .claude-plugin/plugin.json manifest.
@@ -68,7 +80,7 @@ export function discoverPlugins(): DiscoveredPlugin[] {
   const entries = fs.readdirSync(pluginsDir, { withFileTypes: true });
 
   for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+    if (!isPluginRootEntry(pluginsDir, entry)) continue;
 
     const pluginRoot = path.join(pluginsDir, entry.name);
     const manifest = loadPluginManifest(pluginRoot);
