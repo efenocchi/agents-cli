@@ -97,6 +97,7 @@ const BROWSER_RUNTIME_DIR = path.join(CACHE_DIR, 'browser');
 const HELPERS_DIR = path.join(CACHE_DIR, 'helpers');
 const DAEMON_DIR = path.join(HELPERS_DIR, 'daemon');
 const PTY_DIR = path.join(HELPERS_DIR, 'pty');
+const TMUX_DIR = path.join(HELPERS_DIR, 'tmux');
 const FETCH_CACHE_DIR = path.join(CACHE_DIR, '.fetch');
 const CLI_VERSION_CACHE_FILE = path.join(CACHE_DIR, '.cli-version-cache.json');
 const MODELS_CACHE_FILE = path.join(CACHE_DIR, '.models-cache.json');
@@ -377,6 +378,9 @@ export function getDaemonDir(): string { return DAEMON_DIR; }
 
 /** Path to PTY server scratch (~/.agents/.cache/helpers/pty/). */
 export function getPtyDir(): string { return PTY_DIR; }
+
+/** Path to tmux scratch (~/.agents/.cache/helpers/tmux/) — shared server socket + per-session meta JSONs. */
+export function getTmuxDir(): string { return TMUX_DIR; }
 
 /** Path to remote-resource auto-pull cache (~/.agents/.cache/.fetch/). */
 export function getFetchCacheDir(): string { return FETCH_CACHE_DIR; }
