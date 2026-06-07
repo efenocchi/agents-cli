@@ -4,61 +4,45 @@ import * as path from 'path';
 import { tmpdir } from 'os';
 import * as yaml from 'yaml';
 import * as state from '../state.js';
+import * as profiles from './profiles.js';
 
-const { TEST_HOME, TEST_AGENTS_DIR, TEST_BROWSER_DIR } = vi.hoisted(() => {
-  const nodeOs = require('os');
-  const nodePath = require('path');
-  const testHome = nodePath.join(nodeOs.tmpdir(), 'agents-cli-browser-service-test');
-  const testAgentsDir = nodePath.join(testHome, '.agents');
-  return {
-    TEST_HOME: testHome,
-    TEST_AGENTS_DIR: testAgentsDir,
-    TEST_BROWSER_DIR: nodePath.join(testAgentsDir, 'browser'),
-  };
-});
+const TEST_HOME = path.join(tmpdir(), 'agents-cli-browser-service-test');
+const TEST_AGENTS_DIR = path.join(TEST_HOME, '.agents');
+const TEST_BROWSER_DIR = path.join(TEST_AGENTS_DIR, 'browser');
 
 vi.spyOn(state, 'getUserAgentsDir').mockReturnValue(TEST_AGENTS_DIR);
 vi.spyOn(state, 'getAgentsDir').mockReturnValue(TEST_AGENTS_DIR);
 vi.spyOn(state, 'getBrowserRuntimeDir').mockReturnValue(TEST_BROWSER_DIR);
 
-// Mock profiles module so listProfiles, getProfile, and getProfileRuntimeDir use the test dir.
-vi.mock('./profiles.js', async (importOriginal) => {
-  const nodeFs = require('fs');
-  const nodePath = require('path');
-  const nodeYaml = require('yaml');
-  const nodeOs = require('os');
-  const testHome = nodePath.join(nodeOs.tmpdir(), 'agents-cli-browser-service-test');
-  const testAgentsDir = nodePath.join(testHome, '.agents');
-  const testBrowserDir = nodePath.join(testAgentsDir, 'browser');
-
-  function readProfileYaml(name: string) {
-    const profilePath = nodePath.join(testBrowserDir, 'profiles', `${name}.yaml`);
-    if (!nodeFs.existsSync(profilePath)) return null;
-    const raw = nodeYaml.parse(nodeFs.readFileSync(profilePath, 'utf-8')) as {
-      name: string;
-      browser: string;
-      endpoints: string[];
-    };
-    return { name: raw.name, browser: raw.browser, endpoints: raw.endpoints };
-  }
-
-  const actual = await importOriginal<typeof import('./profiles.js')>();
-  return {
-    ...actual,
-    getBrowserRuntimeDir: () => testBrowserDir,
-    getProfileRuntimeDir: (name: string) => nodePath.join(testBrowserDir, name),
-    listProfiles: async () => {
-      const profilesDir = nodePath.join(testBrowserDir, 'profiles');
-      if (!nodeFs.existsSync(profilesDir)) return [];
-      return nodeFs
-        .readdirSync(profilesDir)
-        .filter((f: string) => f.endsWith('.yaml'))
-        .map((f: string) => readProfileYaml(nodePath.basename(f, '.yaml')))
-        .filter(Boolean);
-    },
-    getProfile: async (name: string) => readProfileYaml(name),
+// Override the four profiles.js exports the test needs via vi.spyOn instead
+// of a full vi.mock factory — keeps every other export real and avoids
+// needing vi.hoisted / vi.importActual, neither of which Bun's native test
+// runner supports.
+function readProfileYaml(name: string): { name: string; browser: string; endpoints: string[] } | null {
+  const profilePath = path.join(TEST_BROWSER_DIR, 'profiles', `${name}.yaml`);
+  if (!fs.existsSync(profilePath)) return null;
+  const raw = yaml.parse(fs.readFileSync(profilePath, 'utf-8')) as {
+    name: string;
+    browser: string;
+    endpoints: string[];
   };
+  return { name: raw.name, browser: raw.browser, endpoints: raw.endpoints };
+}
+
+vi.spyOn(profiles, 'getBrowserRuntimeDir').mockReturnValue(TEST_BROWSER_DIR);
+vi.spyOn(profiles, 'getProfileRuntimeDir').mockImplementation(
+  (name: string) => path.join(TEST_BROWSER_DIR, name),
+);
+vi.spyOn(profiles, 'listProfiles').mockImplementation(async () => {
+  const profilesDir = path.join(TEST_BROWSER_DIR, 'profiles');
+  if (!fs.existsSync(profilesDir)) return [];
+  return fs
+    .readdirSync(profilesDir)
+    .filter((f) => f.endsWith('.yaml'))
+    .map((f) => readProfileYaml(path.basename(f, '.yaml')))
+    .filter((p): p is { name: string; browser: string; endpoints: string[] } => p !== null);
 });
+vi.spyOn(profiles, 'getProfile').mockImplementation(async (name: string) => readProfileYaml(name));
 
 const { BrowserService, resolveScreenshotOutputPath } = await import('./service.js');
 

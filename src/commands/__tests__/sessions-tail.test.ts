@@ -4,14 +4,20 @@ type WatchCallback = (
   filename: string | Buffer | null,
 ) => void;
 
-const watchState = vi.hoisted(() => ({
-  callbacks: [] as WatchCallback[],
-}));
+// Plain top-level const captured by closure in the vi.mock factory below.
+// Bun's test runner does not hoist vi.mock, and vitest's hoister sees the
+// const declared above the factory, so this works in both runners without
+// vi.hoisted (which is not available in Bun's native test runner).
+const watchState: { callbacks: WatchCallback[] } = { callbacks: [] };
 
-vi.mock('fs', async () => {
-  const actual = await vi.importActual<typeof import('fs')>('fs');
+// Pull the real fs via the alternate `node:fs` specifier so vi.mock('fs')
+// does not affect this lookup. vi.importActual is vitest-only and is not
+// available under Bun's native test runner.
+vi.mock('fs', () => {
+  const actual = require('node:fs') as typeof import('fs');
   return {
     ...actual,
+    default: actual,
     watch: ((_: fs.PathLike, __: fs.WatchOptions | undefined, listener?: WatchCallback) => {
       if (listener) watchState.callbacks.push(listener);
       return { close() {} } as fs.FSWatcher;

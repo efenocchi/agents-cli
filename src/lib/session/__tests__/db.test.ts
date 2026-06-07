@@ -1,19 +1,15 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-const { TEST_HOME } = vi.hoisted(() => {
-  const nodeOs = require('os');
-  const nodeFs = require('fs');
-  const nodePath = require('path');
-  const testHome = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'agents-cli-db-test-'));
-  // Set before state.ts loads so its module-level HOME constant picks up the override.
-  process.env.HOME = testHome;
-  return { TEST_HOME: testHome };
-});
+// Set HOME before db.js loads so its module-level base dir picks up the
+// override. Plain top-level statements run before the dynamic `await import`
+// below, so vi.hoisted is not needed (and is also not supported by Bun's
+// native test runner).
+const TEST_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-cli-db-test-'));
+process.env.HOME = TEST_HOME;
 
-// Import AFTER the mock so db.ts captures TEST_HOME as its base dir.
 const { getDB, getDBPath, querySessions, closeDB } = await import('../db.js');
 
 function seed(id: string, version: string | null, timestamp: string): void {

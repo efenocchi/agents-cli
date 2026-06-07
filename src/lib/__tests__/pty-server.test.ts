@@ -14,21 +14,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as fsp from 'fs/promises';
+import * as os from 'os';
 import * as path from 'path';
 
-const { TEST_HOME } = vi.hoisted(() => {
-  const nodeOs = require('os');
-  const nodeFs = require('fs');
-  const nodePath = require('path');
-  // macOS sun_path is 104 chars; os.tmpdir() under /var/folders pushes the
-  // socket path over that and listen() returns EINVAL. /tmp resolves short
-  // on both Linux (/tmp) and macOS (/private/tmp) so the socket fits.
-  const tmpBase = process.platform === 'darwin' ? '/tmp' : nodeOs.tmpdir();
-  const testHome = nodeFs.mkdtempSync(nodePath.join(tmpBase, 'agents-pty-test-'));
-  // Set before state.ts loads so its module-level HOME constant picks up the override.
-  process.env.HOME = testHome;
-  return { TEST_HOME: testHome };
-});
+// macOS sun_path is 104 chars; os.tmpdir() under /var/folders pushes the
+// socket path over that and listen() returns EINVAL. /tmp resolves short
+// on both Linux (/tmp) and macOS (/private/tmp) so the socket fits.
+// Plain top-level statements run before the dynamic `await import` below,
+// so vi.hoisted is not needed (and is also not supported by Bun's native
+// test runner).
+const tmpBase = process.platform === 'darwin' ? '/tmp' : os.tmpdir();
+const TEST_HOME = fs.mkdtempSync(path.join(tmpBase, 'agents-pty-test-'));
+process.env.HOME = TEST_HOME;
 
 const { runPtyServer, captureProcessStartTime, getSocketPath } = await import('../pty-server.js');
 
