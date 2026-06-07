@@ -744,7 +744,7 @@ describe('applyPermissionsToVersion', () => {
       allow: ['Bash(git *)'],
     };
 
-    const result = applyPermissionsToVersion('gemini' as any, set, versionHome, true);
+    const result = applyPermissionsToVersion('cursor' as any, set, versionHome, true);
     expect(result.success).toBe(false);
     expect(result.error).toContain('does not support permissions');
   });
