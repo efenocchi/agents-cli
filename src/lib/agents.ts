@@ -73,12 +73,23 @@ function saveCliVersionCache(): void {
   }
 }
 
-/** Synchronous PATH search -- no subprocess. Returns first matching binary path. */
+/**
+ * Synchronous PATH search -- no subprocess. Returns first matching binary path.
+ *
+ * Skips our own shims dir (`~/.agents/.cache/shims/`) — those shims are
+ * dispatch helpers, not real installs. Counting them as installed produced a
+ * false positive where agents with NO real binary on the host (e.g. a
+ * never-installed Cursor whose only PATH entry was our `cursor-agent` shim
+ * dispatcher) showed up under `agents view`'s "Not Managed by Agents CLI"
+ * section, even though the user had nothing to import.
+ */
 function findInPath(command: string): string | null {
   const pathEnv = process.env.PATH || '';
   const pathExt = process.platform === 'win32' ? (process.env.PATHEXT || '').split(';') : [''];
+  const shimsDir = getShimsDir();
   for (const dir of pathEnv.split(path.delimiter)) {
     if (!dir) continue;
+    if (path.resolve(dir) === path.resolve(shimsDir)) continue;
     for (const ext of pathExt) {
       const full = path.join(dir, command + ext);
       try {
@@ -550,8 +561,16 @@ async function getCachedVersionForBinary(agentId: AgentId, binaryPath: string): 
     version = null;
   }
 
-  cache[agentId] = { binaryPath, mtime, version };
-  saveCliVersionCache();
+  // Skip persisting null results — the most common cause is a transient
+  // `--version` failure (slow startup, stdout race, etc.). A sticky-null
+  // entry kept users in a broken state where every subsequent
+  // `getCachedVersionForBinary` short-circuited to null forever, even
+  // after the binary started working. Re-probing on the next call costs
+  // one execFile; persisting null costs the whole feature.
+  if (version !== null) {
+    cache[agentId] = { binaryPath, mtime, version };
+    saveCliVersionCache();
+  }
   return version;
 }
 
