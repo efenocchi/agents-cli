@@ -122,7 +122,7 @@ agents run codex "Fix the issues Claude found"
 agents run gemini "Write tests for the fixed code"
 ```
 
-Each resolves to the project-pinned version with skills, MCP servers, and permissions already synced.
+Each resolves to the project-pinned version with skills, MCP servers, and permissions already synced. Single-typo names auto-correct -- `agents run cladue` resolves to `claude`, `agents run grk` to `grok`.
 
 ### Rate-limited? Keep working.
 

@@ -8,6 +8,11 @@
 - The copy now walks the source tree and drops symlinks whose `realpath` escapes the plugin root, leaving internal symlinks intact (cpSync rewrites internal targets to absolute paths into the source tree, which the consumer still resolves correctly). One informational line per plugin lists the skipped names so plugin authors notice.
 - Existing per-version marketplace directories still hold the bloat from prior syncs; clean up with `rm` against `~/.claude/plugins/marketplaces/agents-cli/plugins/*/{app,web,widgets,*-symlinks-that-escaped}` then re-run `agents pull` or any plugin sync to re-copy with the filter.
 
+**`agents run` auto-corrects single-typo agent names**
+
+- `agents run cladue "..."` used to print `Unknown agent: cladue` and exit. It now resolves to `claude` and runs, logging `Resolved 'cladue' -> 'claude' (single-edit match)` on stderr. Same for `grk` -> `grok`, `codx` -> `codex`, etc. — any one-edit typo (insert / delete / substitute / adjacent transposition) of a canonical agent id auto-corrects.
+- Implemented with Damerau-Levenshtein distance at `maxDistance: 1`, so a transposed pair like `du` in `cladue` counts as a single edit. Ambiguous or 2+ edit inputs still fall through to the original `Unknown agent` error. Applies to `--fallback codx,gemni` too.
+
 ## 1.20.3
 
 **`agents run` startup latency (stale-while-revalidate the usage probe + memoize agents.yaml)**
