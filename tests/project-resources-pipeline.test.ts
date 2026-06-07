@@ -235,43 +235,46 @@ describe('project-resources: resolveResource project precedence', () => {
   });
 });
 
-describe('project-resources: syncResourcesToVersion orphan-sweep', () => {
-  // When the agent shim runs in project A (which has
-  // .agents/commands/proj-a-only.md), then later in project B (which has no
-  // .agents/), the project-A command must NOT linger in the shared version
-  // home and fire silently inside project B. This test exercises the sweep
-  // added to syncResourcesToVersion alongside the existing hooks/plugins
-  // sweeps.
-  it('removes a project command from version home after cwd moves to a project without that command', async () => {
-    const { repoRoot, siblingRoot } = setupFixture();
+describe('project-resources: syncResourcesToVersion security defense', () => {
+  // Commit 1cc35b14 (fix(security): project-resource defense) closed a
+  // threat-class: a cloned public repo could ship .agents/commands/foo.md
+  // with a harmful body, and the next `agents run` would materialize that
+  // file under the agent's prompt surface. The fix unconditionally excludes
+  // the project layer from sync for commands/skills/MCP/subagents/permissions.
+  // resolveResource still surfaces project entries for listing/inspection;
+  // only the materializing pipeline is locked down.
+  //
+  // These tests pin the defense at the sync layer. If a future change re-adds
+  // project-layer materialization without a confirm step, these assertions
+  // flip and the threat returns.
+  it('does NOT materialize a project command into version home, regardless of cwd', async () => {
+    const { repoRoot } = setupFixture();
     const { syncResourcesToVersion } = await import('../src/lib/versions.js');
+    const { resolveResource } = await import('../src/lib/resources.js');
 
-    // First sync: cwd=repoRoot. The project command `myproj` resolves and
-    // lands in the version home.
+    // Sanity: the fixture's project command resolves, so the resolver still
+    // sees it. This is the "list / inspect" path that must keep working.
+    const resolved = resolveResource('commands', 'myproj', repoRoot);
+    expect(resolved?.source).toBe('project');
+
+    // But sync must NOT plant it under the agent's prompt surface.
     syncResourcesToVersion('claude', '99.99.99', undefined, { cwd: repoRoot, force: true });
 
     const versionCmd = path.join(VERSIONS_DIR, 'claude', '99.99.99', 'home', '.claude', 'commands', 'myproj.md');
-    expect(fs.existsSync(versionCmd)).toBe(true);
-
-    // Second sync: cwd=siblingRoot. No project .agents/ → no `myproj` in the
-    // resolved set. Pre-fix: the file lingers. Post-fix: orphan sweep removes
-    // it.
-    syncResourcesToVersion('claude', '99.99.99', undefined, { cwd: siblingRoot, force: true });
-
     expect(fs.existsSync(versionCmd)).toBe(false);
   });
 
-  it('removes a project skill from version home after cwd moves to a project without that skill', async () => {
-    const { repoRoot, siblingRoot } = setupFixture();
+  it('does NOT materialize a project skill into version home, regardless of cwd', async () => {
+    const { repoRoot } = setupFixture();
     const { syncResourcesToVersion } = await import('../src/lib/versions.js');
+    const { resolveResource } = await import('../src/lib/resources.js');
+
+    const resolved = resolveResource('skills', 'myskill', repoRoot);
+    expect(resolved?.source).toBe('project');
 
     syncResourcesToVersion('claude', '99.99.99', undefined, { cwd: repoRoot, force: true });
 
     const versionSkill = path.join(VERSIONS_DIR, 'claude', '99.99.99', 'home', '.claude', 'skills', 'myskill');
-    expect(fs.existsSync(versionSkill)).toBe(true);
-
-    syncResourcesToVersion('claude', '99.99.99', undefined, { cwd: siblingRoot, force: true });
-
     expect(fs.existsSync(versionSkill)).toBe(false);
   });
 });

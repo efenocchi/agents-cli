@@ -265,12 +265,16 @@ describe('PermissionsHandler', () => {
         allow: ['Bash(*)'],
       });
 
-      // Gemini doesn't support permissions
-      runPermissionsExpression(home, `PermissionsHandler.sync('gemini', ${JSON.stringify(versionHome)})`);
+      // Cursor doesn't support permissions (not in PERMISSIONS_CAPABLE_AGENTS).
+      // Gemini was capable as of 236b4105 — pick an agent that's still on the
+      // excluded list, otherwise this test silently flips when capability is
+      // added.
+      runPermissionsExpression(home, `PermissionsHandler.sync('cursor', ${JSON.stringify(versionHome)})`);
 
-      // No config should be written
-      const configPath = path.join(versionHome, '.gemini', 'settings.json');
-      expect(fs.existsSync(configPath)).toBe(false);
+      // No config should be written for a non-capable agent. Probe both the
+      // canonical settings file paths a capable agent would have used.
+      expect(fs.existsSync(path.join(versionHome, '.cursor', 'settings.json'))).toBe(false);
+      expect(fs.existsSync(path.join(versionHome, '.claude', 'settings.json'))).toBe(false);
     });
   });
 
