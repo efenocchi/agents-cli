@@ -45,6 +45,9 @@ export interface AgentConfig {
     skills: Capability;
     commands: Capability;
     plugins: Capability;
+    subagents: Capability;
+    rules: RulesCapability;
+    workflows: Capability;
     /**
      * Permission modes this agent natively supports. Modes outside this set
      * are gated by buildExecCommand: `auto` silently degrades to `edit`,
@@ -68,8 +71,11 @@ export interface AgentConfig {
  */
 export type Capability = boolean | { since?: string; until?: string };
 
+/** Rules sync writes one composed instructions file per supported agent. */
+export type RulesCapability = false | { file: string };
+
 /** Names of every gateable capability on AgentConfig. */
-export type CapabilityName = 'hooks' | 'mcp' | 'allowlist' | 'skills' | 'commands' | 'plugins';
+export type CapabilityName = 'hooks' | 'mcp' | 'allowlist' | 'skills' | 'commands' | 'plugins' | 'subagents' | 'rules' | 'workflows';
 
 /**
  * Permission modes controlling agent autonomy.

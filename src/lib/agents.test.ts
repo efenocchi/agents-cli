@@ -4,6 +4,8 @@ import * as path from 'path';
 import { pathToFileURL } from 'url';
 import { spawnSync } from 'child_process';
 import { afterEach, describe, expect, it } from 'vitest';
+import { AGENTS } from './agents.js';
+import type { CapabilityName } from './types.js';
 
 const tempDirs: string[] = [];
 
@@ -166,5 +168,27 @@ describe('MCP CLI execution', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toBe('skipped: agent does not support HTTP MCP registration');
+  });
+});
+
+describe('AGENTS capability matrix', () => {
+  it('declares every gateable resource capability for every agent', () => {
+    const requiredCapabilities: CapabilityName[] = [
+      'hooks',
+      'mcp',
+      'allowlist',
+      'skills',
+      'commands',
+      'plugins',
+      'subagents',
+      'rules',
+      'workflows',
+    ];
+
+    for (const [agentId, config] of Object.entries(AGENTS)) {
+      for (const capability of requiredCapabilities) {
+        expect(config.capabilities, `${agentId} missing ${capability}`).toHaveProperty(capability);
+      }
+    }
   });
 });

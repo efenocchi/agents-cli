@@ -19,6 +19,11 @@ describe('supports() capability gate', () => {
       expect(supports('codex', 'hooks')).toEqual({ ok: true });
       expect(supports('gemini', 'hooks')).toEqual({ ok: true });
     });
+
+    it('returns ok for rules file object-form caps', () => {
+      expect(supports('claude', 'rules')).toEqual({ ok: true });
+      expect(supports('claude', 'rules', '1.0.0')).toEqual({ ok: true });
+    });
   });
 
   describe('codex hooks since 0.116.0', () => {

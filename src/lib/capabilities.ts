@@ -14,6 +14,7 @@ import type {
   Capability,
   CapabilityName,
   CapabilityResult,
+  RulesCapability,
 } from './types.js';
 
 /**
@@ -31,7 +32,7 @@ function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-function getCapability(agent: AgentId, cap: CapabilityName): Capability {
+function getCapability(agent: AgentId, cap: CapabilityName): Capability | RulesCapability {
   return AGENTS[agent].capabilities[cap];
 }
 
@@ -58,6 +59,7 @@ export function supports(
   const c = getCapability(agent, cap);
   if (c === false) return { ok: false, reason: 'unsupported' };
   if (c === true) return { ok: true };
+  if ('file' in c) return { ok: true };
 
   if (!version) return { ok: true };
 
