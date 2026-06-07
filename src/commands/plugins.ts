@@ -12,7 +12,8 @@ import type { Command } from 'commander';
 import chalk from 'chalk';
 import { input } from '@inquirer/prompts';
 
-import { PLUGINS_CAPABLE_AGENTS, agentLabel } from '../lib/agents.js';
+import { agentLabel } from '../lib/agents.js';
+import { capableAgents, isCapable } from '../lib/capabilities.js';
 import type { AgentId, DiscoveredPlugin, PluginManifest } from '../lib/types.js';
 import {
   discoverPlugins,
@@ -194,7 +195,7 @@ Examples:
       console.log(`  ${chalk.gray(`Version: ${plugin.manifest.version}`)}`);
       console.log(`  ${chalk.gray(`Path: ${formatPath(plugin.root)}`)}`);
 
-      const agents = PLUGINS_CAPABLE_AGENTS
+      const agents = capableAgents('plugins')
         .filter(a => pluginSupportsAgent(plugin, a))
         .map(a => agentLabel(a));
       console.log(`  ${chalk.gray(`Agents: ${agents.join(', ')}`)}`);
@@ -270,7 +271,7 @@ Examples:
       // Show installation status per agent version
       console.log(chalk.bold('\n  Installation Status'));
       let anyInstalled = false;
-      for (const agentId of PLUGINS_CAPABLE_AGENTS) {
+      for (const agentId of capableAgents('plugins')) {
         if (!pluginSupportsAgent(plugin, agentId)) continue;
         const versions = listInstalledVersions(agentId);
         if (versions.length === 0) continue;
@@ -320,7 +321,7 @@ Examples:
       let targetAgents: AgentId[];
       if (agentArg) {
         const agentId = agentArg as AgentId;
-        if (!PLUGINS_CAPABLE_AGENTS.includes(agentId)) {
+        if (!isCapable(agentId, 'plugins')) {
           console.log(chalk.red(`Agent '${agentArg}' does not support plugins`));
           process.exit(1);
         }
@@ -330,7 +331,7 @@ Examples:
         }
         targetAgents = [agentId];
       } else {
-        targetAgents = PLUGINS_CAPABLE_AGENTS.filter(a => pluginSupportsAgent(plugin, a));
+        targetAgents = capableAgents('plugins').filter(a => pluginSupportsAgent(plugin, a));
       }
 
       const allowExec = options.allowExecSurfaces === true;
@@ -393,7 +394,7 @@ Examples:
 
       // Build list of targets that have this plugin synced
       const availableTargets: Array<{ agent: AgentId; version: string }> = [];
-      for (const agentId of PLUGINS_CAPABLE_AGENTS) {
+      for (const agentId of capableAgents('plugins')) {
         if (plugin && !pluginSupportsAgent(plugin, agentId)) continue;
         const versions = listInstalledVersions(agentId);
         for (const version of versions) {
@@ -559,7 +560,7 @@ Examples:
       // Sync to all supported installed versions
       console.log();
       let synced = 0;
-      for (const agentId of PLUGINS_CAPABLE_AGENTS) {
+      for (const agentId of capableAgents('plugins')) {
         if (!pluginSupportsAgent(plugin, agentId)) continue;
         const versions = listInstalledVersions(agentId);
         if (versions.length === 0) continue;
@@ -620,7 +621,7 @@ Examples:
         console.log(chalk.green('done'));
 
         // Re-sync to all supported installed versions
-        for (const agentId of PLUGINS_CAPABLE_AGENTS) {
+        for (const agentId of capableAgents('plugins')) {
           if (!pluginSupportsAgent(plugin, agentId)) continue;
           const versions = listInstalledVersions(agentId);
           const defaultVer = getGlobalDefault(agentId);
@@ -679,7 +680,7 @@ function buildPluginRows(plugins: DiscoveredPlugin[]): ResourceRow[] {
   // Cache version lists per agent once.
   const versionsByAgent = new Map<AgentId, string[]>();
   const defaultsByAgent = new Map<AgentId, string | null>();
-  for (const agent of PLUGINS_CAPABLE_AGENTS) {
+  for (const agent of capableAgents('plugins')) {
     versionsByAgent.set(agent, listInstalledVersions(agent));
     defaultsByAgent.set(agent, getGlobalDefault(agent));
   }
@@ -687,7 +688,7 @@ function buildPluginRows(plugins: DiscoveredPlugin[]): ResourceRow[] {
   for (const plugin of plugins) {
     const targets: SyncTarget[] = [];
 
-    for (const agent of PLUGINS_CAPABLE_AGENTS) {
+    for (const agent of capableAgents('plugins')) {
       if (!pluginSupportsAgent(plugin, agent)) continue;
       for (const version of versionsByAgent.get(agent) || []) {
         const versionHome = getVersionHomePath(agent, version);
@@ -733,7 +734,7 @@ function formatPluginDetail(plugin: DiscoveredPlugin, targets: SyncTarget[]): st
     lines.push(chalk.gray(plugin.manifest.description));
   }
 
-  const supported = PLUGINS_CAPABLE_AGENTS
+  const supported = capableAgents('plugins')
     .filter((a) => pluginSupportsAgent(plugin, a))
     .map((a) => agentLabel(a));
   if (supported.length > 0) {

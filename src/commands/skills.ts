@@ -16,12 +16,12 @@ import { select, checkbox, confirm } from '@inquirer/prompts';
 
 import {
   AGENTS,
-  SKILLS_CAPABLE_AGENTS,
   resolveAgentName,
   getAllCliStates,
   formatAgentError,
   agentLabel,
 } from '../lib/agents.js';
+import { capableAgents } from '../lib/capabilities.js';
 import type { AgentId } from '../lib/types.js';
 import { cloneRepo } from '../lib/git.js';
 import {
@@ -114,7 +114,7 @@ When to use:
         const resolved = resolveAgentName(parts[0]);
         if (!resolved) {
           spinner.stop();
-          console.log(chalk.red(formatAgentError(parts[0], SKILLS_CAPABLE_AGENTS)));
+          console.log(chalk.red(formatAgentError(parts[0], capableAgents('skills'))));
           process.exit(1);
         }
         filterAgent = resolved;
@@ -333,7 +333,7 @@ Examples:
         let versionSelections: Map<AgentId, string[]>;
 
         if (options.agents) {
-          const result = await resolveAgentTargetsAutoInstalling(options.agents, SKILLS_CAPABLE_AGENTS, { yes: options.yes });
+          const result = await resolveAgentTargetsAutoInstalling(options.agents, capableAgents('skills'), { yes: options.yes });
           if (!result) {
             console.log(chalk.gray('Cancelled.'));
             return;
@@ -341,7 +341,7 @@ Examples:
           selectedAgents = result.selectedAgents;
           versionSelections = result.versionSelections;
         } else {
-          const result = await promptAgentVersionSelection(SKILLS_CAPABLE_AGENTS, {
+          const result = await promptAgentVersionSelection(capableAgents('skills'), {
             skipPrompts: options.yes,
           });
           selectedAgents = result.selectedAgents;
@@ -540,7 +540,7 @@ Examples:
         const allSkills: Array<{ name: string; description: string }> = [];
         const seenNames = new Set<string>();
 
-        for (const agentId of SKILLS_CAPABLE_AGENTS) {
+        for (const agentId of capableAgents('skills')) {
           const skills = listInstalledSkillsWithScope(agentId, cwd);
           for (const skill of skills) {
             if (!seenNames.has(skill.name)) {

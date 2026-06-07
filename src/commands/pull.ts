@@ -9,11 +9,10 @@
 import type { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
+import { capableAgents } from '../lib/capabilities.js';
 import {
   AGENTS,
   ALL_AGENT_IDS,
-  HOOKS_CAPABLE_AGENTS,
-  MCP_CAPABLE_AGENTS,
   getAllCliStates,
   registerMcpToTargets,
   isAgentName,
@@ -261,7 +260,7 @@ export function registerPullCommand(program: Command): void {
           for (const [name, config] of Object.entries(manifest.mcp)) {
             if (!config.command || config.transport === 'http') continue;
 
-            const scopedAgents = (config.agents ? [...config.agents] : [...MCP_CAPABLE_AGENTS]).filter(
+            const scopedAgents = (config.agents ? [...config.agents] : [...capableAgents('mcp')]).filter(
               (id) => !agentFilter || id === agentFilter
             );
             const scopedVersions = config.agentVersions
@@ -272,7 +271,7 @@ export function registerPullCommand(program: Command): void {
             const targets = resolveConfiguredAgentTargets(
               scopedAgents,
               scopedVersions,
-              MCP_CAPABLE_AGENTS
+              capableAgents('mcp')
             );
             const results = await registerMcpToTargets(
               targets,
@@ -369,7 +368,7 @@ export function registerPullCommand(program: Command): void {
         const hookManifest = parseHookManifest();
         if (Object.keys(hookManifest).length > 0) {
           let hookRegistered = 0;
-          const hookAgents = new Set(HOOKS_CAPABLE_AGENTS as readonly AgentId[]);
+          const hookAgents = new Set(capableAgents('hooks') as readonly AgentId[]);
           for (const agentId of agentsToSync) {
             if (!hookAgents.has(agentId)) continue;
             const versions = listInstalledVersions(agentId);

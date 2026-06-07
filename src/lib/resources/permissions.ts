@@ -21,8 +21,8 @@ import {
   parsePermissionSet,
   applyPermissionsToVersion,
   mergePermissionSets,
-  PERMISSIONS_CAPABLE_AGENTS,
 } from '../permissions.js';
+import { isCapable } from '../capabilities.js';
 
 export type PermissionItem = PermissionSet;
 
@@ -177,7 +177,7 @@ export const PermissionsHandler: ResourceHandler<PermissionItem> = {
    */
   sync(agent: AgentId, versionHome: string, cwd?: string): void {
     // Only sync to agents that support permissions
-    if (!PERMISSIONS_CAPABLE_AGENTS.includes(agent)) {
+    if (!isCapable(agent, 'allowlist')) {
       return;
     }
 

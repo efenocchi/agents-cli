@@ -474,30 +474,11 @@ export const AGENTS: Record<AgentId, AgentConfig> = {
 /** All registered agent IDs derived from the AGENTS registry. */
 export const ALL_AGENT_IDS: AgentId[] = Object.keys(AGENTS) as AgentId[];
 
-/** Agents that support MCP (Model Context Protocol) server integration. */
-export const MCP_CAPABLE_AGENTS: AgentId[] = ALL_AGENT_IDS.filter(
-  (id) => AGENTS[id].capabilities.mcp
-);
-
-/** Agents that support skills (SKILL.md + rules/ bundles). */
-export const SKILLS_CAPABLE_AGENTS: AgentId[] = ALL_AGENT_IDS.filter(
-  (id) => AGENTS[id].capabilities.skills
-);
-
-/** Agents that support file-based slash commands. */
-export const COMMANDS_CAPABLE_AGENTS: AgentId[] = ALL_AGENT_IDS.filter(
-  (id) => AGENTS[id].capabilities.commands
-);
-
-/** Agents that support event hooks (pre/post lifecycle callbacks). */
-export const HOOKS_CAPABLE_AGENTS: readonly AgentId[] = ALL_AGENT_IDS.filter(
-  (id) => AGENTS[id].capabilities.hooks !== false
-);
-
-/** Agents that support the plugin system. */
-export const PLUGINS_CAPABLE_AGENTS: AgentId[] = ALL_AGENT_IDS.filter(
-  (id) => AGENTS[id].capabilities.plugins !== false
-);
+// Capability-filtered agent lists used to live here as `*_CAPABLE_AGENTS`
+// constants. They were a frequent source of silent-skip bugs (e.g. grok
+// rules sync gated on `COMMANDS_CAPABLE_AGENTS`). Use `capableAgents(cap)`
+// from `./capabilities.js` instead — it consults the AgentConfig matrix
+// directly, so a single source of truth drives every gate.
 
 /** Get the chalk color function for an agent. Works for any AgentId or SessionAgentId. */
 export function colorAgent(agentId: string): (s: string) => string {

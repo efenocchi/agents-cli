@@ -13,10 +13,10 @@ import ora from 'ora';
 import {
   AGENTS,
   ALL_AGENT_IDS,
-  MCP_CAPABLE_AGENTS,
   getAllCliStates,
   agentLabel,
 } from '../lib/agents.js';
+import { capableAgents, isCapable } from '../lib/capabilities.js';
 import type { AgentId, McpPackage, RegistryType } from '../lib/types.js';
 import { DEFAULT_REGISTRIES } from '../lib/types.js';
 import {
@@ -520,19 +520,19 @@ When to use:
           }
 
           const cliStates = await getAllCliStates();
-          const installedAgents = MCP_CAPABLE_AGENTS.filter(
+          const installedAgents = capableAgents('mcp').filter(
             (id) => cliStates[id]?.installed || listInstalledVersions(id).length > 0
           );
           let targets;
           if (options.agents) {
-            const resolved = await resolveInstalledAgentTargetsAutoInstalling(options.agents, MCP_CAPABLE_AGENTS, { yes: options.yes });
+            const resolved = await resolveInstalledAgentTargetsAutoInstalling(options.agents, capableAgents('mcp'), { yes: options.yes });
             if (!resolved) {
               console.log(chalk.gray('Cancelled.'));
               return;
             }
             targets = resolved;
           } else {
-            targets = resolveConfiguredAgentTargets(installedAgents, undefined, MCP_CAPABLE_AGENTS);
+            targets = resolveConfiguredAgentTargets(installedAgents, undefined, capableAgents('mcp'));
           }
 
           if (targets.selectedAgents.length === 0) {

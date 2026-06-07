@@ -22,8 +22,8 @@ import {
 } from '../lib/agents.js';
 import type { AgentId } from '../lib/types.js';
 import { cloneRepo } from '../lib/git.js';
+import { capableAgents, isCapable } from '../lib/capabilities.js';
 import {
-  PERMISSIONS_CAPABLE_AGENTS,
   listInstalledPermissions,
   discoverPermissionsFromRepo,
   installPermissionSet,
@@ -176,12 +176,12 @@ When to use:
 
         const agentId = resolveAgentName(agentName);
         if (!agentId) {
-          console.log(chalk.red(formatAgentError(agentName, PERMISSIONS_CAPABLE_AGENTS)));
+          console.log(chalk.red(formatAgentError(agentName, capableAgents('allowlist'))));
           process.exit(1);
         }
         const requestedVersion = resolveVersionAlias(agentId, parts[1]) ?? null;
 
-        if (!PERMISSIONS_CAPABLE_AGENTS.includes(agentId)) {
+        if (!isCapable(agentId, 'allowlist')) {
           console.log(chalk.yellow(`${AGENTS[agentId].name} does not support fine-grained permissions`));
           return;
         }
@@ -357,7 +357,7 @@ Examples:
           let versionSelections: Map<AgentId, string[]>;
 
           if (options.agents) {
-            const result = await resolveAgentTargetsAutoInstalling(options.agents, PERMISSIONS_CAPABLE_AGENTS, {
+            const result = await resolveAgentTargetsAutoInstalling(options.agents, capableAgents('allowlist'), {
               yes: options.yes,
               allVersions: options.all,
             });
@@ -368,7 +368,7 @@ Examples:
             selectedAgents = result.selectedAgents;
             versionSelections = result.versionSelections;
           } else if (options.all) {
-            selectedAgents = [...PERMISSIONS_CAPABLE_AGENTS];
+            selectedAgents = [...capableAgents('allowlist')];
             versionSelections = new Map();
             for (const agentId of selectedAgents) {
               const versions = listInstalledVersions(agentId);
@@ -378,7 +378,7 @@ Examples:
             }
           } else {
             const result = await promptAgentVersionSelection(
-              PERMISSIONS_CAPABLE_AGENTS,
+              capableAgents('allowlist'),
               { skipPrompts: options.yes }
             );
             selectedAgents = result.selectedAgents;
@@ -519,7 +519,7 @@ Examples:
           let versionSelections: Map<AgentId, string[]>;
 
           if (options.agents) {
-            const result = await resolveAgentTargetsAutoInstalling(options.agents, PERMISSIONS_CAPABLE_AGENTS, {
+            const result = await resolveAgentTargetsAutoInstalling(options.agents, capableAgents('allowlist'), {
               yes: options.yes,
               allVersions: options.all,
             });
@@ -530,7 +530,7 @@ Examples:
             selectedAgents = result.selectedAgents;
             versionSelections = result.versionSelections;
           } else if (options.all) {
-            selectedAgents = [...PERMISSIONS_CAPABLE_AGENTS];
+            selectedAgents = [...capableAgents('allowlist')];
             versionSelections = new Map();
             for (const agentId of selectedAgents) {
               const versions = listInstalledVersions(agentId);
@@ -546,7 +546,7 @@ Examples:
 
             if (applyNow) {
               const result = await promptAgentVersionSelection(
-                PERMISSIONS_CAPABLE_AGENTS,
+                capableAgents('allowlist'),
                 { skipPrompts: false }
               );
               selectedAgents = result.selectedAgents;
@@ -656,7 +656,7 @@ Examples:
           let versionSelections: Map<AgentId, string[]>;
 
           if (options.agents) {
-            const result = await resolveAgentTargetsAutoInstalling(options.agents, PERMISSIONS_CAPABLE_AGENTS, {
+            const result = await resolveAgentTargetsAutoInstalling(options.agents, capableAgents('allowlist'), {
               yes: options.yes,
               allVersions: options.all,
             });
@@ -667,7 +667,7 @@ Examples:
             selectedAgents = result.selectedAgents;
             versionSelections = result.versionSelections;
           } else if (options.all) {
-            selectedAgents = [...PERMISSIONS_CAPABLE_AGENTS];
+            selectedAgents = [...capableAgents('allowlist')];
             versionSelections = new Map();
             for (const agentId of selectedAgents) {
               const versions = listInstalledVersions(agentId);
@@ -683,7 +683,7 @@ Examples:
 
             if (applyNow) {
               const result = await promptAgentVersionSelection(
-                PERMISSIONS_CAPABLE_AGENTS,
+                capableAgents('allowlist'),
                 { skipPrompts: false }
               );
               selectedAgents = result.selectedAgents;

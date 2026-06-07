@@ -27,13 +27,12 @@ import { updateGeminiSettings } from './gemini-settings.js';
 
 const HOME = os.homedir();
 
-/** Agents that support the permissions subsystem. */
-// antigravity: permissions in ~/.gemini/antigravity-cli/settings.json under
-// `permissions: { allow: [...], deny: [...] }` with action-namespaced entries:
-// command(...), read_file(...), write_file(...), read_url(...), mcp(...).
-// grok: permissions in ~/.grok/config.toml under [permission] as a `rules`
-// array of `{ action, tool, pattern }` tables.
-export const PERMISSIONS_CAPABLE_AGENTS: AgentId[] = ['claude', 'codex', 'opencode', 'antigravity', 'grok', 'gemini'];
+// PERMISSIONS_CAPABLE_AGENTS removed — use `capableAgents('allowlist')`
+// from lib/capabilities.ts. The capability matrix on AgentConfig is the
+// single source of truth. (Per-agent native format details:
+//   antigravity → ~/.gemini/antigravity-cli/settings.json `permissions.{allow,deny}`
+//   grok        → ~/.grok/config.toml `[permission].rules`
+// the writer in `applyPermissionsToVersion` handles the format dispatch.)
 
 /** Filename used for Codex Starlark deny-rules generated from permission groups. */
 export const CODEX_RULES_FILENAME = 'agents-deny.rules';
