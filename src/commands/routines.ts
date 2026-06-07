@@ -70,13 +70,24 @@ function isPromptCancelled(err: unknown): boolean {
   );
 }
 
-/** Interactive job picker. Returns the selected job name or null on cancel/empty. */
+/**
+ * Interactive job picker. Returns the selected job name or null on cancel/empty.
+ *
+ * `cwd` is opt-in: pass `process.cwd()` only for inspect-class commands
+ * (`view`) whose backing operation tolerates project-layer entries. Mutation
+ * (`remove`/`edit`/`pause`/`resume`) and execution (`run`) callers omit it,
+ * which limits the picker — and therefore the user — to user-layer routines
+ * only. Without that guard, a cloned public repo's `.agents/routines/<name>.yml`
+ * would surface in `agents routines run`'s picker and execute with an
+ * attacker-supplied prompt under the user's Claude session.
+ */
 async function pickJob(
   message: string,
   filter?: (job: JobConfig) => boolean,
   alternatives: string[] = [],
+  cwd?: string,
 ): Promise<string | null> {
-  let jobs = listAllJobs();
+  let jobs = listAllJobs(cwd);
   if (filter) {
     jobs = jobs.filter(filter);
   }
@@ -150,7 +161,7 @@ export function registerRoutinesCommands(program: Command): void {
     .command('list')
     .description('See all scheduled jobs, when they run next, and their last execution status')
     .action(() => {
-      const jobs = listAllJobs();
+      const jobs = listAllJobs(process.cwd());
       if (jobs.length === 0) {
         console.log(chalk.gray('No jobs configured'));
         console.log(chalk.gray('  Add a job: agents routines add <path-to-job.yml>'));
@@ -193,7 +204,14 @@ export function registerRoutinesCommands(program: Command): void {
       for (const job of jobs) {
         const nextRun = scheduler.getNextRun(job.name);
         const nextStr = humanizeNextRun(nextRun ?? null, now, job.timezone);
-        const schedStr = humanizeCron(job.schedule, job.timezone);
+        let schedStr = humanizeCron(job.schedule, job.timezone);
+        if (job.endAt) {
+          const end = new Date(job.endAt);
+          const endLabel = Number.isFinite(end.getTime())
+            ? end.toLocaleDateString()
+            : job.endAt;
+          schedStr = `${schedStr} (until ${endLabel})`;
+        }
         const latestRun = getLatestRun(job.name);
         const lastStatus = latestRun?.status || '-';
 
@@ -244,6 +262,7 @@ export function registerRoutinesCommands(program: Command): void {
     .option('-t, --timeout <timeout>', 'Kill the agent if it runs longer than this (e.g., 10m, 2h, 3d, 1w; max 1w)', '10m')
     .option('--timezone <tz>', 'Interpret schedule in this timezone (e.g., America/Los_Angeles)')
     .option('--at <time>', 'One-shot mode: run once at this time (e.g., "14:30" or "2026-02-24 09:00"), then disable')
+    .option('--end-at <iso>', 'Stop firing on or after this ISO 8601 timestamp (e.g., "2026-12-31T23:59:00Z"); routine auto-disables.')
     .option('--disabled', 'Create the routine but keep it paused (enable later with resume)')
     .action(async (nameOrPath: string | undefined, options) => {
       // Check if inline mode (has flags) or file mode
@@ -305,6 +324,7 @@ export function registerRoutinesCommands(program: Command): void {
           prompt: options.prompt,
           timezone: options.timezone,
           ...(runOnce ? { runOnce: true } : {}),
+          ...(options.endAt ? { endAt: options.endAt } : {}),
         };
 
         const errors = validateJob(config);
@@ -401,11 +421,11 @@ export function registerRoutinesCommands(program: Command): void {
     .description('Show the full YAML configuration for a routine')
     .action(async (name: string | undefined) => {
       if (!name) {
-        name = await pickJob('Select job to view', undefined, ['agents routines view <name>']) ?? undefined;
+        name = await pickJob('Select job to view', undefined, ['agents routines view <name>'], process.cwd()) ?? undefined;
         if (!name) return;
       }
 
-      const job = readJob(name);
+      const job = readJob(name, process.cwd());
       if (!job) {
         console.log(chalk.red(`Job '${name}' not found`));
         process.exit(1);
@@ -510,6 +530,12 @@ export function registerRoutinesCommands(program: Command): void {
         if (!name) return;
       }
 
+      // Execution is intentionally user-only: a routine spawns a full agent
+      // session with a YAML-supplied prompt, so a cloned public repo's
+      // `.agents/routines/<name>.yml` would be a prompt-injection vector if
+      // `run` honored the project layer. `list` / `view` stay project-aware
+      // for inspection; `run`, `remove`, `edit`, `pause`, `resume` stay on
+      // the trusted user layer.
       const job = readJob(name);
       if (!job) {
         console.log(chalk.red(`Job '${name}' not found`));

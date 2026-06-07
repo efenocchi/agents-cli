@@ -11,7 +11,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'yaml';
 import { Cron } from 'croner';
-import { getRoutinesDir, getRunsDir, ensureAgentsDir } from './state.js';
+import { getRoutinesDir, getRunsDir, ensureAgentsDir, getProjectRoutinesDir } from './state.js';
 import { safeJoin } from './paths.js';
 import type { AgentId } from './types.js';
 import { ALL_AGENT_IDS } from './agents.js';
@@ -43,6 +43,8 @@ export interface JobConfig {
   config?: Record<string, unknown>;
   version?: string;
   runOnce?: boolean;
+  // RFC3339 timestamp; routine auto-disables at the next fire on/after this time.
+  endAt?: string;
 }
 
 /** Metadata for a single job execution, persisted as JSON in the run directory. */
@@ -66,29 +68,58 @@ const JOB_DEFAULTS: Partial<JobConfig> = {
   enabled: true,
 };
 
-/** List all job configs from ~/.agents/routines/. */
-export function listJobs(): JobConfig[] {
+/**
+ * List all job configs, scanning project > user routine dirs.
+ * Project routines (`<project>/.agents/routines/`) shadow user routines of the
+ * same name. Project discovery is opt-in via `cwd`; the daemon (which calls
+ * `listJobs()` with no argument) only sees user routines.
+ */
+export function listJobs(cwd?: string): JobConfig[] {
   ensureAgentsDir();
-  const jobsDir = getRoutinesDir();
-  if (!fs.existsSync(jobsDir)) return [];
-
-  const files = fs.readdirSync(jobsDir).filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'));
+  const seen = new Set<string>();
   const jobs: JobConfig[] = [];
-  for (const file of files) {
-    const job = readJobFile(path.join(jobsDir, file));
-    if (job) jobs.push(job);
+
+  const dirs: string[] = [];
+  if (cwd) {
+    const projectDir = getProjectRoutinesDir(cwd);
+    if (projectDir) dirs.push(projectDir);
+  }
+  dirs.push(getRoutinesDir());
+
+  for (const dir of dirs) {
+    if (!fs.existsSync(dir)) continue;
+    const files = fs.readdirSync(dir).filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'));
+    for (const file of files) {
+      const job = readJobFile(path.join(dir, file));
+      if (!job) continue;
+      if (seen.has(job.name)) continue;
+      seen.add(job.name);
+      jobs.push(job);
+    }
   }
   return jobs;
 }
 
-/** Read a single job config by name. Returns null if not found. */
-export function readJob(name: string): JobConfig | null {
+/**
+ * Read a single job config by name, checking project > user.
+ * Project discovery is opt-in via `cwd`; daemon callers pass no argument and
+ * only resolve user routines.
+ */
+export function readJob(name: string, cwd?: string): JobConfig | null {
   ensureAgentsDir();
-  const jobsDir = getRoutinesDir();
-  for (const ext of ['.yml', '.yaml']) {
-    const filePath = safeJoin(jobsDir, name + ext);
-    if (fs.existsSync(filePath)) {
-      return readJobFile(filePath);
+  const dirs: string[] = [];
+  if (cwd) {
+    const projectDir = getProjectRoutinesDir(cwd);
+    if (projectDir) dirs.push(projectDir);
+  }
+  dirs.push(getRoutinesDir());
+
+  for (const dir of dirs) {
+    for (const ext of ['.yml', '.yaml']) {
+      const filePath = safeJoin(dir, name + ext);
+      if (fs.existsSync(filePath)) {
+        return readJobFile(filePath);
+      }
     }
   }
   return null;
@@ -191,8 +222,27 @@ export function validateJob(config: Partial<JobConfig>): string[] {
   if (config.timeout && !parseTimeout(config.timeout)) {
     errors.push('timeout must be like 10m, 2h, 3d, 1w (max 1w)');
   }
+  if (config.endAt !== undefined) {
+    if (typeof config.endAt !== 'string' || !isParseableDate(config.endAt)) {
+      errors.push('endAt must be a parseable ISO 8601 / RFC3339 timestamp (e.g., 2026-12-31T23:59:00Z)');
+    }
+  }
 
   return errors;
+}
+
+function isParseableDate(value: string): boolean {
+  if (!value.trim()) return false;
+  const ts = Date.parse(value);
+  return Number.isFinite(ts);
+}
+
+/** True when a job's endAt has already elapsed. False when endAt is unset or in the future. */
+export function isPastEndAt(config: Pick<JobConfig, 'endAt'>, now: Date = new Date()): boolean {
+  if (!config.endAt) return false;
+  const end = Date.parse(config.endAt);
+  if (!Number.isFinite(end)) return false;
+  return now.getTime() >= end;
 }
 
 /** Expand built-in and user-defined template variables in a job's prompt string. */
