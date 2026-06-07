@@ -84,6 +84,47 @@ describe('PTY socket permission', () => {
   }, 15_000);
 });
 
+describe('PTY duplicate-spawn race resolution', () => {
+  it('exits cleanly without touching the socket when a live PID file already exists', async () => {
+    // Pre-stage a PID file pointing to a live process (this test runner). The
+    // server boot must detect this via isPtyServerRunning() and exit cleanly
+    // — if it didn't, line ~223's unlinkSync would clobber the winner's socket
+    // inode, orphaning the prior server. We pin a sentinel byte sequence in
+    // the socket path and assert it survives.
+    const pidDir = path.join(TEST_HOME, '.agents', '.cache', 'helpers', 'pty');
+    await fsp.mkdir(pidDir, { recursive: true });
+    const pidPath = path.join(pidDir, 'pty.pid');
+    await fsp.writeFile(pidPath, String(process.pid), 'utf-8');
+
+    const socketPath = getSocketPath();
+    const sentinel = 'sentinel-from-winner';
+    await fsp.writeFile(socketPath, sentinel, 'utf-8');
+
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`__test_exit_${code ?? 0}`);
+    }) as never);
+
+    let caught: Error | null = null;
+    try {
+      await runPtyServer();
+    } catch (err: any) {
+      caught = err;
+    }
+
+    expect(caught, 'runPtyServer should have exited via process.exit(0)').not.toBeNull();
+    expect(caught!.message).toBe('__test_exit_0');
+
+    // Sentinel survived — the duplicate did not clobber the winner's socket.
+    expect(await fsp.readFile(socketPath, 'utf-8')).toBe(sentinel);
+    // PID file untouched — the winner's PID is still there.
+    expect(await fsp.readFile(pidPath, 'utf-8')).toBe(String(process.pid));
+
+    exitSpy.mockRestore();
+    await fsp.rm(pidPath, { force: true });
+    await fsp.rm(socketPath, { force: true });
+  }, 15_000);
+});
+
 describe('captureProcessStartTime', () => {
   it('returns null or a non-empty string for the current process', () => {
     const value = captureProcessStartTime(process.pid);

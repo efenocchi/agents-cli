@@ -217,8 +217,31 @@ export async function runPtyServer(): Promise<void> {
 
   const sessions = new Map<string, Session>();
   const socketPath = getSocketPath();
+  const pidPath = getPtyPidPath();
 
-  // Remove stale socket
+  // Race resolution must happen BEFORE touching the socket file. Two clients
+  // racing ensureServer() in pty-client.ts can both observe
+  // isPtyServerRunning()=false and spawn parallel servers; without the
+  // O_EXCL claim below, the second spawn would unlink the first's socket
+  // inode and overwrite its PID file, orphaning the first server with its
+  // kernel socket binding intact but unreachable via the filesystem.
+  if (isPtyServerRunning()) {
+    log('INFO', 'PTY server already running; duplicate spawn exits cleanly');
+    process.exit(0);
+  }
+  try {
+    fs.writeFileSync(pidPath, String(process.pid), { flag: 'wx', encoding: 'utf-8' });
+  } catch (err: any) {
+    if (err && err.code === 'EEXIST') {
+      log('INFO', 'PID slot claimed by a concurrent server; exiting cleanly');
+      process.exit(0);
+    }
+    throw err;
+  }
+  // We own the PID slot; ensure it's released on any exit path, not just SIGTERM/SIGINT.
+  process.on('exit', () => { try { fs.unlinkSync(pidPath); } catch {} });
+
+  // Remove stale socket from a prior crashed server. Safe now that we hold the PID slot.
   if (fs.existsSync(socketPath)) {
     try { fs.unlinkSync(socketPath); } catch {}
   }
@@ -573,8 +596,6 @@ export async function runPtyServer(): Promise<void> {
   // start so the caller learns immediately.
   fs.chmodSync(socketPath, 0o600);
 
-  // Write PID
-  fs.writeFileSync(getPtyPidPath(), String(process.pid), 'utf-8');
   log('INFO', `PTY server started (PID: ${process.pid}, socket: ${socketPath})`);
 
   // Shutdown handler
