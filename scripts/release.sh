@@ -138,9 +138,12 @@ read -r CMAJ CMIN CPAT <<< "$(parse_v "$PHNX_LATEST")"
 read -r TMAJ TMIN TPAT <<< "$(parse_v "$TARGET")"
 
 # Strict single-step bump from $PHNX_LATEST, OR equal to $PHNX_LATEST when the
-# shim is still behind (shim catch-up rerun after a partial publish).
+# shim is still behind (shim catch-up rerun after a partial publish), OR equal
+# to package.json on main when several patch commits accumulated without ever
+# being published (phnx catch-up — main is ahead of registry).
 is_valid_bump=false
 read -r SMAJ SMIN SPAT <<< "$(parse_v "$SWARMIFY_LATEST")"
+PKG_JSON_VERSION="$(jq -r .version package.json)"
 if [[ $TMAJ -eq $CMAJ && $TMIN -eq $CMIN && $TPAT -eq $((CPAT + 1)) ]]; then
   BUMP="patch"
   is_valid_bump=true
@@ -156,6 +159,14 @@ elif [[ "$TARGET" == "$PHNX_LATEST" ]] && \
        { [[ $TMAJ -eq $SMAJ ]] && [[ $TMIN -eq $SMIN ]] && [[ $TPAT -gt $SPAT ]]; }; }; then
   BUMP="shim-catchup"
   is_valid_bump=true
+elif [[ "$TARGET" == "$PKG_JSON_VERSION" ]] && \
+     { [[ $TMAJ -gt $CMAJ ]] || \
+       { [[ $TMAJ -eq $CMAJ ]] && [[ $TMIN -gt $CMIN ]]; } || \
+       { [[ $TMAJ -eq $CMAJ ]] && [[ $TMIN -eq $CMIN ]] && [[ $TPAT -gt $CPAT ]]; }; }; then
+  # Catch-up: main has accumulated unpublished patch commits (chore(release):
+  # N bumps that never reached the registry). Publish what main says.
+  BUMP="phnx-catchup"
+  is_valid_bump=true
 fi
 
 if ! $is_valid_bump; then
@@ -164,6 +175,7 @@ if ! $is_valid_bump; then
   red "  $((CMAJ)).$((CMIN)).$((CPAT + 1))   (patch)"
   red "  $((CMAJ)).$((CMIN + 1)).0   (minor)"
   red "  $((CMAJ + 1)).0.0   (major)"
+  red "  $PKG_JSON_VERSION              (phnx-catchup: package.json is ahead of registry)"
   exit 1
 fi
 
