@@ -29,9 +29,10 @@ const HOME = os.homedir();
 
 /** Agents that support the permissions subsystem. */
 // antigravity: permissions in ~/.gemini/antigravity-cli/settings.json under
-// `permissions: { allow: [...], deny: [...] }`. Serializer is a follow-up.
-// grok: permissions via --allow/--deny CLI flags or [permission] block in
-// ~/.grok/config.toml. Serializer is a follow-up.
+// `permissions: { allow: [...], deny: [...] }` with action-namespaced entries:
+// command(...), read_file(...), write_file(...), read_url(...), mcp(...).
+// grok: permissions in ~/.grok/config.toml under [permission] as a `rules`
+// array of `{ action, tool, pattern }` tables.
 export const PERMISSIONS_CAPABLE_AGENTS: AgentId[] = ['claude', 'codex', 'opencode', 'antigravity', 'grok', 'gemini'];
 
 /** Filename used for Codex Starlark deny-rules generated from permission groups. */
@@ -496,6 +497,116 @@ export function convertToGeminiFormat(set: PermissionSet): { tools: { allowed: s
     }
   }
   return { tools: { allowed: Array.from(allowed) } };
+}
+
+/**
+ * Strip Claude's `:*` subcommand-wildcard suffix and return a space-glob form.
+ * "mq:*" -> "mq *", "git status" -> "git status", "*" -> "*".
+ * Used by serializers whose native pattern grammar uses ` *` instead of `:*`.
+ */
+function normalizeBashPattern(pattern: string): string {
+  if (pattern === '*' || pattern === '**') return '*';
+  if (pattern.endsWith(':*')) return pattern.slice(0, -2) + ' *';
+  return pattern;
+}
+
+/**
+ * Convert canonical permission set to Antigravity format.
+ * Antigravity reads ~/.gemini/antigravity-cli/settings.json with
+ *   { permissions: { allow: [...], deny: [...] } }
+ * where each entry is action-namespaced: command(...), read_file(...),
+ * write_file(...), read_url(...), mcp(...).
+ * Bash maps to `command`, Read to `read_file`, Write to `write_file`,
+ * WebFetch to `read_url`. Other canonical tools are skipped.
+ * Note: Antigravity matches `command(npm install)` as an exact string,
+ * not a prefix — `Bash(npm:*)` becomes `command(npm *)` which is a glob
+ * but Antigravity upstream has a known exact-match bug for some forms.
+ */
+export function convertToAntigravityFormat(set: PermissionSet): { permissions: { allow: string[]; deny?: string[] } } {
+  const allow = serializeAntigravityEntries(set.allow);
+  const deny = set.deny ? serializeAntigravityEntries(set.deny) : [];
+  return {
+    permissions: {
+      allow,
+      ...(deny.length ? { deny } : {}),
+    },
+  };
+}
+
+function serializeAntigravityEntries(perms: string[]): string[] {
+  const out = new Set<string>();
+  for (const perm of perms) {
+    if (BLANKET_BASH_FORMS.has(perm)) {
+      out.add('command(*)');
+      continue;
+    }
+    const parsed = parseCanonicalPattern(perm);
+    if (!parsed) continue;
+    const action = ANTIGRAVITY_ACTION_BY_TOOL[parsed.tool];
+    if (!action) continue;
+    if (parsed.tool === 'bash') {
+      out.add(`${action}(${normalizeBashPattern(parsed.pattern)})`);
+    } else {
+      const p = parsed.pattern === '**' ? '*' : parsed.pattern;
+      out.add(`${action}(${p})`);
+    }
+  }
+  return Array.from(out);
+}
+
+const ANTIGRAVITY_ACTION_BY_TOOL: Record<string, string | undefined> = {
+  bash: 'command',
+  read: 'read_file',
+  write: 'write_file',
+  webfetch: 'read_url',
+};
+
+/**
+ * Convert canonical permission set to Grok format.
+ * Grok reads ~/.grok/config.toml with
+ *   [permission]
+ *   rules = [ { action = "allow", tool = "bash", pattern = "git *" }, ... ]
+ * Tool names are lowercase: bash, read, edit, grep, mcptool, webfetch.
+ * Canonical Write maps to Grok's `edit` tool.
+ */
+export function convertToGrokFormat(set: PermissionSet): { permission: { rules: GrokRule[] } } {
+  const rules: GrokRule[] = [];
+  for (const perm of set.allow) {
+    const rule = canonicalToGrokRule(perm, 'allow');
+    if (rule) rules.push(rule);
+  }
+  if (set.deny) {
+    for (const perm of set.deny) {
+      const rule = canonicalToGrokRule(perm, 'deny');
+      if (rule) rules.push(rule);
+    }
+  }
+  return { permission: { rules } };
+}
+
+export type GrokRule = { action: 'allow' | 'deny'; tool: string; pattern?: string };
+
+const GROK_TOOL_BY_CANONICAL: Record<string, string | undefined> = {
+  bash: 'bash',
+  read: 'read',
+  write: 'edit',
+  grep: 'grep',
+  webfetch: 'webfetch',
+};
+
+function canonicalToGrokRule(perm: string, action: 'allow' | 'deny'): GrokRule | null {
+  if (BLANKET_BASH_FORMS.has(perm)) {
+    return { action, tool: 'bash', pattern: '*' };
+  }
+  const parsed = parseCanonicalPattern(perm);
+  if (!parsed) return null;
+  const tool = GROK_TOOL_BY_CANONICAL[parsed.tool];
+  if (!tool) return null;
+  const pattern = parsed.tool === 'bash' ? normalizeBashPattern(parsed.pattern) : parsed.pattern;
+  if (pattern === '' || pattern === undefined) {
+    return { action, tool };
+  }
+  return { action, tool, pattern };
 }
 
 /**
@@ -1081,6 +1192,60 @@ export function applyPermissionsToVersion(
         }
         settings.tools = tools;
       });
+      return { success: true };
+    }
+
+    if (agentId === 'antigravity') {
+      const antigravityPerms = convertToAntigravityFormat(set);
+      const settingsPath = path.join(versionHome, '.gemini', 'antigravity-cli', 'settings.json');
+      updateGeminiSettings(settingsPath, (settings) => {
+        const perms = (typeof settings.permissions === 'object' && settings.permissions !== null && !Array.isArray(settings.permissions))
+          ? settings.permissions as Record<string, unknown>
+          : {};
+        if (merge) {
+          const existingAllow = Array.isArray(perms.allow) ? (perms.allow as string[]) : [];
+          const existingDeny = Array.isArray(perms.deny) ? (perms.deny as string[]) : [];
+          perms.allow = Array.from(new Set([...existingAllow, ...antigravityPerms.permissions.allow]));
+          const mergedDeny = Array.from(new Set([...existingDeny, ...(antigravityPerms.permissions.deny ?? [])]));
+          if (mergedDeny.length) perms.deny = mergedDeny;
+          else delete perms.deny;
+        } else {
+          perms.allow = antigravityPerms.permissions.allow;
+          if (antigravityPerms.permissions.deny?.length) perms.deny = antigravityPerms.permissions.deny;
+          else delete perms.deny;
+        }
+        settings.permissions = perms;
+      });
+      return { success: true };
+    }
+
+    if (agentId === 'grok') {
+      const grokPerms = convertToGrokFormat(set);
+      const configPath = path.join(versionHome, '.grok', 'config.toml');
+      let config: Record<string, unknown> = {};
+      if (fs.existsSync(configPath)) {
+        config = TOML.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+      }
+      const existingPermission = (typeof config.permission === 'object' && config.permission !== null && !Array.isArray(config.permission))
+        ? config.permission as Record<string, unknown>
+        : {};
+      if (merge) {
+        const existingRules = Array.isArray(existingPermission.rules) ? (existingPermission.rules as GrokRule[]) : [];
+        const seen = new Set<string>();
+        const dedup: GrokRule[] = [];
+        for (const r of [...existingRules, ...grokPerms.permission.rules]) {
+          const key = `${r.action}|${r.tool}|${r.pattern ?? ''}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          dedup.push(r);
+        }
+        existingPermission.rules = dedup;
+      } else {
+        existingPermission.rules = grokPerms.permission.rules;
+      }
+      config.permission = existingPermission;
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
+      fs.writeFileSync(configPath, TOML.stringify(config as any), 'utf-8');
       return { success: true };
     }
 

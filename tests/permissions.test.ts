@@ -10,6 +10,8 @@ import {
   convertToClaudeFormat,
   convertToOpenCodeFormat,
   convertToCodexFormat,
+  convertToAntigravityFormat,
+  convertToGrokFormat,
   claudeToCanonical,
   openCodeToCanonical,
   codexToCanonical,
@@ -744,9 +746,107 @@ describe('applyPermissionsToVersion', () => {
       allow: ['Bash(git *)'],
     };
 
-    const result = applyPermissionsToVersion('gemini' as any, set, versionHome, true);
+    const result = applyPermissionsToVersion('cursor' as any, set, versionHome, true);
     expect(result.success).toBe(false);
     expect(result.error).toContain('does not support permissions');
+  });
+
+  it('writes Antigravity permissions to .gemini/antigravity-cli/settings.json', () => {
+    const versionHome = join(testDir, 'antigravity-write');
+    mkdirSync(versionHome, { recursive: true });
+
+    const set: PermissionSet = {
+      name: 'test',
+      allow: ['Bash(git *)', 'Bash(mq:*)', 'Read(/Users/me)', 'Bash(*)'],
+      deny: ['Bash(rm -rf *)'],
+    };
+
+    const result = applyPermissionsToVersion('antigravity' as any, set, versionHome, false);
+    expect(result.success).toBe(true);
+
+    const settingsPath = join(versionHome, '.gemini', 'antigravity-cli', 'settings.json');
+    expect(existsSync(settingsPath)).toBe(true);
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    expect(settings.permissions.allow).toContain('command(git *)');
+    expect(settings.permissions.allow).toContain('command(mq *)');
+    expect(settings.permissions.allow).toContain('command(*)');
+    expect(settings.permissions.allow).toContain('read_file(/Users/me)');
+    expect(settings.permissions.deny).toEqual(['command(rm -rf *)']);
+  });
+
+  it('merge=true preserves existing Antigravity entries and dedupes', () => {
+    const versionHome = join(testDir, 'antigravity-merge');
+    const dir = join(versionHome, '.gemini', 'antigravity-cli');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify({
+      colorScheme: 'tokyo night',
+      permissions: { allow: ['command(npm test)', 'command(git *)'] },
+    }), 'utf-8');
+
+    const set: PermissionSet = {
+      name: 'test',
+      allow: ['Bash(git *)', 'Bash(yarn:*)'],
+    };
+
+    const result = applyPermissionsToVersion('antigravity' as any, set, versionHome, true);
+    expect(result.success).toBe(true);
+
+    const settings = JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf-8'));
+    expect(settings.colorScheme).toBe('tokyo night');
+    expect(settings.permissions.allow).toContain('command(npm test)');
+    expect(settings.permissions.allow).toContain('command(git *)');
+    expect(settings.permissions.allow).toContain('command(yarn *)');
+    // No duplicate of "command(git *)"
+    expect(settings.permissions.allow.filter((e: string) => e === 'command(git *)')).toHaveLength(1);
+  });
+
+  it('writes Grok permissions to .grok/config.toml under [permission].rules', () => {
+    const versionHome = join(testDir, 'grok-write');
+    mkdirSync(versionHome, { recursive: true });
+
+    const set: PermissionSet = {
+      name: 'test',
+      allow: ['Bash(git *)', 'Bash(*)', 'Read(/Users/me)', 'Write(src/)', 'WebFetch(example.com)'],
+      deny: ['Bash(rm -rf *)'],
+    };
+
+    const result = applyPermissionsToVersion('grok' as any, set, versionHome, false);
+    expect(result.success).toBe(true);
+
+    const configPath = join(versionHome, '.grok', 'config.toml');
+    expect(existsSync(configPath)).toBe(true);
+    const config = TOML.parse(readFileSync(configPath, 'utf-8')) as any;
+    const rules = config.permission.rules as Array<{ action: string; tool: string; pattern?: string }>;
+    expect(rules).toContainEqual({ action: 'allow', tool: 'bash', pattern: 'git *' });
+    expect(rules).toContainEqual({ action: 'allow', tool: 'bash', pattern: '*' });
+    expect(rules).toContainEqual({ action: 'allow', tool: 'read', pattern: '/Users/me' });
+    expect(rules).toContainEqual({ action: 'allow', tool: 'edit', pattern: 'src/' });
+    expect(rules).toContainEqual({ action: 'allow', tool: 'webfetch', pattern: 'example.com' });
+    expect(rules).toContainEqual({ action: 'deny', tool: 'bash', pattern: 'rm -rf *' });
+  });
+
+  it('merge=true preserves existing Grok rules and dedupes', () => {
+    const versionHome = join(testDir, 'grok-merge');
+    const dir = join(versionHome, '.grok');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'config.toml'), TOML.stringify({
+      ui: { permission_mode: 'ask' },
+      permission: { rules: [{ action: 'allow', tool: 'bash', pattern: 'git *' }] },
+    } as any), 'utf-8');
+
+    const set: PermissionSet = {
+      name: 'test',
+      allow: ['Bash(git *)', 'Bash(yarn:*)'],
+    };
+
+    const result = applyPermissionsToVersion('grok' as any, set, versionHome, true);
+    expect(result.success).toBe(true);
+
+    const config = TOML.parse(readFileSync(join(dir, 'config.toml'), 'utf-8')) as any;
+    expect(config.ui.permission_mode).toBe('ask');
+    const rules = config.permission.rules as Array<{ action: string; tool: string; pattern?: string }>;
+    expect(rules.filter(r => r.action === 'allow' && r.tool === 'bash' && r.pattern === 'git *')).toHaveLength(1);
+    expect(rules).toContainEqual({ action: 'allow', tool: 'bash', pattern: 'yarn *' });
   });
 
   it('merge=true keeps existing Claude rules not present in new set', () => {
