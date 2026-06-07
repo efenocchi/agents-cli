@@ -669,14 +669,27 @@ export interface UnmanagedInstall {
 }
 
 /**
+ * Agents that `agents setup` probes for pre-existing native installations
+ * (i.e., a config dir present before agents-cli took over). Add an agent here
+ * once its `cliCommand` reports a usable `--version` and its session dir is
+ * wired into `getSessionDir`.
+ */
+export const UNMANAGED_DETECTION_CANDIDATES: AgentId[] = [
+  'claude',
+  'codex',
+  'gemini',
+  'grok',
+  'copilot',
+];
+
+/**
  * Detect existing agent installations that are NOT yet managed by agents-cli.
  * Returns agents whose config dir exists as a real directory (not a symlink).
  */
 export async function getUnmanagedAgentInstalls(): Promise<UnmanagedInstall[]> {
   const unmanaged: UnmanagedInstall[] = [];
-  const candidates: AgentId[] = ['claude', 'codex', 'gemini', 'grok'];
 
-  for (const agentId of candidates) {
+  for (const agentId of UNMANAGED_DETECTION_CANDIDATES) {
     const agent = AGENTS[agentId];
     try {
       const stat = fs.lstatSync(agent.configDir);
