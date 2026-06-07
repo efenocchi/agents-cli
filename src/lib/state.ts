@@ -307,6 +307,20 @@ export function getPackagesDir(): string { return PACKAGES_DIR; }
 /** Path to routine YAML definitions (~/.agents/routines/). */
 export function getRoutinesDir(): string { return ROUTINES_DIR; }
 
+/**
+ * Path to a project-scoped routines directory (`<project>/.agents/routines/`),
+ * or null when no project `.agents/` is found by walking up from cwd.
+ *
+ * Project routines participate in `list`/`view`/`run` for inspection but are
+ * NOT fired by the daemon (which runs from $HOME and only loads user routines).
+ * Opt-in firing for project routines is tracked as a follow-up.
+ */
+export function getProjectRoutinesDir(cwd: string = process.cwd()): string | null {
+  const projectAgentsDir = getProjectAgentsDir(cwd);
+  if (!projectAgentsDir) return null;
+  return path.join(projectAgentsDir, 'routines');
+}
+
 /** Path to routine execution logs (~/.agents/.history/runs/). */
 export function getRunsDir(): string { return RUNS_DIR; }
 

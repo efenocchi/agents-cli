@@ -8,7 +8,7 @@
 
 import { Cron } from 'croner';
 import type { JobConfig } from './routines.js';
-import { listJobs, deleteJob } from './routines.js';
+import { listJobs, deleteJob, isPastEndAt, setJobEnabled } from './routines.js';
 
 /** A job config paired with its active cron instance. */
 interface ScheduledJob {
@@ -45,6 +45,20 @@ export class JobScheduler {
     if (config.timezone) cronOptions.timezone = config.timezone;
 
     const cron = new Cron(config.schedule, cronOptions, async () => {
+      // endAt: once the configured end time has passed, auto-disable and stop
+      // firing. We persist enabled=false to disk so the next daemon reload
+      // doesn't re-schedule, and unschedule in-memory so this cron stops.
+      if (isPastEndAt(config)) {
+        this.unschedule(config.name);
+        try {
+          setJobEnabled(config.name, false);
+        } catch (err) {
+          console.error(`Job '${config.name}' endAt auto-disable failed:`, (err as Error).message);
+        }
+        console.log(`Job '${config.name}' reached endAt (${config.endAt}); auto-disabled.`);
+        return;
+      }
+
       try {
         await this.onTrigger(config);
       } catch (err) {

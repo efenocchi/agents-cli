@@ -15,6 +15,19 @@ Scheduled agent execution with sandboxed permissions and daemon-driven cron sche
 
 Each job is a YAML file in `~/.agents/routines/`. A background daemon (`agents daemon`) parses cron expressions with [croner](https://github.com/hucsm/croner), spawns agent processes at trigger time, and captures output.
 
+### Project routines (inspection)
+
+`agents routines list|view|run` also discovers routines in `<project>/.agents/routines/` when invoked from inside a project — project routines shadow user routines of the same name in those views. The background scheduler (which runs from `$HOME`) only loads user routines today; opt-in firing for project routines is tracked as a follow-up.
+
+### Ending a recurring routine
+
+Set `endAt` (ISO 8601) on a recurring routine to have the scheduler auto-disable it on or after that time:
+
+```bash
+agents routines add cleanup --schedule "0 3 * * *" --agent claude \
+  --prompt "Tidy logs" --end-at "2026-12-31T23:59:00Z"
+```
+
 ## Job Config
 
 ```yaml
@@ -27,6 +40,7 @@ mode: plan                    # plan (read-only) or edit
 effort: default               # fast, default, or detailed
 timeout: 10m
 runOnce: false                # true for one-shot jobs (--at)
+endAt: "2026-12-31T23:59:00Z" # optional: auto-disable on/after this time
 
 prompt: |
   Review open PRs and summarize status.
