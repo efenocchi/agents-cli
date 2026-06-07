@@ -85,3 +85,25 @@ Each installed agent CLI version gets an isolated **version home** — a directo
 When you run `claude` (via the shim), agents-cli reads `agents.yaml`, resolves the version, and sets `HOME` to the matching version home before exec-ing the binary. The agent sees only its version-specific config — no bleed between versions.
 
 See [01-version-management.md](01-version-management.md) for install and switching details, and [02-resource-sync.md](02-resource-sync.md) for how resources are synced into version homes.
+
+---
+
+## Capability matrix
+
+`src/lib/agents.ts` is the canonical capability matrix for resource sync. Every gateable resource kind is declared per agent so prompt, sync, and staleness code can share the same source of truth.
+
+| Agent | Hooks | MCP | Permissions | Skills | Commands | Plugins | Subagents | Rules | Workflows |
+|------|-------|-----|-------------|--------|----------|---------|-----------|-------|-----------|
+| Claude | yes | yes | yes | yes | yes | yes | yes | `CLAUDE.md` | yes |
+| Codex | >= 0.116.0 | yes | no | yes | < 0.117.0 | >= 0.128.0 | no | `AGENTS.md` | no |
+| Gemini | >= 0.26.0 | yes | no | yes | yes | no | no | `GEMINI.md` | no |
+| Cursor | no | yes | no | yes | yes | no | no | `.cursorrules` | no |
+| OpenCode | no | yes | no | yes | yes | no | no | `AGENTS.md` | no |
+| OpenClaw | yes | yes | no | yes | no | yes | yes | `workspace/AGENTS.md` | no |
+| Copilot | no | yes | no | yes | yes | no | no | `AGENTS.md` | no |
+| Amp | no | yes | no | yes | yes | no | no | `AGENTS.md` | no |
+| Kiro | no | yes | no | yes | yes | no | no | `AGENTS.md` | no |
+| Goose | no | yes | no | no | no | no | no | `AGENTS.md` | no |
+| Roo Code | no | yes | no | yes | yes | no | no | `AGENTS.md` | no |
+| Antigravity | yes | yes | yes | yes | yes | yes | no | `AGENTS.md` | no |
+| Grok | yes | yes | yes | yes | no | yes | no | `AGENTS.md` | no |
