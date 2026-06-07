@@ -125,7 +125,12 @@ export async function createSession(opts: CreateSessionOptions): Promise<Session
     await killSession(opts.name, socket);
   }
 
-  const args = ['new-session', '-d', '-s', opts.name];
+  // Set remain-on-exit BEFORE the child command can finish — a fast-exiting
+  // cmd (e.g. `echo BRIEF && true`) would otherwise collapse the only session,
+  // exit the server, and the follow-up `set-option` would race with "no
+  // server running". Server-wide (`-g`) is applied in the same tmux
+  // invocation as new-session so they share one server lifetime.
+  const args = ['set-option', '-g', 'remain-on-exit', 'on', ';', 'new-session', '-d', '-s', opts.name];
   if (opts.width)  args.push('-x', String(opts.width));
   if (opts.height) args.push('-y', String(opts.height));
   if (opts.cwd)    args.push('-c', opts.cwd);
@@ -136,11 +141,6 @@ export async function createSession(opts: CreateSessionOptions): Promise<Session
   }
 
   await runTmux({ socket, args, env: opts.env });
-
-  // Make panes survive the initial command exiting — agents can crash, users
-  // re-attach, see what happened, restart. Without this the pane vanishes
-  // immediately and the session collapses to nothing.
-  await runTmux({ socket, args: ['set-option', '-t', opts.name, 'remain-on-exit', 'on'] });
 
   const meta: SessionMeta = {
     name: opts.name,

@@ -29,6 +29,18 @@ process.env.HOME = TEST_HOME;
 
 const { runPtyServer, captureProcessStartTime, getSocketPath } = await import('../pty-server.js');
 
+// node-pty ships prebuilds only for darwin and win32 — on linux it must be
+// compiled from source via node-gyp, which requires postinstall scripts. CI
+// runs `bun install --ignore-scripts` as a supply-chain guard, so the import
+// throws on linux runners. Skip the server-boot tests when the native module
+// isn't loadable; the helper-level test below still runs.
+let nodePtyLoadable = true;
+try {
+  await import('node-pty');
+} catch {
+  nodePtyLoadable = false;
+}
+
 afterEach(async () => {
   // Belt-and-braces cleanup so a hanging server from one test doesn't
   // bleed into the next.
@@ -36,7 +48,7 @@ afterEach(async () => {
   await fsp.rm(sock, { force: true });
 });
 
-describe('PTY socket permission', () => {
+describe.skipIf(!nodePtyLoadable)('PTY socket permission', () => {
   it('chmods the socket to 0o600 immediately after listen', async () => {
     // runPtyServer awaits forever; kick it off without awaiting and poll
     // for the socket inode to appear.
@@ -81,7 +93,7 @@ describe('PTY socket permission', () => {
   }, 15_000);
 });
 
-describe('PTY duplicate-spawn race resolution', () => {
+describe.skipIf(!nodePtyLoadable)('PTY duplicate-spawn race resolution', () => {
   it('exits cleanly without touching the socket when a live PID file already exists', async () => {
     // Pre-stage a PID file pointing to a live process (this test runner). The
     // server boot must detect this via isPtyServerRunning() and exit cleanly
