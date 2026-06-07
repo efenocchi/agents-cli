@@ -278,10 +278,19 @@ export function registerRunCommand(program: Command): void {
           : 0;
         process.stderr.write(chalk.gray(`Workflow '${rawAgent}' → claude (${subagentCount} subagents)\n`));
       } else {
-        console.error(chalk.red(`Unknown agent: ${rawAgent}`));
-        console.error(chalk.gray(`Available agents: ${ALL_AGENT_IDS.join(', ')}`));
-        console.error(chalk.gray(`Or add a profile: agents profiles add <name>`));
-        process.exit(1);
+        // Smart pick: auto-correct a single typo (insertion/deletion/substitution/transposition)
+        // against the known agent ids before giving up. Example: `cladue` -> `claude`, `grk` -> `grok`.
+        const { fuzzyMatch, FUZZY_PRESETS } = await import('../lib/fuzzy.js');
+        const suggested = fuzzyMatch(rawAgent, ALL_AGENT_IDS, FUZZY_PRESETS.agents);
+        if (suggested && isValidAgent(suggested)) {
+          process.stderr.write(chalk.gray(`Resolved '${rawAgent}' -> '${suggested}' (single-edit match)\n`));
+          agent = suggested;
+        } else {
+          console.error(chalk.red(`Unknown agent: ${rawAgent}`));
+          console.error(chalk.gray(`Available agents: ${ALL_AGENT_IDS.join(', ')}`));
+          console.error(chalk.gray(`Or add a profile: agents profiles add <name>`));
+          process.exit(1);
+        }
       }
 
       version = resolveVersionAlias(agent, version);
@@ -437,12 +446,22 @@ export function registerRunCommand(program: Command): void {
           process.exit(1);
         }
         const entries = options.fallback.split(',').map(s => s.trim()).filter(Boolean);
+        const { fuzzyMatch: fuzzyFb, FUZZY_PRESETS: PRESETS_FB } = await import('../lib/fuzzy.js');
         for (const entry of entries) {
-          const [fbAgent, fbVersion] = entry.split('@');
-          if (!isValidAgent(fbAgent)) {
-            console.error(chalk.red(`Unknown fallback agent: ${fbAgent}`));
-            console.error(chalk.gray(`Available: ${ALL_AGENT_IDS.join(', ')}`));
-            process.exit(1);
+          const [rawFbAgent, fbVersion] = entry.split('@');
+          let fbAgent: AgentId;
+          if (isValidAgent(rawFbAgent)) {
+            fbAgent = rawFbAgent;
+          } else {
+            const suggested = fuzzyFb(rawFbAgent, ALL_AGENT_IDS, PRESETS_FB.agents);
+            if (suggested && isValidAgent(suggested)) {
+              process.stderr.write(chalk.gray(`Resolved fallback '${rawFbAgent}' -> '${suggested}' (single-edit match)\n`));
+              fbAgent = suggested;
+            } else {
+              console.error(chalk.red(`Unknown fallback agent: ${rawFbAgent}`));
+              console.error(chalk.gray(`Available: ${ALL_AGENT_IDS.join(', ')}`));
+              process.exit(1);
+            }
           }
           if (fbAgent === agent) {
             console.error(chalk.red(`Fallback cannot include the primary agent (${agent}). Rate-limit fallback only helps when switching providers.`));

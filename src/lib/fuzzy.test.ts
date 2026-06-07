@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { levenshtein, fuzzyMatch, FUZZY_PRESETS } from './fuzzy.js';
+import { levenshtein, damerauLevenshtein, fuzzyMatch, FUZZY_PRESETS } from './fuzzy.js';
 
 describe('levenshtein', () => {
   it('returns 0 for identical strings', () => {
@@ -19,25 +19,45 @@ describe('levenshtein', () => {
   });
 });
 
+describe('damerauLevenshtein', () => {
+  it('counts an adjacent transposition as one edit', () => {
+    expect(damerauLevenshtein('cladue', 'claude')).toBe(1);
+    expect(damerauLevenshtein('gemnii', 'gemini')).toBe(1);
+  });
+
+  it('matches levenshtein for insertion/deletion/substitution', () => {
+    expect(damerauLevenshtein('grk', 'grok')).toBe(1);
+    expect(damerauLevenshtein('claud', 'claude')).toBe(1);
+    expect(damerauLevenshtein('codx', 'codex')).toBe(1);
+  });
+
+  it('returns 0/length for trivial cases', () => {
+    expect(damerauLevenshtein('claude', 'claude')).toBe(0);
+    expect(damerauLevenshtein('', 'abc')).toBe(3);
+    expect(damerauLevenshtein('abc', '')).toBe(3);
+  });
+});
+
 describe('fuzzyMatch', () => {
-  const agents = ['claude', 'codex', 'gemini', 'cursor', 'opencode', 'openclaw', 'copilot', 'amp', 'kiro', 'goose', 'roo'];
+  const agents = ['claude', 'codex', 'gemini', 'cursor', 'opencode', 'openclaw', 'copilot', 'amp', 'kiro', 'goose', 'roo', 'antigravity', 'grok'];
 
   it('returns null for exact matches (fuzzy is for non-exact)', () => {
     expect(fuzzyMatch('claude', agents, FUZZY_PRESETS.agents)).toBeNull();
   });
 
-  it('matches common typos', () => {
-    expect(fuzzyMatch('cladue', agents, FUZZY_PRESETS.agents)).toBe('claude');
-    expect(fuzzyMatch('claud', agents, FUZZY_PRESETS.agents)).toBe('claude');
-    expect(fuzzyMatch('codx', agents, FUZZY_PRESETS.agents)).toBe('codex');
+  it('matches single-edit typos (insertion, deletion, transposition)', () => {
+    expect(fuzzyMatch('cladue', agents, FUZZY_PRESETS.agents)).toBe('claude'); // transposition
+    expect(fuzzyMatch('claud', agents, FUZZY_PRESETS.agents)).toBe('claude');  // deletion
+    expect(fuzzyMatch('codx', agents, FUZZY_PRESETS.agents)).toBe('codex');    // deletion
+    expect(fuzzyMatch('grk', agents, FUZZY_PRESETS.agents)).toBe('grok');      // insertion
+    expect(fuzzyMatch('gemni', agents, FUZZY_PRESETS.agents)).toBe('gemini');  // deletion
   });
 
-  it('returns null for ambiguous inputs', () => {
+  it('returns null for ambiguous or too-distant inputs', () => {
     expect(fuzzyMatch('co', agents, FUZZY_PRESETS.agents)).toBeNull();
-  });
-
-  it('returns null for inputs too far from any candidate', () => {
     expect(fuzzyMatch('xyz', agents, FUZZY_PRESETS.agents)).toBeNull();
+    // Two substitutions away — outside the 1-edit tolerance for agent names.
+    expect(fuzzyMatch('cladxe', agents, FUZZY_PRESETS.agents)).toBeNull();
   });
 
   it('respects maxDistance for efforts (strict)', () => {
