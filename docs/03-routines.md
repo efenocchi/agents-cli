@@ -15,9 +15,17 @@ Scheduled agent execution with sandboxed permissions and daemon-driven cron sche
 
 Each job is a YAML file in `~/.agents/routines/`. A background daemon (`agents daemon`) parses cron expressions with [croner](https://github.com/hucsm/croner), spawns agent processes at trigger time, and captures output.
 
-### Project routines (inspection)
+### Project routines (inspection-only)
 
-`agents routines list|view|run` also discovers routines in `<project>/.agents/routines/` when invoked from inside a project — project routines shadow user routines of the same name in those views. The background scheduler (which runs from `$HOME`) only loads user routines today; opt-in firing for project routines is tracked as a follow-up.
+`agents routines list` and `agents routines view <name>` also discover routines in `<project>/.agents/routines/` when invoked from inside a project — project routines shadow user routines of the same name in those views.
+
+Execution paths are intentionally **not** project-aware:
+
+- `agents routines run <name>` only resolves user routines. A project routine spawns a full agent session with a YAML-supplied prompt, so honoring the project layer would let a cloned public repo prompt-inject the user's next Claude session via `.agents/routines/<name>.yml`.
+- `add`, `edit`, `remove`, `pause`, `resume` are mutation surfaces and stay on the user layer.
+- The background scheduler (which runs from `$HOME`) only loads user routines.
+
+If you want to run a project routine, copy the YAML body into `~/.agents/routines/<name>.yml` first; that materializes consent.
 
 ### Ending a recurring routine
 

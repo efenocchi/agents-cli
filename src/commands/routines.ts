@@ -70,13 +70,24 @@ function isPromptCancelled(err: unknown): boolean {
   );
 }
 
-/** Interactive job picker. Returns the selected job name or null on cancel/empty. */
+/**
+ * Interactive job picker. Returns the selected job name or null on cancel/empty.
+ *
+ * `cwd` is opt-in: pass `process.cwd()` only for inspect-class commands
+ * (`view`) whose backing operation tolerates project-layer entries. Mutation
+ * (`remove`/`edit`/`pause`/`resume`) and execution (`run`) callers omit it,
+ * which limits the picker — and therefore the user — to user-layer routines
+ * only. Without that guard, a cloned public repo's `.agents/routines/<name>.yml`
+ * would surface in `agents routines run`'s picker and execute with an
+ * attacker-supplied prompt under the user's Claude session.
+ */
 async function pickJob(
   message: string,
   filter?: (job: JobConfig) => boolean,
   alternatives: string[] = [],
+  cwd?: string,
 ): Promise<string | null> {
-  let jobs = listAllJobs(process.cwd());
+  let jobs = listAllJobs(cwd);
   if (filter) {
     jobs = jobs.filter(filter);
   }
@@ -410,7 +421,7 @@ export function registerRoutinesCommands(program: Command): void {
     .description('Show the full YAML configuration for a routine')
     .action(async (name: string | undefined) => {
       if (!name) {
-        name = await pickJob('Select job to view', undefined, ['agents routines view <name>']) ?? undefined;
+        name = await pickJob('Select job to view', undefined, ['agents routines view <name>'], process.cwd()) ?? undefined;
         if (!name) return;
       }
 
@@ -519,7 +530,13 @@ export function registerRoutinesCommands(program: Command): void {
         if (!name) return;
       }
 
-      const job = readJob(name, process.cwd());
+      // Execution is intentionally user-only: a routine spawns a full agent
+      // session with a YAML-supplied prompt, so a cloned public repo's
+      // `.agents/routines/<name>.yml` would be a prompt-injection vector if
+      // `run` honored the project layer. `list` / `view` stay project-aware
+      // for inspection; `run`, `remove`, `edit`, `pause`, `resume` stay on
+      // the trusted user layer.
+      const job = readJob(name);
       if (!job) {
         console.log(chalk.red(`Job '${name}' not found`));
         process.exit(1);
