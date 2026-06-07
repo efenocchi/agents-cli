@@ -2,23 +2,25 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { AGENTS, COMMANDS_CAPABLE_AGENTS, ALL_AGENT_IDS, getAccountEmail } from '../src/lib/agents.js';
+import { AGENTS, ALL_AGENT_IDS, getAccountEmail } from '../src/lib/agents.js';
+import { capableAgents } from '../src/lib/capabilities.js';
 
-describe('COMMANDS_CAPABLE_AGENTS', () => {
+describe('capableAgents("commands")', () => {
   it('excludes openclaw since it uses Gateway-based slash commands', () => {
-    expect(COMMANDS_CAPABLE_AGENTS).not.toContain('openclaw');
+    expect(capableAgents('commands')).not.toContain('openclaw');
   });
 
   it('includes all other agents that support file-based commands', () => {
     const expected = ['claude', 'codex', 'gemini', 'cursor', 'opencode'];
+    const agents = capableAgents('commands');
     for (const agent of expected) {
-      expect(COMMANDS_CAPABLE_AGENTS).toContain(agent);
+      expect(agents).toContain(agent);
     }
   });
 
   it('is derived from capabilities.commands', () => {
     const fromCapabilities = ALL_AGENT_IDS.filter(id => AGENTS[id].capabilities.commands);
-    expect(COMMANDS_CAPABLE_AGENTS).toEqual(fromCapabilities);
+    expect(capableAgents('commands')).toEqual(fromCapabilities);
   });
 
   it('openclaw has empty commandsDir and commands:false', () => {
