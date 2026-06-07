@@ -64,6 +64,23 @@ export function resolveMode(agent: AgentId, requested: Mode): Mode {
   );
 }
 
+/**
+ * The mode an agent should run in when the caller has no preference.
+ *
+ * Returns the first entry in the agent's `capabilities.modes` table — the
+ * declaration order is the source of truth for "the safest mode this agent
+ * supports." Agents that include `plan` list it first; agents like
+ * antigravity that have no read-only mode list `edit` first.
+ *
+ * Use this when the user did not pass `--mode` explicitly. When the user
+ * *did* pass `--mode plan` and the agent doesn't support it, call
+ * `resolveMode` instead so the user sees a loud error rather than a silent
+ * elevation from read-only to writable.
+ */
+export function defaultModeFor(agent: AgentId): Mode {
+  return AGENTS[agent].capabilities.modes[0];
+}
+
 /** Reasoning effort levels passed to agents that support them. 'auto' defers to the agent's default. */
 export type ExecEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'auto';
 

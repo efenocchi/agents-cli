@@ -148,7 +148,7 @@ export function registerRunCommand(program: Command): void {
 
   runCmd.action(async (agentSpec: string, prompt: string | undefined, options: ExecCommandActionOptions) => {
       const [
-        { buildExecCommand, parseExecEnv, execAgent, runWithFallback, normalizeMode, resolveMode },
+        { buildExecCommand, parseExecEnv, execAgent, runWithFallback, normalizeMode, resolveMode, defaultModeFor },
         { ALL_AGENT_IDS },
         { profileExists, resolveProfileForRun },
         { readAndResolveBundleEnv, describeBundle },
@@ -329,20 +329,33 @@ export function registerRunCommand(program: Command): void {
 
       // Accept the four canonical modes plus 'full' as a permanent silent
       // alias for 'skip' (rewritten downstream by normalizeMode in exec.ts).
-      const mode = options.mode as ExecMode;
+      let mode = options.mode as ExecMode;
       if (!['plan', 'edit', 'auto', 'skip', 'full'].includes(mode)) {
         console.error(chalk.red(`Invalid mode: ${mode}. Use plan, edit, auto, or skip ('full' accepted as alias for skip).`));
         process.exit(1);
       }
 
-      // Surface capability errors as a clean CLI message instead of a stack
-      // trace from buildExecCommand. resolveMode degrades 'auto' silently and
-      // throws on unsupported 'plan'/'skip' — we catch and pretty-print.
+      // When the user did not pass --mode explicitly, the default is the
+      // generic 'plan'. Some agents (antigravity: edit/skip only, grok in some
+      // configurations) do not support plan. For implicit defaults, degrade
+      // silently to the agent's first listed mode rather than throwing — the
+      // user did not ask for read-only, they asked for "just run it." An
+      // explicit --mode plan still throws (see resolveMode), because silently
+      // elevating an explicit read-only request to edit is unsafe.
+      const modeSource = runCmd.getOptionValueSource('mode');
+      const modeIsDefault = modeSource === 'default';
       try {
         resolveMode(agent, normalizeMode(mode));
       } catch (err) {
-        console.error(chalk.red((err as Error).message));
-        process.exit(1);
+        if (modeIsDefault) {
+          mode = defaultModeFor(agent) as ExecMode;
+          if (!options.quiet) {
+            process.stderr.write(chalk.gray(`[agents] ${agent} has no '${options.mode}' mode; using '${mode}'\n`));
+          }
+        } else {
+          console.error(chalk.red((err as Error).message));
+          process.exit(1);
+        }
       }
 
       const effort = options.effort as ExecEffort;

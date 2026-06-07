@@ -8,6 +8,7 @@ import {
   parseExecEnv,
   normalizeMode,
   resolveMode,
+  defaultModeFor,
   type ExecOptions,
 } from '../exec.js';
 import type { AgentId, Mode } from '../types.js';
@@ -705,5 +706,24 @@ describe('resolveMode', () => {
   it("throws on 'skip' for kiro (edit-only agent)", () => {
     expect(() => resolveMode('kiro', 'skip'))
       .toThrow(/kiro does not support 'skip' mode\. Supported modes: edit\./);
+  });
+});
+
+describe('defaultModeFor', () => {
+  it('returns the first listed mode for each agent', () => {
+    // Antigravity: ['edit', 'skip'] — no plan, so default must be edit.
+    expect(defaultModeFor('antigravity')).toBe('edit');
+    // Cursor: ['edit', 'skip'] — same.
+    expect(defaultModeFor('cursor')).toBe('edit');
+    // Claude: ['plan', 'edit', 'auto', 'skip'] — plan is safest.
+    expect(defaultModeFor('claude')).toBe('plan');
+    // Kiro: edit-only.
+    expect(defaultModeFor('kiro')).toBe('edit');
+  });
+
+  it('agrees with capabilities.modes[0] for every agent (single source of truth)', () => {
+    for (const agent of ALL_AGENTS) {
+      expect(defaultModeFor(agent)).toBe(AGENTS[agent].capabilities.modes[0]);
+    }
   });
 });
