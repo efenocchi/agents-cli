@@ -3,13 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { tmpdir } from 'os';
 
-const { TEST_BROWSER_DIR } = vi.hoisted(() => {
-  const nodeOs = require('os');
-  const nodePath = require('path');
-  return {
-    TEST_BROWSER_DIR: nodePath.join(nodeOs.tmpdir(), 'agents-cli-upload-test-browser'),
-  };
-});
+const TEST_BROWSER_DIR = path.join(tmpdir(), 'agents-cli-upload-test-browser');
 
 vi.mock('./profiles.js', () => ({
   getBrowserRuntimeDir: () => TEST_BROWSER_DIR,

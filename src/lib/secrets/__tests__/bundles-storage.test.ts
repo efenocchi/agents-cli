@@ -16,15 +16,26 @@ import * as os from 'os';
 import * as path from 'path';
 import * as yaml from 'yaml';
 
-const { osMockState } = vi.hoisted(() => ({
-  osMockState: { homedir: '' },
-}));
+// vitest 4 hoists vi.mock above any const declared in this file, so a
+// top-level `const osMockState` would be in the TDZ when the factory runs.
+// Stash the mutable override on globalThis instead — that binding always
+// exists. vi.importActual / importOriginal are also vitest-only; pull the
+// real `os` via `node:os` so the factory works under Bun's native runner.
+interface OsMockState { homedir: string }
+const osMockState: OsMockState = ((globalThis as Record<string, unknown>)
+  .__agents_cli_os_mock__ as OsMockState | undefined)
+  ?? (((globalThis as Record<string, unknown>).__agents_cli_os_mock__ = { homedir: '' }) as OsMockState);
 
-vi.mock('os', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('os')>();
+vi.mock('os', () => {
+  const actual = require('node:os') as typeof import('os');
   return {
     ...actual,
-    homedir: () => osMockState.homedir || actual.homedir(),
+    default: actual,
+    homedir: () => {
+      const state = (globalThis as Record<string, unknown>)
+        .__agents_cli_os_mock__ as OsMockState | undefined;
+      return state?.homedir || actual.homedir();
+    },
   };
 });
 

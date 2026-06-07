@@ -8,25 +8,24 @@ import {
   sendIPCRequest,
 } from './ipc.js';
 import { getHelpersDir } from '../state.js';
+import { startDaemon } from '../daemon.js';
 
-const paths = vi.hoisted(() => ({
-  helperDir: `/tmp/agents-cli-browser-ipc-${process.pid}`,
-}));
+const HELPER_DIR = `/tmp/agents-cli-browser-ipc-${process.pid}`;
 
+// vi.mock factories close over local state but vitest 4 hoists them above
+// const declarations. Keep everything the factories reference inline so the
+// hoist is safe, then retrieve the vi.fn() back through the mocked module
+// (`startDaemon`) for assertions.
 vi.mock('../state.js', () => ({
-  getHelpersDir: vi.fn(() => paths.helperDir),
-}));
-
-const daemon = vi.hoisted(() => ({
-  startDaemon: vi.fn(),
+  getHelpersDir: vi.fn(() => `/tmp/agents-cli-browser-ipc-${process.pid}`),
 }));
 
 vi.mock('../daemon.js', () => ({
-  startDaemon: daemon.startDaemon,
+  startDaemon: vi.fn(),
 }));
 
 afterEach(() => {
-  rmSync(paths.helperDir, { recursive: true, force: true });
+  rmSync(HELPER_DIR, { recursive: true, force: true });
   vi.clearAllMocks();
 });
 
@@ -44,6 +43,6 @@ describe('sendIPCRequest', () => {
     await expect(
       sendIPCRequest({ action: 'status' }, { autoStartDaemon: false })
     ).rejects.toThrow(formatBrowserDaemonNotRunningError());
-    expect(daemon.startDaemon).not.toHaveBeenCalled();
+    expect(startDaemon).not.toHaveBeenCalled();
   });
 });

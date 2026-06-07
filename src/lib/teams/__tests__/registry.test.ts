@@ -10,22 +10,19 @@
  *   2. A malformed registry on disk surfaces as a thrown error, not a
  *      silent {} that the next write would happily clobber.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import * as fs from 'fs';
 import * as fsp from 'fs/promises';
+import * as os from 'os';
 import * as path from 'path';
 
-const { TEST_HOME } = vi.hoisted(() => {
-  const nodeOs = require('os');
-  const nodeFs = require('fs');
-  const nodePath = require('path');
-  const testHome = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'agents-teams-registry-test-'));
-  // Set before state.ts loads so its module-level HOME constant picks up the override.
-  process.env.HOME = testHome;
-  return { TEST_HOME: testHome };
-});
+// Set HOME before persistence.ts loads so its module-level root picks up the
+// override. Plain top-level statements run before the dynamic `await import`
+// below, so vi.hoisted is not needed (and is also not supported by Bun's
+// native test runner).
+const TEST_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-teams-registry-test-'));
+process.env.HOME = TEST_HOME;
 
-// Import AFTER the mock so persistence.ts captures TEST_HOME as its root.
 const { createTeam, loadTeams } = await import('../registry.js');
 
 function registryPath(): string {

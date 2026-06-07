@@ -4,17 +4,30 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import type { JobConfig, RunMeta } from '../src/lib/routines.js';
 
-const hoistedState = vi.hoisted(() => ({
-  TEST_DIR: '',
-}));
+// Mutable override state lives on globalThis so vitest's hoist of vi.mock
+// above the local const (TDZ error) and Bun's missing vi.hoisted both
+// remain non-issues. globalThis is always initialized.
+interface JobsHoistedState { TEST_DIR: string }
+const JOBS_HOISTED_KEY = '__agents_cli_jobs_test_state__';
+const hoistedState: JobsHoistedState =
+  ((globalThis as Record<string, unknown>)[JOBS_HOISTED_KEY] as JobsHoistedState | undefined)
+  ?? (((globalThis as Record<string, unknown>)[JOBS_HOISTED_KEY] = { TEST_DIR: '' }) as JobsHoistedState);
 
-vi.mock('../src/lib/state.js', () => ({
-  get getRoutinesDir() { return () => join(hoistedState.TEST_DIR, 'routines'); },
-  get getRunsDir() { return () => join(hoistedState.TEST_DIR, 'runs'); },
-  get getUserAgentsDir() { return () => hoistedState.TEST_DIR; },
-  get getCliVersionCachePath() { return () => join(hoistedState.TEST_DIR, '.cli-version-cache.json'); },
-  get ensureAgentsDir() { return () => {}; },
-}));
+vi.mock('../src/lib/state.js', () => {
+  const nodePath = require('node:path') as typeof import('path');
+  const gt = globalThis as Record<string, unknown>;
+  if (!gt.__agents_cli_jobs_test_state__) {
+    gt.__agents_cli_jobs_test_state__ = { TEST_DIR: '' };
+  }
+  const state = () => gt.__agents_cli_jobs_test_state__ as JobsHoistedState;
+  return {
+    get getRoutinesDir() { return () => nodePath.join(state().TEST_DIR, 'routines'); },
+    get getRunsDir() { return () => nodePath.join(state().TEST_DIR, 'runs'); },
+    get getUserAgentsDir() { return () => state().TEST_DIR; },
+    get getCliVersionCachePath() { return () => nodePath.join(state().TEST_DIR, '.cli-version-cache.json'); },
+    get ensureAgentsDir() { return () => {}; },
+  };
+});
 
 import {
   validateJob,

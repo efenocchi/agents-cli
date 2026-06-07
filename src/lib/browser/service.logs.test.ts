@@ -1,45 +1,39 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import { tmpdir } from 'os';
 import * as state from '../state.js';
+import * as profiles from './profiles.js';
 
-const { TEST_HOME, TEST_AGENTS_DIR, TEST_LOG_DIR } = vi.hoisted(() => {
-  const nodeOs = require('os');
-  const nodePath = require('path');
-  const testHome = nodePath.join(nodeOs.tmpdir(), 'agents-cli-browser-logs-test');
-  return {
-    TEST_HOME: testHome,
-    TEST_AGENTS_DIR: nodePath.join(testHome, '.agents'),
-    TEST_LOG_DIR: nodePath.join(testHome, 'logs'),
-  };
-});
+const TEST_HOME = path.join(tmpdir(), 'agents-cli-browser-logs-test');
+const TEST_AGENTS_DIR = path.join(TEST_HOME, '.agents');
+const TEST_LOG_DIR = path.join(TEST_HOME, 'logs');
 
 vi.spyOn(state, 'getUserAgentsDir').mockReturnValue(TEST_AGENTS_DIR);
 vi.spyOn(state, 'getAgentsDir').mockReturnValue(TEST_AGENTS_DIR);
 
-vi.mock('./profiles.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./profiles.js')>();
-  return {
-    ...actual,
-    getProfile: async (name: string) => {
-      if (name === 'rush-with-logs') {
-        return {
-          name,
-          browser: 'chrome',
-          endpoints: ['cdp://localhost:9222'],
-          logDir: TEST_LOG_DIR,
-        };
-      }
-      if (name === 'rush-no-logs') {
-        return {
-          name,
-          browser: 'chrome',
-          endpoints: ['cdp://localhost:9223'],
-        };
-      }
-      return null;
-    },
-  };
+// Spy on the single profile lookup we want to override instead of mocking
+// the whole module — the other profiles.js exports (getProfileRuntimeDir,
+// listProfiles, …) keep their real implementations and service.js loads
+// without missing-export errors. This avoids needing vi.hoisted /
+// vi.importActual, neither of which Bun's native test runner supports.
+vi.spyOn(profiles, 'getProfile').mockImplementation(async (name: string) => {
+  if (name === 'rush-with-logs') {
+    return {
+      name,
+      browser: 'chrome',
+      endpoints: ['cdp://localhost:9222'],
+      logDir: TEST_LOG_DIR,
+    };
+  }
+  if (name === 'rush-no-logs') {
+    return {
+      name,
+      browser: 'chrome',
+      endpoints: ['cdp://localhost:9223'],
+    };
+  }
+  return null;
 });
 
 const {

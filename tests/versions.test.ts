@@ -3,62 +3,90 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
-// Mock state.ts to redirect all paths to temp directory
-const hoistedState = vi.hoisted(() => ({
-  TEST_ROOT: '',
-  AGENTS_DIR: '',
-  PROJECT_AGENTS_DIR: null as string | null,
-  META: {} as { agents?: Record<string, string> },
-}));
+// Mock state.ts to redirect all paths to temp directory. Stash mutable
+// override state on globalThis instead of a top-level const — vitest 4
+// hoists vi.mock above local declarations (TDZ error) and Bun's native
+// runner doesn't expose vi.hoisted. globalThis is always initialized.
+interface VersionsHoistedState {
+  TEST_ROOT: string;
+  AGENTS_DIR: string;
+  PROJECT_AGENTS_DIR: string | null;
+  META: { agents?: Record<string, string> };
+}
+const HOISTED_STATE_KEY = '__agents_cli_versions_test_state__';
+const hoistedState: VersionsHoistedState =
+  ((globalThis as Record<string, unknown>)[HOISTED_STATE_KEY] as VersionsHoistedState | undefined)
+  ?? (((globalThis as Record<string, unknown>)[HOISTED_STATE_KEY] = {
+        TEST_ROOT: '',
+        AGENTS_DIR: '',
+        PROJECT_AGENTS_DIR: null,
+        META: {},
+      }) as VersionsHoistedState);
 let TEST_ROOT = '';
 let AGENTS_DIR = '';
 let PROJECT_AGENTS_DIR: string | null = null;
 let META: { agents?: Record<string, string> } = {};
 
 vi.mock('../src/lib/state.js', () => {
+  // Pull from globalThis at call time so vitest's hoisting of vi.mock above
+  // the local `hoistedState` binding (TDZ) doesn't break references. Seed
+  // the bucket here too — if vitest invokes the factory before the
+  // module-body const initializer runs, the consumer's first read still
+  // sees a real object instead of undefined.
+  const nodeFs = require('node:fs') as typeof import('fs');
+  const nodePath = require('node:path') as typeof import('path');
+  const gt = globalThis as Record<string, unknown>;
+  if (!gt.__agents_cli_versions_test_state__) {
+    gt.__agents_cli_versions_test_state__ = {
+      TEST_ROOT: '',
+      AGENTS_DIR: '',
+      PROJECT_AGENTS_DIR: null,
+      META: {},
+    };
+  }
+  const state = () => gt.__agents_cli_versions_test_state__ as VersionsHoistedState;
   return {
-    get getAgentsDir() { return () => hoistedState.AGENTS_DIR; },
-    get getSystemAgentsDir() { return () => hoistedState.AGENTS_DIR; },
-    get getUserAgentsDir() { return () => hoistedState.AGENTS_DIR; },
-    get getOptionalUserAgentsDir() { return () => hoistedState.AGENTS_DIR; },
-    get getVersionsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'versions'); },
-    get getShimsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'shims'); },
-    get getCommandsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'commands'); },
-    get getSystemCommandsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'commands'); },
-    get getUserCommandsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'commands'); },
-    get getSkillsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'skills'); },
-    get getSystemSkillsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'skills'); },
-    get getUserSkillsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'skills'); },
-    get getHooksDir() { return () => path.join(hoistedState.AGENTS_DIR, 'hooks'); },
-    get getSystemHooksDir() { return () => path.join(hoistedState.AGENTS_DIR, 'hooks'); },
-    get getUserHooksDir() { return () => path.join(hoistedState.AGENTS_DIR, 'hooks'); },
-    get getMemoryDir() { return () => path.join(hoistedState.AGENTS_DIR, 'memory'); },
-    get getRulesDir() { return () => path.join(hoistedState.AGENTS_DIR, 'memory'); },
-    get getSystemRulesDir() { return () => path.join(hoistedState.AGENTS_DIR, 'memory'); },
-    get getUserRulesDir() { return () => path.join(hoistedState.AGENTS_DIR, 'memory'); },
-    get getResolvedRulesDir() { return () => path.join(hoistedState.AGENTS_DIR, 'memory'); },
-    get getScopedAgentsDirs() { return () => [{ scope: 'user', path: hoistedState.AGENTS_DIR }]; },
-    get getMcpDir() { return () => path.join(hoistedState.AGENTS_DIR, 'mcp'); },
-    get getSystemMcpDir() { return () => path.join(hoistedState.AGENTS_DIR, 'mcp'); },
-    get getUserMcpDir() { return () => path.join(hoistedState.AGENTS_DIR, 'mcp'); },
-    get getPermissionsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'permissions'); },
-    get getSystemPermissionsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'permissions'); },
-    get getUserPermissionsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'permissions'); },
-    get getSubagentsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'subagents'); },
-    get getSystemSubagentsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'subagents'); },
-    get getUserSubagentsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'subagents'); },
-    get getPluginsDir() { return () => path.join(hoistedState.AGENTS_DIR, 'plugins'); },
-    get getPromptcutsPath() { return () => path.join(hoistedState.AGENTS_DIR, 'promptcuts.yaml'); },
-    get getSystemPromptcutsPath() { return () => path.join(hoistedState.AGENTS_DIR, 'promptcuts.yaml'); },
-    get getUserPromptcutsPath() { return () => path.join(hoistedState.AGENTS_DIR, 'promptcuts.yaml'); },
-    get getProjectAgentsDir() { return () => hoistedState.PROJECT_AGENTS_DIR; },
+    get getAgentsDir() { return () => state().AGENTS_DIR; },
+    get getSystemAgentsDir() { return () => state().AGENTS_DIR; },
+    get getUserAgentsDir() { return () => state().AGENTS_DIR; },
+    get getOptionalUserAgentsDir() { return () => state().AGENTS_DIR; },
+    get getVersionsDir() { return () => nodePath.join(state().AGENTS_DIR, 'versions'); },
+    get getShimsDir() { return () => nodePath.join(state().AGENTS_DIR, 'shims'); },
+    get getCommandsDir() { return () => nodePath.join(state().AGENTS_DIR, 'commands'); },
+    get getSystemCommandsDir() { return () => nodePath.join(state().AGENTS_DIR, 'commands'); },
+    get getUserCommandsDir() { return () => nodePath.join(state().AGENTS_DIR, 'commands'); },
+    get getSkillsDir() { return () => nodePath.join(state().AGENTS_DIR, 'skills'); },
+    get getSystemSkillsDir() { return () => nodePath.join(state().AGENTS_DIR, 'skills'); },
+    get getUserSkillsDir() { return () => nodePath.join(state().AGENTS_DIR, 'skills'); },
+    get getHooksDir() { return () => nodePath.join(state().AGENTS_DIR, 'hooks'); },
+    get getSystemHooksDir() { return () => nodePath.join(state().AGENTS_DIR, 'hooks'); },
+    get getUserHooksDir() { return () => nodePath.join(state().AGENTS_DIR, 'hooks'); },
+    get getMemoryDir() { return () => nodePath.join(state().AGENTS_DIR, 'memory'); },
+    get getRulesDir() { return () => nodePath.join(state().AGENTS_DIR, 'memory'); },
+    get getSystemRulesDir() { return () => nodePath.join(state().AGENTS_DIR, 'memory'); },
+    get getUserRulesDir() { return () => nodePath.join(state().AGENTS_DIR, 'memory'); },
+    get getResolvedRulesDir() { return () => nodePath.join(state().AGENTS_DIR, 'memory'); },
+    get getScopedAgentsDirs() { return () => [{ scope: 'user', path: state().AGENTS_DIR }]; },
+    get getMcpDir() { return () => nodePath.join(state().AGENTS_DIR, 'mcp'); },
+    get getSystemMcpDir() { return () => nodePath.join(state().AGENTS_DIR, 'mcp'); },
+    get getUserMcpDir() { return () => nodePath.join(state().AGENTS_DIR, 'mcp'); },
+    get getPermissionsDir() { return () => nodePath.join(state().AGENTS_DIR, 'permissions'); },
+    get getSystemPermissionsDir() { return () => nodePath.join(state().AGENTS_DIR, 'permissions'); },
+    get getUserPermissionsDir() { return () => nodePath.join(state().AGENTS_DIR, 'permissions'); },
+    get getSubagentsDir() { return () => nodePath.join(state().AGENTS_DIR, 'subagents'); },
+    get getSystemSubagentsDir() { return () => nodePath.join(state().AGENTS_DIR, 'subagents'); },
+    get getUserSubagentsDir() { return () => nodePath.join(state().AGENTS_DIR, 'subagents'); },
+    get getPluginsDir() { return () => nodePath.join(state().AGENTS_DIR, 'plugins'); },
+    get getPromptcutsPath() { return () => nodePath.join(state().AGENTS_DIR, 'promptcuts.yaml'); },
+    get getSystemPromptcutsPath() { return () => nodePath.join(state().AGENTS_DIR, 'promptcuts.yaml'); },
+    get getUserPromptcutsPath() { return () => nodePath.join(state().AGENTS_DIR, 'promptcuts.yaml'); },
+    get getProjectAgentsDir() { return () => state().PROJECT_AGENTS_DIR; },
     get getEnabledExtraRepos() { return () => []; },
-    get ensureAgentsDir() { return () => fs.mkdirSync(hoistedState.AGENTS_DIR, { recursive: true }); },
-    get readMeta() { return () => hoistedState.META; },
+    get ensureAgentsDir() { return () => nodeFs.mkdirSync(state().AGENTS_DIR, { recursive: true }); },
+    get readMeta() { return () => state().META; },
     get writeMeta() {
       return (next: { agents?: Record<string, string> }) => {
-        META = next;
-        hoistedState.META = next;
+        state().META = next;
       };
     },
     get recordVersionResources() { return () => {}; },
@@ -67,7 +95,7 @@ vi.mock('../src/lib/state.js', () => {
     get ensureVersionResourcePatterns() { return () => {}; },
     get getActiveRulesPreset() { return () => 'default'; },
     get setActiveRulesPreset() { return () => {}; },
-    get getCliVersionCachePath() { return () => path.join(hoistedState.AGENTS_DIR, '.cli-version-cache.json'); },
+    get getCliVersionCachePath() { return () => nodePath.join(state().AGENTS_DIR, '.cli-version-cache.json'); },
   };
 });
 
@@ -106,14 +134,12 @@ vi.mock('../src/lib/permissions.js', () => ({
   PERMISSION_SET_ENV_VAR: 'AGENTS_PERMISSION_SET',
 }));
 
-vi.mock('../src/lib/mcp.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/lib/mcp.js')>();
-  return {
-    ...actual,
-    installMcpServers: () => ({ applied: [] }),
-    listMcpServerConfigs: () => [],
-  };
-});
+// Override only the two mcp.js exports we need to neutralize; vi.spyOn keeps
+// the rest real and avoids vi.importActual / importOriginal which Bun's
+// native test runner does not support.
+import * as mcpModule from '../src/lib/mcp.js';
+vi.spyOn(mcpModule, 'installMcpServers').mockReturnValue({ applied: [] });
+vi.spyOn(mcpModule, 'listMcpServerConfigs').mockReturnValue([]);
 
 vi.mock('../src/lib/shims.js', () => ({
   createVersionedAlias: () => {},
