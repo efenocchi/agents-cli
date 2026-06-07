@@ -79,6 +79,29 @@ async function getShortCommit(repoDir: string): Promise<string | null> {
   }
 }
 
+/**
+ * Categorized working-tree summary: `M:2 A:1 D:1 ?:3` — letters match the git
+ * porcelain shorthand (Modified / Added / Deleted / Renamed / Unmerged /
+ * Untracked). Zero counts are omitted so the column stays compact.
+ */
+function formatDirtyCounts(status: {
+  modified: string[];
+  created: string[];
+  deleted: string[];
+  renamed: unknown[];
+  conflicted: string[];
+  not_added: string[];
+}): string {
+  const parts: string[] = [];
+  if (status.modified.length) parts.push(chalk.yellow(`M:${status.modified.length}`));
+  if (status.created.length) parts.push(chalk.green(`A:${status.created.length}`));
+  if (status.deleted.length) parts.push(chalk.red(`D:${status.deleted.length}`));
+  if (status.renamed.length) parts.push(chalk.cyan(`R:${status.renamed.length}`));
+  if (status.conflicted.length) parts.push(chalk.magenta(`U:${status.conflicted.length}`));
+  if (status.not_added.length) parts.push(chalk.gray(`?:${status.not_added.length}`));
+  return parts.join(' ');
+}
+
 /** Register the `agents repo` command tree. */
 export function registerRepoCommands(program: Command): void {
   const repoCmd = program
@@ -545,7 +568,7 @@ export function registerRepoCommands(program: Command): void {
               : chalk.yellow(remoteRaw);
           const tree = status.isClean()
             ? chalk.green('clean')
-            : chalk.yellow(`${status.files.length} uncommitted`);
+            : formatDirtyCounts(status);
           const remotePad = ' '.repeat(Math.max(0, 12 - remoteRaw.length));
           console.log(`  ${chalk.cyan(t.alias.padEnd(12))} ${branch.padEnd(28)}  ${remoteColored}${remotePad}  ${tree}`);
         } catch (err) {
