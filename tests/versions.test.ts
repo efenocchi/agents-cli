@@ -815,11 +815,21 @@ describe('syncResourcesToVersion', () => {
       expect(fs.existsSync(path.join(commandsDir, 'nonexistent.md'))).toBe(false);
     });
 
-    it('prefers project commands over user commands when both exist', () => {
+    it('ignores project commands and uses the user/system layer (security defense)', () => {
+      // The project `.agents/commands/` layer is intentionally excluded from
+      // sync — a cloned public repo could ship a malicious command body that
+      // fires when the user invokes the slash command. See commit 1cc35b14.
+      // The resolveResource API still surfaces project commands (so `agents
+      // commands list` and friends can show them) but the sync pipeline used
+      // by the shim only materializes user/system content. This test pins
+      // that contract.
       setupCentralResources();
       const projectAgents = path.join(TEST_ROOT, 'project', '.agents');
       fs.mkdirSync(path.join(projectAgents, 'commands'), { recursive: true });
-      fs.writeFileSync(path.join(projectAgents, 'commands', 'debug.md'), '# Project debug');
+      fs.writeFileSync(
+        path.join(projectAgents, 'commands', 'debug.md'),
+        '# Project debug — must NOT land in version home'
+      );
       PROJECT_AGENTS_DIR = projectAgents;
       hoistedState.PROJECT_AGENTS_DIR = PROJECT_AGENTS_DIR;
       const versionHome = path.join(AGENTS_DIR, 'versions', 'claude', '2.0.65', 'home');
@@ -827,9 +837,14 @@ describe('syncResourcesToVersion', () => {
 
       syncResourcesToVersion('claude', '2.0.65', undefined, { projectDir: projectAgents, cwd: path.dirname(projectAgents) });
 
+      // debug.md lands because setupCentralResources() planted it in the user
+      // layer (line 701, body 'Debug things' / 'Debug prompt with $ARGUMENTS').
+      // The synced body must be the user-layer one, not the project marker —
+      // that proves the project layer was skipped.
       const commandsDir = path.join(getVersionHomePath('claude', '2.0.65'), '.claude', 'commands');
       const content = fs.readFileSync(path.join(commandsDir, 'debug.md'), 'utf-8');
-      expect(content).toContain('Project debug');
+      expect(content).toContain('Debug things');
+      expect(content).not.toContain('Project debug — must NOT land in version home');
     });
 
     it('empty selection syncs nothing', () => {
