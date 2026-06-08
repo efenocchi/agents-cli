@@ -1488,7 +1488,7 @@ export function getMcpConfigPathForHome(agentId: AgentId, home: string): string 
     case 'grok':
       return path.join(home, '.grok', 'config.toml');
     default:
-      return path.join(home, `.${agentId}`, 'settings.json');
+      return path.join(home, agentConfigDirName(agentId), 'settings.json');
   }
 }
 
