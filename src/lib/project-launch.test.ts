@@ -9,25 +9,31 @@ let SYSTEM_DIR: string;
 let PROJECT_DIR: string;
 let VERSION_HOME: string;
 
-// state.ts derives paths from $HOME captured at module load. Mock the
-// path-providing getters per-test to point at TMP_HOME; getVersionsDir feeds
-// versions.ts:getVersionHomePath transitively. Real fs writes/reads under
-// the temp dir — no business logic mocked.
-vi.mock('./state.js', () => ({
-  get getPluginsDir() { return () => path.join(USER_DIR, 'plugins'); },
-  get getSystemPluginsDir() { return () => path.join(SYSTEM_DIR, 'plugins'); },
-  get getExtraPluginsDir() { return (_alias: string) => path.join(TMP_HOME, '.agents-extras', _alias, 'plugins'); },
-  get getProjectPluginsDir() { return (cwd: string = process.cwd()) => {
-    const p = path.join(cwd, '.agents', 'plugins');
-    return fs.existsSync(path.join(cwd, '.agents')) ? p : null;
-  }; },
-  get getProjectAgentsDir() { return (cwd: string = process.cwd()) => {
-    const p = path.join(cwd, '.agents');
-    return fs.existsSync(p) ? p : null;
-  }; },
-  get getEnabledExtraRepos() { return () => []; },
-  get getVersionsDir() { return () => path.join(USER_DIR, '.history', 'versions'); },
-}));
+// state.ts derives paths from $HOME captured at module load. Override the
+// path-providing getters used by the launch path to point at TMP_HOME;
+// getVersionsDir feeds versions.ts:getVersionHomePath transitively. Real fs
+// writes/reads under the temp dir — no business logic mocked. Other state
+// exports keep their real implementations (vitest is strict about partial
+// mocks — must use importOriginal).
+vi.mock('./state.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./state.js')>();
+  return {
+    ...actual,
+    getPluginsDir: () => path.join(USER_DIR, 'plugins'),
+    getSystemPluginsDir: () => path.join(SYSTEM_DIR, 'plugins'),
+    getExtraPluginsDir: (alias: string) => path.join(TMP_HOME, '.agents-extras', alias, 'plugins'),
+    getProjectPluginsDir: (cwd: string = process.cwd()) => {
+      const p = path.join(cwd, '.agents', 'plugins');
+      return fs.existsSync(path.join(cwd, '.agents')) ? p : null;
+    },
+    getProjectAgentsDir: (cwd: string = process.cwd()) => {
+      const p = path.join(cwd, '.agents');
+      return fs.existsSync(p) ? p : null;
+    },
+    getEnabledExtraRepos: () => [],
+    getVersionsDir: () => path.join(USER_DIR, '.history', 'versions'),
+  };
+});
 
 import { runLaunchSync } from './project-launch.js';
 import {

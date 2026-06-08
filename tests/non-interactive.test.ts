@@ -74,6 +74,14 @@ function writeFakeNpmInstaller(home: string, version: string): string {
     npmPath,
     [
       '#!/bin/sh',
+      // `npm --version` is the presence check that installVersion runs before
+      // `npm install` (see src/lib/versions.ts:1124, since the windows fix
+      // in #206 replaced `which npm`). Return a stub semver so the check
+      // passes and `npm install` proceeds.
+      'if [ "$1" = "--version" ]; then',
+      '  echo "10.0.0"',
+      '  exit 0',
+      'fi',
       'if [ "$1" = "install" ]; then',
       '  mkdir -p node_modules/@openai/codex node_modules/.bin',
       `  printf '{"version":"${version}"}' > node_modules/@openai/codex/package.json`,
