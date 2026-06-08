@@ -64,6 +64,7 @@ const SYSTEM_MCP_DIR = path.join(SYSTEM_AGENTS_DIR, 'mcp');
 const SYSTEM_PERMISSIONS_DIR = path.join(SYSTEM_AGENTS_DIR, 'permissions');
 const SYSTEM_SUBAGENTS_DIR = path.join(SYSTEM_AGENTS_DIR, 'subagents');
 const SYSTEM_WORKFLOWS_DIR = path.join(SYSTEM_AGENTS_DIR, 'workflows');
+const SYSTEM_PLUGINS_DIR = path.join(SYSTEM_AGENTS_DIR, 'plugins');
 const SYSTEM_PROMPTCUTS_FILE = path.join(SYSTEM_AGENTS_DIR, 'hooks', 'promptcuts.yaml');
 const SYSTEM_MCP_CONFIG_FILE = path.join(SYSTEM_AGENTS_DIR, 'mcp.json');
 const SYSTEM_INSTRUCTIONS_FILE = path.join(SYSTEM_AGENTS_DIR, 'instructions.md');
@@ -360,6 +361,21 @@ export function getBackupsDir(): string { return BACKUPS_DIR; }
 
 /** Path to plugin bundles (~/.agents/plugins/) — user-authored resource. */
 export function getPluginsDir(): string { return PLUGINS_DIR; }
+
+/** Path to system plugin bundles (~/.agents/.system/plugins/) — npm-shipped, read-only defaults. */
+export function getSystemPluginsDir(): string { return SYSTEM_PLUGINS_DIR; }
+
+/** Path to an extra repo's plugin bundles (~/.agents-<alias>/plugins/). */
+export function getExtraPluginsDir(alias: string): string {
+  return path.join(getExtraRepoDir(alias), 'plugins');
+}
+
+/** Path to a project-scoped plugins directory (<project>/.agents/plugins/), or null when none. */
+export function getProjectPluginsDir(cwd: string = process.cwd()): string | null {
+  const projectAgentsDir = getProjectAgentsDir(cwd);
+  if (!projectAgentsDir) return null;
+  return path.join(projectAgentsDir, 'plugins');
+}
 
 /** Path to synced remote session data (~/.agents/.cache/drive/). */
 export function getDriveDir(): string { return DRIVE_DIR; }

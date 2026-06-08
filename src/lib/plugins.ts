@@ -68,11 +68,11 @@ function isPluginRootEntry(pluginsDir: string, entry: fs.Dirent): boolean {
 }
 
 /**
- * Discover all plugins in ~/.agents/plugins/.
+ * Discover all plugins in a given plugins directory (e.g. ~/.agents/plugins/,
+ * ~/.agents/.system/plugins/, <cwd>/.agents/plugins/, ~/.agents-<alias>/plugins/).
  * A valid plugin has a .claude-plugin/plugin.json manifest.
  */
-export function discoverPlugins(): DiscoveredPlugin[] {
-  const pluginsDir = getPluginsDir();
+export function discoverPluginsInDir(pluginsDir: string): DiscoveredPlugin[] {
   if (!fs.existsSync(pluginsDir)) {
     return [];
   }
@@ -91,6 +91,14 @@ export function discoverPlugins(): DiscoveredPlugin[] {
   }
 
   return plugins;
+}
+
+/**
+ * Discover all plugins in ~/.agents/plugins/ (the user-scope source).
+ * Backward-compat wrapper around discoverPluginsInDir.
+ */
+export function discoverPlugins(): DiscoveredPlugin[] {
+  return discoverPluginsInDir(getPluginsDir());
 }
 
 export function buildDiscoveredPlugin(pluginRoot: string, manifest: PluginManifest): DiscoveredPlugin {

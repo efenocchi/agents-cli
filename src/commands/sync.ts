@@ -4,6 +4,14 @@
  * Registers the hidden `agents sync` command invoked by shims to
  * synchronize resources (commands, skills, hooks, memory, MCP, etc.)
  * into a specific agent version home before launch.
+ *
+ * Two modes:
+ *   - default: full reconciliation — version-home resource sync, project rules
+ *     compile. Heavy; called by management commands (`agents use`, `agents view`).
+ *   - --launch: hot-path mode for the shim. Skips version-home reconciliation
+ *     and runs only the cheap project-scoped work (rules compile, workspace
+ *     resource mirror, per-scope plugin marketplaces). Filesystem-only,
+ *     sub-50ms steady state.
  */
 
 import * as path from 'path';
@@ -12,6 +20,7 @@ import chalk from 'chalk';
 import { AGENTS } from '../lib/agents.js';
 import { isVersionInstalled, syncResourcesToVersion } from '../lib/versions.js';
 import { compileRulesForProject } from '../lib/rules/compile.js';
+import { runLaunchSync } from '../lib/project-launch.js';
 
 /** Register the hidden `agents sync` command. */
 export function registerSyncCommand(program: Command): void {
@@ -22,12 +31,14 @@ export function registerSyncCommand(program: Command): void {
     .requiredOption('--agent-version <version>', 'Installed version to sync resources into')
     .option('--project-dir <path>', 'Path to project-level .agents/ directory containing project-scoped resources')
     .option('--cwd <path>', 'Working directory for discovering project manifest and resources')
+    .option('--launch', 'Hot-path mode: skip version-home reconciliation, run only project-scoped compile + workspace mirror + plugin marketplaces', false)
     .option('--quiet', 'Suppress all output (exit code indicates success)', false)
     .action((opts) => {
       const agentId = opts.agent as keyof typeof AGENTS;
       const version = opts.agentVersion as string;
       const projectDir = opts.projectDir as string | undefined;
       const cwd = opts.cwd as string | undefined;
+      const launch = !!opts.launch;
       const quiet = !!opts.quiet;
 
       if (!AGENTS[agentId]) {
@@ -43,6 +54,11 @@ export function registerSyncCommand(program: Command): void {
           console.error(chalk.red(`${AGENTS[agentId].name}@${version} is not installed`));
         }
         process.exitCode = 1;
+        return;
+      }
+
+      if (launch) {
+        runLaunchMode(agentId, version, cwd ?? process.cwd(), quiet);
         return;
       }
 
@@ -89,4 +105,39 @@ export function registerSyncCommand(program: Command): void {
         ));
       }
     });
+}
+
+function runLaunchMode(agent: keyof typeof AGENTS, version: string, cwd: string, quiet: boolean): void {
+  let result;
+  try {
+    result = runLaunchSync({ agent, version, cwd });
+  } catch (err) {
+    if (!quiet) {
+      console.error(chalk.yellow(`agents: launch sync skipped (${(err as Error).message})`));
+    }
+    return;
+  }
+
+  if (quiet) return;
+
+  const bits: string[] = [];
+  if (result.rulesCompiled) bits.push('rules');
+  if (result.workspaceLinks > 0) bits.push(`${result.workspaceLinks} workspace link(s)`);
+  const mpCount = Object.keys(result.marketplaces).length;
+  if (mpCount > 0) {
+    const pluginCount = Object.values(result.marketplaces).reduce((acc, names) => acc + names.length, 0);
+    bits.push(`${pluginCount} plugin(s) across ${mpCount} marketplace(s)`);
+  }
+
+  if (bits.length === 0) {
+    console.log(chalk.gray('No project resources to compile'));
+  } else {
+    console.log(chalk.green(`Launch sync: ${bits.join(', ')}`));
+  }
+
+  if (result.workspaceSkipped.length > 0) {
+    console.log(chalk.yellow(
+      `Skipped (user-owned, not overwritten): ${result.workspaceSkipped.join(', ')}`,
+    ));
+  }
 }

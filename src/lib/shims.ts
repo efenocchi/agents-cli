@@ -215,8 +215,14 @@ async function promptConflictStrategy(
  *   v15 — remove foreground resource sync / rules refresh from launch shims.
  *         Version homes are reconciled by agents-cli management commands; the
  *         shim hot path only resolves a version and execs the agent binary.
+ *   v16 — re-introduce project-scoped compile to the shim hot path via
+ *         `agents sync --launch`. This stays fast (filesystem-only): compiles
+ *         project rules, mirrors workspace resources, and synthesizes the
+ *         scoped plugin marketplaces (agents-cli/agents-system/extras-<alias>/
+ *         agents-project). Version-home reconciliation stays out of the hot
+ *         path — management commands still own that.
  */
-export const SHIM_SCHEMA_VERSION = 15;
+export const SHIM_SCHEMA_VERSION = 16;
 
 /** Internal marker string used to embed the schema version in shim scripts. */
 const SHIM_VERSION_MARKER = 'agents-shim-version:';
@@ -484,6 +490,10 @@ if [ ! -x "$BINARY" ]; then
 fi
 
 ${managedEnv}
+
+# Project-scoped compile (rules, workspace resources, scoped plugin marketplaces).
+# Filesystem-only — sub-50ms steady state. Never blocks launch on failure.
+"$AGENTS_BIN" sync --agent "$AGENT" --agent-version "$VERSION" --launch --cwd "$PWD" --quiet 2>/dev/null || true
 
 exec "$BINARY"${launchArgs} "$@"
 `;
