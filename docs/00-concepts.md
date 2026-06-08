@@ -123,4 +123,6 @@ until: "0.117.0"                  # exclusive upper bound
 ---
 ```
 
-`commandAppliesTo()` in `src/lib/commands.ts` evaluates these fields after the agent-level `commands` / commands-as-skills gate. Example: `.agents/commands/version.md` ships for Cursor and Claude but excludes Antigravity until harness support is verified.
+`commandAppliesTo()` in `src/lib/commands.ts` evaluates these fields after the agent-level `commands` / commands-as-skills gate. The check runs on central sync (`~/.agents/commands/` user/system → version home) and on `agents commands install`; project `.agents/commands/` files are discovered in place and are not filtered by `agents:`.
+
+Example: `.agents/commands/version.md` targets Claude, Codex, Gemini, Cursor, OpenCode, Copilot, and Grok; Antigravity is excluded until harness support is verified.
