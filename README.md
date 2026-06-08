@@ -641,23 +641,54 @@ By default, secrets sync via iCloud Keychain to your other Macs. With `--no-iclo
 
 ## Compatibility
 
-| Agent | Versions | MCP | Commands | Skills | Rules | Hooks | Plugins | Permissions | Routines | Teams |
-|-------|----------|-----|----------|--------|-------|-------|---------|-------------|----------|-------|
-| Claude Code | yes | yes | yes | yes | CLAUDE.md | yes | yes | yes | yes | yes |
-| Codex CLI | yes | yes | yes | yes | AGENTS.md | yes (>= 0.116.0) | -- | yes | yes | yes |
-| Gemini CLI | yes | yes | yes | yes | GEMINI.md | yes (>= 0.26.0) | -- | -- | yes | yes |
-| OpenClaw | yes | yes | -- | yes | workspace/AGENTS.md | yes | yes | -- | -- | -- |
-| Cursor | yes | yes | yes | yes | .cursorrules | -- | -- | -- | -- | yes |
-| OpenCode | yes | yes | yes | yes | AGENTS.md | -- | -- | yes | -- | yes |
-| Copilot | yes | yes | yes | yes | AGENTS.md | -- | -- | -- | -- | -- |
-| Amp | yes | yes | yes | yes | AGENTS.md | -- | -- | -- | -- | -- |
-| Kiro | yes | yes | yes | yes | AGENTS.md | -- | -- | -- | -- | -- |
-| Goose | yes | yes | -- | -- | AGENTS.md | -- | -- | -- | -- | -- |
-| Roo Code | yes | yes | yes | yes | AGENTS.md | -- | -- | -- | -- | -- |
+Which DotAgents resources each agent CLI can load. Source of truth: [src/lib/agents.ts](src/lib/agents.ts) (`capabilities`); gates use `supports(agent, cap, version)` from [src/lib/capabilities.ts](src/lib/capabilities.ts). Full matrix also in [docs/00-concepts.md](docs/00-concepts.md).
 
-Hooks columns marked `yes (>= X.Y.Z)` are version-gated: `agents hooks add` skips with a clear message when the installed binary is older than the listed version, instead of writing config the older binary would silently ignore. OpenCode's plugin-based hook system is on the roadmap; the entry is `--` until a writer ships.
+| Agent | Versions | Hooks | MCP | Permissions | Skills | Commands | Plugins | Subagents | Rules | Workflows |
+|-------|----------|-------|-----|-------------|--------|----------|---------|-----------|-------|-----------|
+| Claude Code | yes | yes | yes | yes | yes | yes | yes | yes | `CLAUDE.md` | yes |
+| Codex CLI | yes | >= 0.116.0 | yes | no | yes | < 0.117.0 · skills ($name, >= 0.117) | >= 0.128.0 | no | `AGENTS.md` | no |
+| Gemini CLI | yes | >= 0.26.0 | yes | no | yes | yes (.toml) | no | no | `GEMINI.md` | no |
+| Antigravity | yes | yes | yes | yes | yes | yes | yes | no | `AGENTS.md` | no |
+| Grok Build | yes | yes | yes | yes | yes | skills ($name) | yes | no | `AGENTS.md` | no |
+| OpenClaw | yes | yes | yes | no | yes | gateway | yes | yes | `workspace/AGENTS.md` | no |
+| Cursor | yes | no | yes | no | yes | yes | no | no | `.cursorrules` | no |
+| OpenCode | yes | no | yes | no | yes | yes | no | no | `AGENTS.md` | no |
+| Copilot | yes | no | yes | no | yes | yes | no | no | `AGENTS.md` | no |
+| Amp | yes | no | yes | no | yes | yes | no | no | `AGENTS.md` | no |
+| Kiro | yes | no | yes | no | yes | yes | no | no | `AGENTS.md` | no |
+| Goose | yes | no | yes | no | no | no | no | no | `AGENTS.md` | no |
+| Roo Code | yes | no | yes | no | yes | yes | no | no | `AGENTS.md` | no |
 
-Codex command sync is version-aware: Codex `0.116.x` and older receive slash commands in `.codex/prompts/`; Codex `0.117.0+` receives those commands as generated skills so they can be invoked with `$name`.
+**Legend:** `yes` / `no` = synced or skipped at install time. `skills ($name)` = no file-based slash-command dir; behavior ships as a generated skill invoked with `$command`. `gateway` = OpenClaw resolves slash commands at runtime, not from synced files. Version suffixes are enforced at sync time — out-of-range versions are skipped with a clear message.
+
+**Host CLIs** (`agents cli`) are separate: YAML manifests under `~/.agents/cli/` install binaries onto your PATH (`gh`, `higgsfield`, etc.). They are not copied into per-agent version homes.
+
+### agents-cli features (not agent-native resources)
+
+| Agent | Routines | Teams | Session index |
+|-------|----------|-------|---------------|
+| Claude Code | yes | yes | yes |
+| Codex CLI | yes | yes | yes |
+| Gemini CLI | yes | yes | yes |
+| Cursor | -- | yes | -- |
+| OpenCode | -- | yes | -- |
+| Grok Build | -- | yes | yes |
+| Antigravity | -- | yes | -- |
+| Copilot | -- | -- | yes |
+| OpenClaw, Amp, Kiro, Goose, Roo | -- | -- | -- |
+
+### Version-gated sync
+
+| Capability | Agent | Gate |
+|------------|-------|------|
+| Hooks | Codex | >= 0.116.0 |
+| Hooks | Gemini | >= 0.26.0 |
+| File-based commands | Codex | < 0.117.0 (0.117+ uses command-as-skill) |
+| Plugins | Codex | >= 0.128.0 |
+
+Codex `0.117.0+` no longer reads `.codex/prompts/`; agents-cli converts slash commands into skills so they stay invocable as `$name`. OpenCode's plugin-based hook system is on the roadmap; hooks stay `no` until a writer ships.
+
+Slash commands can declare per-agent/version targeting in frontmatter (`agents:`, `since:`, `until:`). This repo ships `.agents/commands/version.md` as `/version` — Cursor and Claude today; Antigravity excluded until verified.
 
 ## FAQ
 

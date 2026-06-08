@@ -95,15 +95,32 @@ See [01-version-management.md](01-version-management.md) for install and switchi
 | Agent | Hooks | MCP | Permissions | Skills | Commands | Plugins | Subagents | Rules | Workflows |
 |------|-------|-----|-------------|--------|----------|---------|-----------|-------|-----------|
 | Claude | yes | yes | yes | yes | yes | yes | yes | `CLAUDE.md` | yes |
-| Codex | >= 0.116.0 | yes | no | yes | < 0.117.0 | >= 0.128.0 | no | `AGENTS.md` | no |
-| Gemini | >= 0.26.0 | yes | no | yes | yes | no | no | `GEMINI.md` | no |
+| Codex | >= 0.116.0 | yes | no | yes | < 0.117.0 · skills ($name, >= 0.117) | >= 0.128.0 | no | `AGENTS.md` | no |
+| Gemini | >= 0.26.0 | yes | no | yes | yes (.toml) | no | no | `GEMINI.md` | no |
 | Cursor | no | yes | no | yes | yes | no | no | `.cursorrules` | no |
 | OpenCode | no | yes | no | yes | yes | no | no | `AGENTS.md` | no |
-| OpenClaw | yes | yes | no | yes | no | yes | yes | `workspace/AGENTS.md` | no |
+| OpenClaw | yes | yes | no | yes | gateway | yes | yes | `workspace/AGENTS.md` | no |
 | Copilot | no | yes | no | yes | yes | no | no | `AGENTS.md` | no |
 | Amp | no | yes | no | yes | yes | no | no | `AGENTS.md` | no |
 | Kiro | no | yes | no | yes | yes | no | no | `AGENTS.md` | no |
 | Goose | no | yes | no | no | no | no | no | `AGENTS.md` | no |
 | Roo Code | no | yes | no | yes | yes | no | no | `AGENTS.md` | no |
 | Antigravity | yes | yes | yes | yes | yes | yes | no | `AGENTS.md` | no |
-| Grok | yes | yes | yes | yes | no | yes | no | `AGENTS.md` | no |
+| Grok | yes | yes | yes | yes | skills ($name) | yes | no | `AGENTS.md` | no |
+
+Permissions sync is gated on the `allowlist` capability (Claude, Antigravity, Grok only). **Host CLIs** (`agents cli`) are agent-agnostic PATH binaries — not in this matrix. Install paths call `supports(agent, cap, version)` before writing; gated capabilities skip with a clear reason instead of silently ignored config.
+
+### Per-command targeting
+
+Slash commands in `commands/*.md` can narrow sync with optional YAML frontmatter:
+
+```yaml
+---
+description: Required one-line summary
+agents: [claude, cursor, codex]   # omit = all command-capable agents
+since: "0.116.0"                  # minimum agent CLI version (inclusive)
+until: "0.117.0"                  # exclusive upper bound
+---
+```
+
+`commandAppliesTo()` in `src/lib/commands.ts` evaluates these fields after the agent-level `commands` / commands-as-skills gate. Example: `.agents/commands/version.md` ships for Cursor and Claude but excludes Antigravity until harness support is verified.
