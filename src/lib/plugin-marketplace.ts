@@ -1,27 +1,48 @@
 /**
  * Native plugin marketplace install path for Claude / OpenClaw.
  *
- * Plugins managed by agents-cli are exposed as a synthetic local marketplace
- * named "agents-cli" under each version's plugin directory:
+ * Plugins managed by agents-cli are exposed as synthetic local marketplaces
+ * grouped by source scope under each version's plugin directory:
  *
  *   <versionHome>/.{claude,openclaw}/plugins/
- *     known_marketplaces.json            # registers the "agents-cli" marketplace
- *     marketplaces/agents-cli/
- *       .claude-plugin/marketplace.json  # synthesized catalog
- *       plugins/<plugin>/                # copied plugin source
+ *     known_marketplaces.json                    # registers each scoped marketplace
+ *     marketplaces/agents-cli/                   # ~/.agents/plugins/* (user scope, legacy name)
+ *     marketplaces/agents-system/                # ~/.agents/.system/plugins/*
+ *     marketplaces/extras-<alias>/               # ~/.agents-<alias>/plugins/*
+ *     marketplaces/agents-project/               # <cwd>/.agents/plugins/*
+ *       .claude-plugin/marketplace.json          # synthesized catalog
+ *       plugins/<plugin>/                        # copied plugin source
  *
- * Plus the version's settings.json gets `enabledPlugins["<plugin>@agents-cli"] = true`.
+ * Plus the version's settings.json gets
+ *   `enabledPlugins["<plugin>@<marketplace>"] = true`.
  *
  * This produces native `/plugin:skill` slash namespacing, visibility in `/plugins`,
- * and `/plugin enable|disable` support — matching the Claude Code spec at
+ * `/plugin enable|disable` support, AND honest attribution (the user can see
+ * which scope each plugin came from) — matching the Claude Code spec at
  * https://code.claude.com/docs/en/plugins and /plugin-marketplaces.
+ *
+ * Backward compat: existing call sites that don't pass `marketplaceName` keep
+ * writing to "agents-cli" (the legacy user-scope name). The launch-sync path
+ * passes scope-specific names for the three new marketplaces.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 import type { AgentId, DiscoveredPlugin, PluginManifest } from './types.js';
 
+/**
+ * Legacy name for the user-scope marketplace. Kept as the default so existing
+ * installs (which have `marketplaces/agents-cli/` on disk and `<name>@agents-cli`
+ * keys in settings.json) keep working without a migration.
+ */
 export const MARKETPLACE_NAME = 'agents-cli';
+
+/** Marketplace name for ~/.agents/.system/plugins/*. */
+export const SYSTEM_MARKETPLACE_NAME = 'agents-system';
+/** Marketplace name for <cwd>/.agents/plugins/*. */
+export const PROJECT_MARKETPLACE_NAME = 'agents-project';
+/** Marketplace name for an extras repo aliased <alias> at ~/.agents-<alias>/plugins/*. */
+export function extrasMarketplaceName(alias: string): string { return `extras-${alias}`; }
 
 interface KnownMarketplaceEntry {
   source: { source: 'directory'; path: string };
@@ -49,16 +70,16 @@ function pluginsRootForVersion(agent: AgentId, versionHome: string): string {
   return path.join(versionHome, `.${agent}`, 'plugins');
 }
 
-export function marketplaceRoot(agent: AgentId, versionHome: string): string {
-  return path.join(pluginsRootForVersion(agent, versionHome), 'marketplaces', MARKETPLACE_NAME);
+export function marketplaceRoot(agent: AgentId, versionHome: string, marketplaceName: string = MARKETPLACE_NAME): string {
+  return path.join(pluginsRootForVersion(agent, versionHome), 'marketplaces', marketplaceName);
 }
 
-export function marketplaceManifestPath(agent: AgentId, versionHome: string): string {
-  return path.join(marketplaceRoot(agent, versionHome), '.claude-plugin', 'marketplace.json');
+export function marketplaceManifestPath(agent: AgentId, versionHome: string, marketplaceName: string = MARKETPLACE_NAME): string {
+  return path.join(marketplaceRoot(agent, versionHome, marketplaceName), '.claude-plugin', 'marketplace.json');
 }
 
-export function pluginInstallDir(plugin: DiscoveredPlugin, agent: AgentId, versionHome: string): string {
-  return path.join(marketplaceRoot(agent, versionHome), 'plugins', plugin.name);
+export function pluginInstallDir(plugin: DiscoveredPlugin, agent: AgentId, versionHome: string, marketplaceName: string = MARKETPLACE_NAME): string {
+  return path.join(marketplaceRoot(agent, versionHome, marketplaceName), 'plugins', plugin.name);
 }
 
 export function knownMarketplacesPath(agent: AgentId, versionHome: string): string {
@@ -71,7 +92,7 @@ function settingsPath(agent: AgentId, versionHome: string): string {
 
 /**
  * Copy plugin source into marketplace install dir.
- * Source of truth remains ~/.agents/plugins/<name>/ — this is a per-version snapshot.
+ * Source of truth remains the plugin's source dir — this is a per-version snapshot.
  *
  * Symlinks pointing OUTSIDE the plugin source root are dropped. They show up
  * when plugin authors (legitimately) link prompt-side references to sibling
@@ -86,9 +107,10 @@ function settingsPath(agent: AgentId, versionHome: string): string {
 export function copyPluginToMarketplace(
   plugin: DiscoveredPlugin,
   agent: AgentId,
-  versionHome: string
+  versionHome: string,
+  marketplaceName: string = MARKETPLACE_NAME
 ): string {
-  const dest = pluginInstallDir(plugin, agent, versionHome);
+  const dest = pluginInstallDir(plugin, agent, versionHome, marketplaceName);
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   if (fs.existsSync(dest)) {
     fs.rmSync(dest, { recursive: true, force: true });
@@ -138,8 +160,8 @@ export function copyPluginToMarketplace(
  * plugins installed under <marketplace>/plugins/. Always run after add or remove
  * so the manifest stays in lockstep with on-disk contents.
  */
-export function syncMarketplaceManifest(agent: AgentId, versionHome: string): MarketplaceManifest | null {
-  const root = marketplaceRoot(agent, versionHome);
+export function syncMarketplaceManifest(agent: AgentId, versionHome: string, marketplaceName: string = MARKETPLACE_NAME): MarketplaceManifest | null {
+  const root = marketplaceRoot(agent, versionHome, marketplaceName);
   const pluginsDir = path.join(root, 'plugins');
   if (!fs.existsSync(pluginsDir)) return null;
 
@@ -176,24 +198,31 @@ export function syncMarketplaceManifest(agent: AgentId, versionHome: string): Ma
 
   const manifest: MarketplaceManifest = {
     $schema: 'https://anthropic.com/claude-code/marketplace.schema.json',
-    name: MARKETPLACE_NAME,
-    description: 'Plugins managed by agents-cli',
+    name: marketplaceName,
+    description: descriptionForMarketplace(marketplaceName),
     owner: { name: 'agents-cli' },
     plugins: entries.sort((a, b) => a.name.localeCompare(b.name)),
   };
 
-  const manifestPath = marketplaceManifestPath(agent, versionHome);
+  const manifestPath = marketplaceManifestPath(agent, versionHome, marketplaceName);
   fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf-8');
   return manifest;
 }
 
+function descriptionForMarketplace(name: string): string {
+  if (name === SYSTEM_MARKETPLACE_NAME) return 'System plugins shipped with agents-cli';
+  if (name === PROJECT_MARKETPLACE_NAME) return 'Project-scoped plugins from <cwd>/.agents/plugins/';
+  if (name.startsWith('extras-')) return `Plugins from extras repo "${name.slice('extras-'.length)}"`;
+  return 'Plugins managed by agents-cli';
+}
+
 /**
- * Register the agents-cli marketplace in known_marketplaces.json so Claude Code
- * discovers it on startup. Idempotent: re-running just refreshes lastUpdated.
+ * Register a marketplace in known_marketplaces.json so Claude Code discovers
+ * it on startup. Idempotent: re-running just refreshes lastUpdated.
  */
-export function registerMarketplace(agent: AgentId, versionHome: string): void {
-  const root = marketplaceRoot(agent, versionHome);
+export function registerMarketplace(agent: AgentId, versionHome: string, marketplaceName: string = MARKETPLACE_NAME): void {
+  const root = marketplaceRoot(agent, versionHome, marketplaceName);
   const knownPath = knownMarketplacesPath(agent, versionHome);
 
   let known: Record<string, KnownMarketplaceEntry> = {};
@@ -205,7 +234,7 @@ export function registerMarketplace(agent: AgentId, versionHome: string): void {
     }
   }
 
-  known[MARKETPLACE_NAME] = {
+  known[marketplaceName] = {
     source: { source: 'directory', path: root },
     installLocation: root,
     lastUpdated: new Date().toISOString(),
@@ -216,10 +245,10 @@ export function registerMarketplace(agent: AgentId, versionHome: string): void {
 }
 
 /**
- * Drop the agents-cli marketplace entry from known_marketplaces.json.
+ * Drop a marketplace entry from known_marketplaces.json.
  * Called when the last plugin under it is removed.
  */
-export function unregisterMarketplace(agent: AgentId, versionHome: string): void {
+export function unregisterMarketplace(agent: AgentId, versionHome: string, marketplaceName: string = MARKETPLACE_NAME): void {
   const knownPath = knownMarketplacesPath(agent, versionHome);
   if (!fs.existsSync(knownPath)) return;
 
@@ -230,8 +259,8 @@ export function unregisterMarketplace(agent: AgentId, versionHome: string): void
     return;
   }
 
-  if (!(MARKETPLACE_NAME in known)) return;
-  delete known[MARKETPLACE_NAME];
+  if (!(marketplaceName in known)) return;
+  delete known[marketplaceName];
 
   if (Object.keys(known).length === 0) {
     try {
@@ -244,16 +273,17 @@ export function unregisterMarketplace(agent: AgentId, versionHome: string): void
 
 /**
  * Mark a plugin as enabled in <versionHome>/.{agent}/settings.json under
- * enabledPlugins["<plugin>@agents-cli"]: true. Reads, mutates, writes —
+ * enabledPlugins["<plugin>@<marketplace>"]: true. Reads, mutates, writes —
  * preserving every other key.
  */
 export function enablePluginInSettings(
   pluginName: string,
   agent: AgentId,
   versionHome: string,
-  options: { allowExecSurfaces?: boolean } = {}
+  options: { allowExecSurfaces?: boolean; marketplaceName?: string } = {}
 ): void {
-  if (!options.allowExecSurfaces && marketplacePluginHasExecSurfaces(pluginName, agent, versionHome)) {
+  const marketplaceName = options.marketplaceName ?? MARKETPLACE_NAME;
+  if (!options.allowExecSurfaces && marketplacePluginHasExecSurfaces(pluginName, agent, versionHome, marketplaceName)) {
     return;
   }
 
@@ -271,7 +301,7 @@ export function enablePluginInSettings(
     settings.enabledPlugins = {};
   }
   const enabled = settings.enabledPlugins as Record<string, boolean>;
-  const key = `${pluginName}@${MARKETPLACE_NAME}`;
+  const key = `${pluginName}@${marketplaceName}`;
   if (enabled[key] === true) return;
   enabled[key] = true;
 
@@ -279,8 +309,8 @@ export function enablePluginInSettings(
   fs.writeFileSync(sPath, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
 }
 
-function marketplacePluginHasExecSurfaces(pluginName: string, agent: AgentId, versionHome: string): boolean {
-  const root = path.join(marketplaceRoot(agent, versionHome), 'plugins', pluginName);
+function marketplacePluginHasExecSurfaces(pluginName: string, agent: AgentId, versionHome: string, marketplaceName: string = MARKETPLACE_NAME): boolean {
+  const root = path.join(marketplaceRoot(agent, versionHome, marketplaceName), 'plugins', pluginName);
   if (fs.existsSync(path.join(root, '.mcp.json'))) return true;
   for (const dir of ['bin', 'scripts', 'permissions']) {
     if (fs.existsSync(path.join(root, dir))) return true;
@@ -311,7 +341,8 @@ function marketplacePluginHasExecSurfaces(pluginName: string, agent: AgentId, ve
 export function disablePluginInSettings(
   pluginName: string,
   agent: AgentId,
-  versionHome: string
+  versionHome: string,
+  marketplaceName: string = MARKETPLACE_NAME
 ): void {
   const sPath = settingsPath(agent, versionHome);
   if (!fs.existsSync(sPath)) return;
@@ -326,7 +357,7 @@ export function disablePluginInSettings(
   const enabled = settings.enabledPlugins as Record<string, boolean> | undefined;
   if (!enabled) return;
 
-  const key = `${pluginName}@${MARKETPLACE_NAME}`;
+  const key = `${pluginName}@${marketplaceName}`;
   if (!(key in enabled)) return;
   delete enabled[key];
 
@@ -344,9 +375,10 @@ export function disablePluginInSettings(
 export function removePluginFromMarketplace(
   pluginName: string,
   agent: AgentId,
-  versionHome: string
+  versionHome: string,
+  marketplaceName: string = MARKETPLACE_NAME
 ): boolean {
-  const installed = path.join(marketplaceRoot(agent, versionHome), 'plugins', pluginName);
+  const installed = path.join(marketplaceRoot(agent, versionHome, marketplaceName), 'plugins', pluginName);
   if (!fs.existsSync(installed)) return false;
   fs.rmSync(installed, { recursive: true, force: true });
   return true;
@@ -355,8 +387,8 @@ export function removePluginFromMarketplace(
 /**
  * Return true if the marketplace has no plugins left under it.
  */
-export function marketplaceIsEmpty(agent: AgentId, versionHome: string): boolean {
-  const pluginsDir = path.join(marketplaceRoot(agent, versionHome), 'plugins');
+export function marketplaceIsEmpty(agent: AgentId, versionHome: string, marketplaceName: string = MARKETPLACE_NAME): boolean {
+  const pluginsDir = path.join(marketplaceRoot(agent, versionHome, marketplaceName), 'plugins');
   if (!fs.existsSync(pluginsDir)) return true;
   const remaining = fs.readdirSync(pluginsDir, { withFileTypes: true })
     .filter(d => d.isDirectory() && !d.name.startsWith('.'));
@@ -366,8 +398,8 @@ export function marketplaceIsEmpty(agent: AgentId, versionHome: string): boolean
 /**
  * Drop the entire marketplace directory. Called after the last plugin removal.
  */
-export function removeEmptyMarketplaceDir(agent: AgentId, versionHome: string): void {
-  const root = marketplaceRoot(agent, versionHome);
+export function removeEmptyMarketplaceDir(agent: AgentId, versionHome: string, marketplaceName: string = MARKETPLACE_NAME): void {
+  const root = marketplaceRoot(agent, versionHome, marketplaceName);
   if (!fs.existsSync(root)) return;
   fs.rmSync(root, { recursive: true, force: true });
 }
@@ -378,8 +410,9 @@ export function removeEmptyMarketplaceDir(agent: AgentId, versionHome: string): 
 export function isInstalledInMarketplace(
   pluginName: string,
   agent: AgentId,
-  versionHome: string
+  versionHome: string,
+  marketplaceName: string = MARKETPLACE_NAME
 ): boolean {
-  const installed = path.join(marketplaceRoot(agent, versionHome), 'plugins', pluginName);
+  const installed = path.join(marketplaceRoot(agent, versionHome, marketplaceName), 'plugins', pluginName);
   return fs.existsSync(path.join(installed, '.claude-plugin', 'plugin.json'));
 }
