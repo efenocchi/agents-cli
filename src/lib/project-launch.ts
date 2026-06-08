@@ -43,6 +43,7 @@
 
 import * as crypto from 'crypto';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import type { AgentId } from './types.js';
 import { supports } from './capabilities.js';
@@ -133,10 +134,17 @@ export function runLaunchSync(opts: LaunchSyncOptions): LaunchSyncResult {
  * Path of the shim's skip-fast sentinel for this (agent, version, cwd) tuple.
  * Must match the SHIM-SIDE format in src/lib/shims.ts (PROJECT_SLUG derivation):
  *   slug = PWD with `/` → `_` and ` ` → `_`
+ *
+ * Cache leak note: this dir accumulates one zero-byte file per
+ * (agent, version, project) tuple ever launched. Disk impact is negligible
+ * (inodes only). A periodic GC belongs in `agents prune` — follow-up.
  */
 function launchSentinelPath(agent: AgentId, version: string, cwd: string): string {
   const slug = cwd.replace(/\//g, '_').replace(/ /g, '_');
-  const home = process.env.HOME ?? '';
+  // Prefer $HOME (respects test overrides + matches bash's $HOME expansion in
+  // the shim), fall back to os.homedir() so the lookup never resolves to '/'
+  // if HOME is somehow unset.
+  const home = process.env.HOME || os.homedir();
   return path.join(home, '.agents', '.cache', 'launch-sync', `${agent}@${version}@${slug}`);
 }
 
