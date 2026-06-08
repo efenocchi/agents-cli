@@ -61,6 +61,7 @@ if (IS_DEV_BUILD) {
 
 // Import command registrations
 import { registerPullCommand } from './commands/pull.js';
+import { registerPushCommand } from './commands/push.js';
 import { registerRepoCommands } from './commands/repo.js';
 import { registerSetupCommand, runSetup } from './commands/setup.js';
 import { registerStatusCommand } from './commands/status.js';
@@ -714,6 +715,7 @@ program
     });
 
 registerPullCommand(program);
+registerPushCommand(program);
 registerRepoCommands(program);
 registerSetupCommand(program);
 
