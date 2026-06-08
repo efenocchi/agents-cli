@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { afterEach, describe, expect, it } from 'vitest';
-import { generateShimScript, SHIM_SCHEMA_VERSION } from './shims.js';
+import { generateShimScript, hasAliasShadowingShim, SHIM_SCHEMA_VERSION } from './shims.js';
 import { getProjectVersion } from './versions.js';
 
 const tempDirs: string[] = [];
@@ -221,5 +221,43 @@ describe('claude shim .oauth_token fallback', () => {
     expect(result.status, result.stderr).toBe(0);
     const log = fs.readFileSync(logPath, 'utf-8');
     expect(log).toContain('TOKEN:<unset>');
+  });
+});
+
+describe('hasAliasShadowingShim', () => {
+  function makeFakeHome(rc: string): string {
+    const home = makeTempDir();
+    fs.writeFileSync(path.join(home, '.zshrc'), rc);
+    return home;
+  }
+
+  it('returns true for a plain `alias codex=...`', () => {
+    const home = makeFakeHome(`alias codex='codex --foo'\n`);
+    expect(hasAliasShadowingShim('codex', { homeDir: home })).toBe(true);
+  });
+
+  it('returns false when a later `unalias codex` cancels an earlier alias', () => {
+    // Real-world: rc declares an alias near the top, then a cleanup block
+    // unalias's a list of names later. Static regex on whole-file content
+    // (the previous implementation) reported true here.
+    const home = makeFakeHome(
+      `alias codex="codex --sandbox workspace-write"\n# ... more rc ...\nunalias claude codex gemini 2>/dev/null || true\n`,
+    );
+    expect(hasAliasShadowingShim('codex', { homeDir: home })).toBe(false);
+  });
+
+  it('returns true when alias appears AFTER a prior unalias for the same name', () => {
+    const home = makeFakeHome(`unalias codex 2>/dev/null || true\nalias codex='codex --foo'\n`);
+    expect(hasAliasShadowingShim('codex', { homeDir: home })).toBe(true);
+  });
+
+  it('returns false when only an unalias is present', () => {
+    const home = makeFakeHome(`unalias codex 2>/dev/null || true\n`);
+    expect(hasAliasShadowingShim('codex', { homeDir: home })).toBe(false);
+  });
+
+  it('returns false when the rc file mentions a different command', () => {
+    const home = makeFakeHome(`alias claude='claude --foo'\n`);
+    expect(hasAliasShadowingShim('codex', { homeDir: home })).toBe(false);
   });
 });

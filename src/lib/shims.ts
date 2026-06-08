@@ -1361,10 +1361,16 @@ export function removeLegacyUserShim(agent: AgentId, overrides?: { homeDir?: str
  * Shell aliases live in the user's session and aren't visible from a Node.js
  * child process. We do a best-effort scan of common RC files for `alias
  * <command>=` patterns. Returns false when detection is inconclusive.
+ *
+ * Tracks the LAST `alias` / `unalias` action for this command per rc file —
+ * a trailing `unalias codex` cancels an earlier `alias codex=...`, and
+ * `unalias` can name multiple commands on one line. Without this, an
+ * `alias` line elsewhere in the file would surface as a false positive
+ * (e.g. seen in zshrc setups that conditionally clear an alias later).
  */
-export function hasAliasShadowingShim(agent: AgentId): boolean {
+export function hasAliasShadowingShim(agent: AgentId, overrides?: { homeDir?: string }): boolean {
   const cliCommand = AGENTS[agent].cliCommand;
-  const HOME = os.homedir();
+  const HOME = overrides?.homeDir || os.homedir();
   const rcFiles = [
     path.join(HOME, '.zshrc'),
     path.join(HOME, '.bashrc'),
@@ -1372,13 +1378,24 @@ export function hasAliasShadowingShim(agent: AgentId): boolean {
     path.join(HOME, '.profile'),
   ];
 
-  const pattern = new RegExp(`^\\s*alias\\s+${cliCommand}\\s*=`, 'm');
+  const escaped = cliCommand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // `alias <cmd>=...`
+  const aliasPattern = new RegExp(`^\\s*alias\\s+${escaped}\\s*=`);
+  // `unalias <name>...` where one name is <cmd>. Matches:
+  //   unalias codex
+  //   unalias claude codex gemini 2>/dev/null || true
+  const unaliasPattern = new RegExp(`^\\s*unalias\\b[^\\n]*\\b${escaped}\\b`);
 
   for (const rcFile of rcFiles) {
     try {
       if (!fs.existsSync(rcFile)) continue;
       const content = fs.readFileSync(rcFile, 'utf-8');
-      if (pattern.test(content)) return true;
+      let lastAction: 'alias' | 'unalias' | null = null;
+      for (const line of content.split('\n')) {
+        if (aliasPattern.test(line)) lastAction = 'alias';
+        else if (unaliasPattern.test(line)) lastAction = 'unalias';
+      }
+      if (lastAction === 'alias') return true;
     } catch {
       // unreadable rc file — skip
     }

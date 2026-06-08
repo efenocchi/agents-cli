@@ -112,7 +112,7 @@ import {
   ensureVersionedAliasCurrent,
   getPathShadowingExecutable,
   getPathSetupInstructions,
-  hasAliasShadowingShim,
+  getShimsDir,
   isShimsInPath,
   listAgentsWithInstalledVersions,
   removeLegacyUserShim,
@@ -445,8 +445,18 @@ async function checkForUpdates(): Promise<void> {
   }
 }
 
-async function maybeBootstrapShimIntegration(requestedCommand: string | undefined): Promise<void> {
+async function maybeBootstrapShimIntegration(
+  requestedCommand: string | undefined,
+  helpOrVersionRequested: boolean,
+): Promise<void> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    return;
+  }
+  // Pure documentation paths must never trigger interactive repair — mirrors
+  // the helpOrVersionRequested gate around ensureInitialized below. Covers
+  // both bare `agents --version` (requestedCommand === undefined) and
+  // `agents <subcommand> --help` (requestedCommand === subcommand name).
+  if (helpOrVersionRequested) {
     return;
   }
   if (requestedCommand === 'sync' || requestedCommand === 'refresh-rules') {
@@ -488,12 +498,13 @@ async function maybeBootstrapShimIntegration(requestedCommand: string | undefine
     .map((agent) => ({ agent, shadowedBy: getPathShadowingExecutable(agent) }))
     .filter((item): item is { agent: keyof typeof AGENTS; shadowedBy: string } => Boolean(item.shadowedBy));
 
-  // Also check for shell aliases that shadow the shim
-  const aliased = defaultAgents.filter((agent) => hasAliasShadowingShim(agent));
-
-  // If shims are in PATH and nothing is binary-shadowing, we're done.
   // Shell aliases that call the same command with extra flags are intentional
-  // customization and don't break shim integration.
+  // customization and don't break shim integration — `addShimsToPath` cannot
+  // touch them, so they don't belong in the repair prompt. We previously
+  // computed an `aliased` list here and inserted it into `affected`, which
+  // contradicted the comment below and surfaced false positives (e.g. an
+  // earlier `alias codex=...` cancelled by a later `unalias codex` was
+  // reported because the detector did a static rc-file regex).
   if (shadowed.length === 0 && isShimsInPath()) {
     return;
   }
@@ -512,14 +523,11 @@ async function maybeBootstrapShimIntegration(requestedCommand: string | undefine
   for (const { agent, shadowedBy } of shadowed) {
     affected.push(`${AGENTS[agent].cliCommand} -> ${shadowedBy}`);
   }
-  for (const agent of aliased) {
-    if (!shadowed.some((s) => s.agent === agent)) {
-      affected.push(`${AGENTS[agent].cliCommand} (alias)`);
-    }
-  }
   if (affected.length === 0) {
-    // PATH issue - show all installed agents
-    affected.push(...installedAgents.map((agent) => AGENTS[agent].cliCommand));
+    // Pure PATH-not-loaded case: rc may already have the shim block, but the
+    // running shell hasn't sourced it. Don't list agents here — they aren't
+    // broken; only the PATH is stale. The prompt + post-message handle it.
+    affected.push('PATH entry missing');
   }
 
   const shouldRepair = await confirm({
@@ -538,15 +546,34 @@ async function maybeBootstrapShimIntegration(requestedCommand: string | undefine
   if (!pathResult.success) {
     console.log(chalk.yellow('Could not repair shim PATH setup automatically.'));
     console.log(chalk.gray(pathResult.error || getPathSetupInstructions()));
+    // Write the sentinel even on failure — otherwise an unwritable rc file
+    // re-prompts every invocation in the same shell. The user opens a new
+    // terminal (new PPID) to retry.
+    try { fs.writeFileSync(sentinelPath, '1'); } catch { /* best-effort */ }
     return;
   }
 
+  // When the rc file already has the canonical shim block, `addShimsToPath`
+  // is a no-op — re-emitting produced byte-identical content. In this branch
+  // the user clicked "Yes" but nothing changed on disk, AND the underlying
+  // cause (a real binary shadow, or a stale shell PATH) is unaffected by
+  // this command. Be honest about it and point at the actual action.
   if (pathResult.alreadyPresent) {
-    console.log(chalk.yellow('Shim PATH entry is already in your shell config, but this shell has not reloaded it yet.'));
+    if (shadowed.length > 0) {
+      const targets = shadowed
+        .map(({ agent, shadowedBy }) => `  ${AGENTS[agent].cliCommand}: ${shadowedBy}`)
+        .join('\n');
+      console.log(chalk.yellow('Repair could not change anything — the shim is shadowed by another binary on PATH:'));
+      console.log(chalk.gray(targets));
+      console.log(chalk.gray(`Fix it by removing or reordering that binary, or making sure ${getShimsDir()} appears earlier in PATH than its parent dir.`));
+    } else {
+      console.log(chalk.yellow(`Shim PATH entry is already in ~/${pathResult.rcFile} — this shell just needs to reload it.`));
+      console.log(chalk.gray(`Run: source ~/${pathResult.rcFile}   (or open a new terminal)`));
+    }
   } else {
     console.log(chalk.green(`Repaired shim PATH setup in ~/${pathResult.rcFile}`));
+    console.log(chalk.gray(getPathSetupInstructions()));
   }
-  console.log(chalk.gray(getPathSetupInstructions()));
   try { fs.writeFileSync(sentinelPath, '1'); } catch { /* best-effort */ }
 }
 
@@ -868,7 +895,7 @@ if (process.env.AGENTS_SKIP_MIGRATION !== '1') {
 }
 
 try {
-  await maybeBootstrapShimIntegration(requestedCommand);
+  await maybeBootstrapShimIntegration(requestedCommand, helpOrVersionRequested);
   await program.parseAsync();
 } catch (err) {
   if (err instanceof Error && err.name === 'ExitPromptError') {
