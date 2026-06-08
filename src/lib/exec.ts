@@ -382,6 +382,17 @@ export const AGENT_COMMANDS: Record<AgentId, AgentCommandTemplate> = {
     jsonFlags: ['--output-format', 'streaming-json'],
     modelFlag: '--model',
   },
+  kimi: {
+    base: ['kimi-code'],
+    promptFlag: '-p',
+    modeFlags: {
+      plan: [],
+      edit: [],
+      skip: [],
+    },
+    jsonFlags: [],
+    modelFlag: '--model',
+  },
 };
 
 /** Assemble the full CLI argument array for an agent invocation. */
