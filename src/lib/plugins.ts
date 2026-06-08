@@ -15,7 +15,8 @@ import { execFileSync } from 'child_process';
 import type { AgentId, DiscoveredPlugin, PluginManifest } from './types.js';
 import { getPluginsDir, getTrashPluginsDir } from './state.js';
 import { listInstalledVersions, getVersionHomePath } from './versions.js';
-import { AGENTS, PLUGINS_CAPABLE_AGENTS } from './agents.js';
+import { AGENTS } from './agents.js';
+import { capableAgents, isCapable } from './capabilities.js';
 import { shouldInstallCommandAsSkill, installCommandSkillToVersion } from './command-skills.js';
 import {
   copyPluginToMarketplace,
@@ -188,7 +189,7 @@ export function getPlugin(name: string): DiscoveredPlugin | null {
  * Otherwise defaults to all plugin-capable agents.
  */
 export function pluginSupportsAgent(plugin: DiscoveredPlugin, agent: AgentId): boolean {
-  if (!PLUGINS_CAPABLE_AGENTS.includes(agent)) return false;
+  if (!isCapable(agent, 'plugins')) return false;
   if (plugin.manifest.agents && plugin.manifest.agents.length > 0) {
     return plugin.manifest.agents.includes(agent);
   }
@@ -672,7 +673,7 @@ export function isPluginSynced(
   agent: AgentId,
   versionHome: string
 ): boolean {
-  if (!PLUGINS_CAPABLE_AGENTS.includes(agent)) return false;
+  if (!isCapable(agent, 'plugins')) return false;
   return isInstalledInMarketplace(plugin.name, agent, versionHome);
 }
 
@@ -974,9 +975,9 @@ export function diffVersionPlugins(agent: AgentId, version: string): VersionPlug
 
 export function iterPluginsCapableVersions(filter?: { agent?: AgentId; version?: string }): Array<{ agent: AgentId; version: string }> {
   const pairs: Array<{ agent: AgentId; version: string }> = [];
-  const agents = filter?.agent ? [filter.agent] : PLUGINS_CAPABLE_AGENTS;
+  const agents = filter?.agent ? [filter.agent] : capableAgents('plugins');
   for (const agent of agents) {
-    if (!PLUGINS_CAPABLE_AGENTS.includes(agent)) continue;
+    if (!isCapable(agent, 'plugins')) continue;
     const versions = listInstalledVersions(agent);
     for (const version of versions) {
       if (filter?.version && filter.version !== version) continue;

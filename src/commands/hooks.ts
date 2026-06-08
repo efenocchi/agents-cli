@@ -16,12 +16,11 @@ import { checkbox, confirm } from '@inquirer/prompts';
 
 import {
   AGENTS,
-  HOOKS_CAPABLE_AGENTS,
   resolveAgentName,
   formatAgentError,
   agentLabel,
 } from '../lib/agents.js';
-import { supports } from '../lib/capabilities.js';
+import { supports, capableAgents } from '../lib/capabilities.js';
 import type { AgentId } from '../lib/types.js';
 import { cloneRepo } from '../lib/git.js';
 import {
@@ -109,7 +108,7 @@ When to use:
         agentId = resolveAgentName(agentName);
         if (!agentId) {
           spinner.stop();
-          console.log(chalk.red(formatAgentError(agentName, [...HOOKS_CAPABLE_AGENTS])));
+          console.log(chalk.red(formatAgentError(agentName, [...capableAgents('hooks')])));
           process.exit(1);
         }
         requestedVersion = resolveVersionAlias(agentId, parts[1]) ?? null;
@@ -255,7 +254,7 @@ When to use:
       // No agent specified - show default version for each hooks-capable agent
       console.log(chalk.bold('Installed Hooks\n'));
 
-      for (const aid of HOOKS_CAPABLE_AGENTS) {
+      for (const aid of capableAgents('hooks')) {
         const agent = AGENTS[aid];
         const installedVersions = listInstalledVersions(aid);
         const defaultVer = getGlobalDefault(aid);
@@ -422,7 +421,7 @@ Examples:
         let selectedAgents: AgentId[];
         let versionSelections: Map<AgentId, string[]>;
 
-        const hooksCapableAgents = Array.from(HOOKS_CAPABLE_AGENTS) as AgentId[];
+        const hooksCapableAgents = Array.from(capableAgents('hooks')) as AgentId[];
 
         if (options.agents) {
           const result = await resolveAgentTargetsAutoInstalling(options.agents, hooksCapableAgents, { yes: options.yes });
@@ -564,7 +563,7 @@ Examples:
         // agent@x.y.z, agent@all, literal all) works here too.
         let availableTargets = hookInfo.targets;
         if (options?.agents) {
-          const requestedTargets = resolveInstalledAgentTargets(options.agents, [...HOOKS_CAPABLE_AGENTS]);
+          const requestedTargets = resolveInstalledAgentTargets(options.agents, [...capableAgents('hooks')]);
           const requested = new Set<string>();
           for (const aid of requestedTargets.directAgents) {
             for (const ver of listInstalledVersions(aid)) {

@@ -17,7 +17,8 @@ import * as os from 'os';
 import type { AgentId } from './types.js';
 import { getMcpDir, getUserMcpDir, getProjectAgentsDir, getVersionsDir } from './state.js';
 import { getBinaryPath, getVersionHomePath } from './versions.js';
-import { MCP_CAPABLE_AGENTS, AGENTS } from './agents.js';
+import { AGENTS } from './agents.js';
+import { isCapable } from './capabilities.js';
 import { setGeminiAutoUpdateDisabled, updateGeminiSettings } from './gemini-settings.js';
 
 /**
@@ -439,7 +440,7 @@ export function installMcpServers(
   mcpNames?: string[],
   options: { cwd?: string } = {}
 ): { success: boolean; applied: string[]; errors: string[] } {
-  if (!MCP_CAPABLE_AGENTS.includes(agentId)) {
+  if (!isCapable(agentId, 'mcp')) {
     return { success: true, applied: [], errors: [] };
   }
 

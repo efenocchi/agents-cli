@@ -1014,13 +1014,18 @@ describe('syncResourcesToVersion', () => {
       expect(composed).toContain('Be kind');
     });
 
-    it('skips memory for agents without commands capability', () => {
+    it('writes openclaw rules to workspace/AGENTS.md (rules cap drives sync, not commands cap)', () => {
+      // Previously gated on COMMANDS_CAPABLE_AGENTS, which silently skipped
+      // openclaw even though it ships its own memory file. The registry now
+      // dispatches off the `rules` capability — openclaw's `{ file:
+      // 'workspace/AGENTS.md' }` writes correctly.
       setupCentralResources();
       const versionHome = path.join(AGENTS_DIR, 'versions', 'openclaw', '1.0.0', 'home');
       fs.mkdirSync(versionHome, { recursive: true });
 
       const result = syncResourcesToVersion('openclaw', '1.0.0');
-      expect(result.memory).toEqual([]);
+      expect(result.memory).toEqual(['workspace/AGENTS.md']);
+      expect(fs.existsSync(path.join(versionHome, '.openclaw', 'workspace', 'AGENTS.md'))).toBe(true);
     });
 
     it('overwrites existing instruction file', () => {

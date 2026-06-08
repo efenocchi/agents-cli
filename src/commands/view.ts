@@ -59,9 +59,8 @@ import {
   removeShim,
 } from '../lib/shims.js';
 import { getAgentResources, listResources } from '../lib/resources.js';
-import { WORKFLOW_CAPABLE_AGENTS } from '../lib/workflows.js';
+import { isCapable } from '../lib/capabilities.js';
 import { discoverPlugins, pluginSupportsAgent } from '../lib/plugins.js';
-import { PLUGINS_CAPABLE_AGENTS } from '../lib/agents.js';
 import { getAgentsDir, getUserAgentsDir, getEffectivePromptcutsPath, readMergedPromptcuts } from '../lib/state.js';
 import { isGitRepo, getGitSyncStatus } from '../lib/git.js';
 import { getCentralRulesFileName } from '../lib/rules/rules.js';
@@ -873,11 +872,11 @@ async function showAgentResources(agentId: AgentId, requestedVersion: string): P
 
   renderSection('MCP Servers', agentData.mcp);
 
-  if (WORKFLOW_CAPABLE_AGENTS.includes(agentId)) {
+  if (isCapable(agentId, 'workflows')) {
     renderSection('Workflows', agentData.workflows);
   }
 
-  if (PLUGINS_CAPABLE_AGENTS.includes(agentId)) {
+  if (isCapable(agentId, 'plugins')) {
     const plugins = discoverPlugins().filter(p => pluginSupportsAgent(p, agentId));
     console.log(chalk.bold('\nPlugins\n'));
     if (plugins.length === 0) {

@@ -14,7 +14,7 @@ import { listInstalledInstructionsWithScope } from './rules/rules.js';
 import { getEffectiveHome } from './versions.js';
 import { listMcpServerConfigs } from './mcp.js';
 import { WorkflowsHandler } from './resources/workflows.js';
-import { WORKFLOW_CAPABLE_AGENTS } from './workflows.js';
+import { isCapable } from './capabilities.js';
 import {
   getProjectAgentsDir,
   getUserAgentsDir,
@@ -261,7 +261,7 @@ export function getAgentResources(
 
   // Workflows (claude only)
   const workflows: ResourceEntry[] = [];
-  if (WORKFLOW_CAPABLE_AGENTS.includes(agentId as 'claude')) {
+  if (isCapable(agentId, 'workflows')) {
     for (const w of WorkflowsHandler.listAll(agentId as 'claude', cwd)) {
       workflows.push({ name: w.name, path: w.path, scope: w.layer === 'project' ? 'project' : 'user' });
     }

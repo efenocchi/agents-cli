@@ -12,8 +12,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'yaml';
 import * as TOML from 'smol-toml';
-import { AGENTS, ALL_AGENT_IDS, HOOKS_CAPABLE_AGENTS } from './agents.js';
-import { supports, explainSkip } from './capabilities.js';
+import { AGENTS, ALL_AGENT_IDS } from './agents.js';
+import { supports, explainSkip, capableAgents } from './capabilities.js';
 import { setGeminiAutoUpdateDisabled, updateGeminiSettings } from './gemini-settings.js';
 import { getAgentsDir, getHooksDir as getSystemHooksDir, getUserHooksDir, getUserAgentsDir, getSystemAgentsDir, getProjectAgentsDir, getTrashHooksDir, getEnabledExtraRepos } from './state.js';
 
@@ -576,7 +576,7 @@ export function removeHookFromVersion(
  */
 export function iterHooksCapableVersions(filter?: { agent?: AgentId; version?: string }): Array<{ agent: AgentId; version: string }> {
   const pairs: Array<{ agent: AgentId; version: string }> = [];
-  const hookAgents: AgentId[] = HOOKS_CAPABLE_AGENTS as unknown as AgentId[];
+  const hookAgents: AgentId[] = capableAgents('hooks');
   const agents = filter?.agent ? [filter.agent] : hookAgents;
   for (const agent of agents) {
     if (!hookAgents.includes(agent)) continue;

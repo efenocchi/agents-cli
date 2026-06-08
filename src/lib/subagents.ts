@@ -385,8 +385,9 @@ export function subagentContentMatches(installedDir: string, sourceDir: string):
   return true;
 }
 
-/** Agents that support the subagent system (Claude via flattened .md, OpenClaw via directory copy). */
-export const SUBAGENT_CAPABLE_AGENTS: AgentId[] = ['claude', 'openclaw'];
+// SUBAGENT_CAPABLE_AGENTS removed — use `capableAgents('subagents')` from
+// lib/capabilities.ts. The capability matrix on AgentConfig is the single
+// source of truth.
 
 /**
  * List subagents installed to a specific agent's home

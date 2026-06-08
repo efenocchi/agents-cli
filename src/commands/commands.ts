@@ -17,7 +17,6 @@ import { checkbox, confirm } from '@inquirer/prompts';
 import {
   AGENTS,
   ALL_AGENT_IDS,
-  COMMANDS_CAPABLE_AGENTS,
   getAllCliStates,
   resolveAgentName,
   formatAgentError,

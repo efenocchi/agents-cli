@@ -10,7 +10,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'yaml';
-import { AGENTS, COMMANDS_CAPABLE_AGENTS, ensureCommandsDir } from './agents.js';
+import { AGENTS, ensureCommandsDir } from './agents.js';
+import { capableAgents, isCapable } from './capabilities.js';
 import { markdownToToml } from './convert.js';
 import { getCommandsDir, getUserCommandsDir, getEnabledExtraRepos, getProjectAgentsDir, getSkillsDir, getTrashCommandsDir } from './state.js';
 import { getEffectiveHome, getVersionHomePath, listInstalledVersions } from './versions.js';
@@ -419,9 +420,9 @@ export function removeCommandFromVersion(
  */
 export function iterCommandsCapableVersions(filter?: { agent?: AgentId; version?: string }): Array<{ agent: AgentId; version: string }> {
   const pairs: Array<{ agent: AgentId; version: string }> = [];
-  const agents = filter?.agent ? [filter.agent] : COMMANDS_CAPABLE_AGENTS;
+  const agents = filter?.agent ? [filter.agent] : capableAgents('commands');
   for (const agent of agents) {
-    if (!COMMANDS_CAPABLE_AGENTS.includes(agent)) continue;
+    if (!isCapable(agent, 'commands')) continue;
     const versions = listInstalledVersions(agent);
     for (const version of versions) {
       if (filter?.version && filter.version !== version) continue;

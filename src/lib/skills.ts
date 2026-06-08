@@ -12,7 +12,8 @@ import * as path from 'path';
 import * as os from 'os';
 import * as yaml from 'yaml';
 import type { AgentId, SkillMetadata, InstalledSkill } from './types.js';
-import { AGENTS, SKILLS_CAPABLE_AGENTS, ensureSkillsDir } from './agents.js';
+import { AGENTS, ensureSkillsDir } from './agents.js';
+import { capableAgents, isCapable } from './capabilities.js';
 import { getAgentsDir, getUserSkillsDir, getSkillsDir as getSystemSkillsDir, getProjectAgentsDir, getEnabledExtraRepos, getTrashSkillsDir } from './state.js';
 import { getEffectiveHome, getVersionHomePath, listInstalledVersions } from './versions.js';
 import { emit } from './events.js';
@@ -283,7 +284,7 @@ export function installSkill(
 
   // Symlink to each agent
   for (const agentId of agents) {
-    if (!SKILLS_CAPABLE_AGENTS.includes(agentId)) {
+    if (!isCapable(agentId, 'skills')) {
       continue;
     }
 
@@ -676,9 +677,9 @@ export function removeSkillFromVersion(
  */
 export function iterSkillsCapableVersions(filter?: { agent?: AgentId; version?: string }): Array<{ agent: AgentId; version: string }> {
   const pairs: Array<{ agent: AgentId; version: string }> = [];
-  const agents = filter?.agent ? [filter.agent] : SKILLS_CAPABLE_AGENTS;
+  const agents = filter?.agent ? [filter.agent] : capableAgents('skills');
   for (const agent of agents) {
-    if (!SKILLS_CAPABLE_AGENTS.includes(agent)) continue;
+    if (!capableAgents('skills').includes(agent)) continue;
     const versions = listInstalledVersions(agent);
     for (const version of versions) {
       if (filter?.version && filter.version !== version) continue;
@@ -696,7 +697,7 @@ export function uninstallSkill(skillName: string): { success: boolean; error?: s
   }
 
   // Remove from all agents
-  for (const agentId of SKILLS_CAPABLE_AGENTS) {
+  for (const agentId of capableAgents('skills')) {
     const agentSkillPath = path.join(getAgentSkillsDir(agentId), skillName);
     if (fs.existsSync(agentSkillPath)) {
       try {

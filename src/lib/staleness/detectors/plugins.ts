@@ -1,0 +1,30 @@
+/**
+ * Plugins detector — for each discovered plugin, ask `isPluginSynced` whether
+ * its expected artifacts are present in the version home. Mirrors
+ * versions.ts:541-549.
+ */
+import type { AgentId } from '../../types.js';
+import { capableAgents } from '../../capabilities.js';
+import { discoverPlugins, isPluginSynced } from '../../plugins.js';
+import type { ResourceDetector, DetectArgs } from './types.js';
+import { lazyAgentMap } from '../writers/lazy-map.js';
+
+function buildPluginsDetector(agent: AgentId): ResourceDetector {
+  return {
+    kind: 'plugins',
+    agent,
+    list({ versionHome }: DetectArgs): string[] {
+      const synced: string[] = [];
+      for (const plugin of discoverPlugins()) {
+        if (isPluginSynced(plugin, agent, versionHome)) synced.push(plugin.name);
+      }
+      return synced;
+    },
+  };
+}
+
+export const pluginsDetectors = lazyAgentMap<ResourceDetector>(() => {
+  const m: Partial<Record<AgentId, ResourceDetector>> = {};
+  for (const agent of capableAgents('plugins')) m[agent] = buildPluginsDetector(agent);
+  return m;
+});

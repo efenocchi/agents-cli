@@ -183,15 +183,24 @@ export function compileRulesForAgent(
     return { compiled: false, compiledPath: '', sources: 0 };
   }
 
-  const rulesDir = getResolvedRulesDir();
-  const sourceAgents = path.join(rulesDir, 'AGENTS.md');
-  if (!fs.existsSync(sourceAgents)) {
+  // Route through the layered composer (project > user > extras > system).
+  // The previous implementation read only `<systemRules>/AGENTS.md` and
+  // inlined its @-imports — that dropped user/extras/project subrules
+  // entirely for @-import-incapable agents (Cursor, older Codex), so
+  // updates to ~/.agents/rules/subrules/ never reached the version home.
+  // composeRulesFromState already returns the concatenated content with
+  // every fragment resolved across layers; we just need to record the
+  // composed source list for staleness detection.
+  let composed: ReturnType<typeof composeRulesFromState>;
+  try {
+    composed = composeRulesFromState({ preset: undefined });
+  } catch {
+    // No rules.yaml in any layer, or the default preset is missing — leave
+    // the version home untouched (matches the previous file-missing branch).
     return { compiled: false, compiledPath: '', sources: 0 };
   }
 
-  const rootContent = fs.readFileSync(sourceAgents, 'utf8');
-  const { content, sources } = resolveImports(rootContent, rulesDir);
-  const newContent = COMPILED_HEADER + content;
+  const newContent = COMPILED_HEADER + composed.content;
 
   const compiledPath = getCompiledRulesPath(agentId, version);
   fs.mkdirSync(path.dirname(compiledPath), { recursive: true });
@@ -203,7 +212,9 @@ export function compileRulesForAgent(
 
   fs.writeFileSync(compiledPath, newContent);
 
-  const allSources = [sourceAgents, ...sources];
+  // Track every concrete subrule file the composer included as a source for
+  // staleness. composeRulesFromState exposes sourcePath on each ComposedSubrule.
+  const allSources = composed.subrules.map(s => s.sourcePath);
   const manifest: CompileManifest = {
     compiledAt: new Date().toISOString(),
     sources: allSources.map(p => {

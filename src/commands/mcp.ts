@@ -11,9 +11,9 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { checkbox } from '@inquirer/prompts';
 
+import { capableAgents, isCapable } from '../lib/capabilities.js';
 import {
   AGENTS,
-  MCP_CAPABLE_AGENTS,
   ALL_AGENT_IDS,
   getAllCliStates,
   resolveAgentName,
@@ -95,7 +95,7 @@ function parseMcpAgentTargets(value: string): {
   const targets: string[] = [];
   for (const t of rawTargets) {
     if (t === 'all' || t === 'all@all') {
-      for (const a of MCP_CAPABLE_AGENTS) {
+      for (const a of capableAgents('mcp')) {
         if (listInstalledVersions(a).length > 0) {
           targets.push(`${a}@all`);
         }
@@ -119,8 +119,8 @@ function parseMcpAgentTargets(value: string): {
     }
 
     const agentId = resolveAgentName(agentToken);
-    if (!agentId || !MCP_CAPABLE_AGENTS.includes(agentId)) {
-      throw new Error(formatAgentError(agentToken, MCP_CAPABLE_AGENTS));
+    if (!agentId || !isCapable(agentId, 'mcp')) {
+      throw new Error(formatAgentError(agentToken, capableAgents('mcp')));
     }
 
     if (!versionToken) {
@@ -228,7 +228,7 @@ When to use:
         const resolved = resolveAgentName(parts[0]);
         if (!resolved) {
           spinner.stop();
-          console.log(chalk.red(formatAgentError(parts[0], MCP_CAPABLE_AGENTS)));
+          console.log(chalk.red(formatAgentError(parts[0], capableAgents('mcp'))));
           process.exit(1);
         }
         filterAgent = resolved;
@@ -256,7 +256,7 @@ When to use:
   mcpCmd
     .command('add <name> [command_or_url...]')
     .description('Add an MCP server to the manifest (run "agents mcp register" afterward to apply)')
-    .option('-a, --agents <list>', 'Targets: claude, codex@0.116.0', MCP_CAPABLE_AGENTS.join(','))
+    .option('-a, --agents <list>', 'Targets: claude, codex@0.116.0', capableAgents('mcp').join(','))
     .option('-s, --scope <scope>', 'user (global) or project (repo-specific)', 'user')
     .option('-t, --transport <type>', 'stdio (default) or http', 'stdio')
     .option('--names <list>', 'When source is a repo: MCP server names to install (comma-separated)')
@@ -337,7 +337,7 @@ Examples:
 
       // Pre-flight: prompt-and-install any requested agent@version that isn't
       // installed yet, before parseMcpAgentTargets validates the selector.
-      const okInstall = await ensureAgentVersionsInstalled(options.agents, MCP_CAPABLE_AGENTS, { yes: options.yes });
+      const okInstall = await ensureAgentVersionsInstalled(options.agents, capableAgents('mcp'), { yes: options.yes });
       if (!okInstall) {
         console.log(chalk.gray('Cancelled.'));
         return;
@@ -405,7 +405,7 @@ Examples:
       type McpTargetInfo = { name: string; targets: Array<{ agentId: AgentId; version: string; home: string }> };
       const mcpTargetMap = new Map<string, McpTargetInfo>();
 
-      for (const agentId of MCP_CAPABLE_AGENTS) {
+      for (const agentId of capableAgents('mcp')) {
         if (!cliStates[agentId]?.installed && listInstalledVersions(agentId).length === 0) continue;
         for (const version of listInstalledVersions(agentId)) {
           const home = getVersionHomePath(agentId, version);
@@ -479,7 +479,7 @@ Examples:
         // If --agents was specified, filter targets
         let availableTargets = mcpInfo.targets;
         if (options?.agents) {
-          const requestedTargets = resolveInstalledAgentTargets(options.agents, MCP_CAPABLE_AGENTS);
+          const requestedTargets = resolveInstalledAgentTargets(options.agents, capableAgents('mcp'));
           const requested = new Set<string>();
           for (const aid of requestedTargets.directAgents) {
             for (const ver of listInstalledVersions(aid)) {
@@ -561,7 +561,7 @@ Examples:
 
       // Gather all unique MCPs across agents
       const mcpMap = new Map<string, { name: string; agents: string[]; command?: string; scope: string }>();
-      for (const agentId of MCP_CAPABLE_AGENTS) {
+      for (const agentId of capableAgents('mcp')) {
         if (!cliStates[agentId]?.installed) continue;
         const mcps = listInstalledMcpsWithScope(agentId, cwd, { home: getEffectiveHome(agentId) });
         for (const mcp of mcps) {
@@ -672,14 +672,14 @@ Examples:
         console.log(`\n  ${chalk.cyan(mcpName)}:`);
         let targets;
         if (options.agents) {
-          const resolved = await resolveInstalledAgentTargetsAutoInstalling(options.agents, MCP_CAPABLE_AGENTS, { yes: options.yes });
+          const resolved = await resolveInstalledAgentTargetsAutoInstalling(options.agents, capableAgents('mcp'), { yes: options.yes });
           if (!resolved) {
             console.log(chalk.gray('  Cancelled.'));
             continue;
           }
           targets = resolved;
         } else {
-          targets = resolveConfiguredAgentTargets(config.agents, config.agentVersions, MCP_CAPABLE_AGENTS);
+          targets = resolveConfiguredAgentTargets(config.agents, config.agentVersions, capableAgents('mcp'));
         }
         const results = await registerMcpToTargets(
           targets,
@@ -761,10 +761,10 @@ async function installMcpsFromRepoSource(
   // Agent/version selection — same default as the non-repo form: every
   // MCP-capable agent. Routes through resolveAgentTargetsAutoInstalling so
   // a typo'd `claude@2.1.999` prompts to install (and --yes auto-installs).
-  const agentsValue = options.agents ?? MCP_CAPABLE_AGENTS.join(',');
+  const agentsValue = options.agents ?? capableAgents('mcp').join(',');
   let targets;
   try {
-    const resolved = await resolveAgentTargetsAutoInstalling(agentsValue, MCP_CAPABLE_AGENTS, { yes: options.yes });
+    const resolved = await resolveAgentTargetsAutoInstalling(agentsValue, capableAgents('mcp'), { yes: options.yes });
     if (!resolved) {
       console.log(chalk.gray('\nCancelled.'));
       return;
@@ -801,9 +801,9 @@ interface McpTargetPair {
 /** Enumerate (agent, version) pairs that support MCP and have a version home. */
 function iterMcpCapableVersions(filter?: { agent?: AgentId; version?: string }): McpTargetPair[] {
   const out: McpTargetPair[] = [];
-  const agents = filter?.agent ? [filter.agent] : MCP_CAPABLE_AGENTS;
+  const agents = filter?.agent ? [filter.agent] : capableAgents('mcp');
   for (const agent of agents) {
-    if (!MCP_CAPABLE_AGENTS.includes(agent)) continue;
+    if (!isCapable(agent, 'mcp')) continue;
     const versions = listInstalledVersions(agent);
     for (const version of versions) {
       if (filter?.version && filter.version !== version) continue;

@@ -27,23 +27,23 @@ import type { AgentId, VersionResources } from './types.js';
 import { getVersionsDir, getShimsDir, ensureAgentsDir, readMeta, writeMeta, getCommandsDir, getSkillsDir, getHooksDir, getResolvedRulesDir, getUserRulesDir, getPermissionsDir, getSubagentsDir, getVersionResources, recordVersionResources, ensureVersionResourcePatterns, getMcpDir, getProjectAgentsDir, getPromptcutsPath, getUserPromptcutsPath, getEnabledExtraRepos, getAgentsDir, getOptionalUserAgentsDir, getUserAgentsDir, getTrashVersionsDir, getActiveRulesPreset } from './state.js';
 import { defaultPatterns, expandPatterns } from './resource-patterns.js';
 import { resolveResource, listResources } from './resources.js';
-import { AGENTS, getAccountEmail, MCP_CAPABLE_AGENTS, COMMANDS_CAPABLE_AGENTS, getMcpConfigPathForHome, parseMcpConfig, resolveAgentName, formatAgentError } from './agents.js';
-import { getDefaultPermissionSet, applyPermissionsToVersion as applyPermsToVersion, PERMISSIONS_CAPABLE_AGENTS, discoverPermissionGroups, getTotalPermissionRuleCount, buildPermissionsFromGroups, CODEX_RULES_FILENAME, getActivePermissionPresetName, readPermissionPresetRecipe, PERMISSION_PRESET_ENV_VAR } from './permissions.js';
+import { AGENTS, getAccountEmail, getMcpConfigPathForHome, parseMcpConfig, resolveAgentName, formatAgentError } from './agents.js';
+import { getDefaultPermissionSet, applyPermissionsToVersion as applyPermsToVersion, discoverPermissionGroups, getTotalPermissionRuleCount, buildPermissionsFromGroups, CODEX_RULES_FILENAME, getActivePermissionPresetName, readPermissionPresetRecipe, PERMISSION_PRESET_ENV_VAR } from './permissions.js';
 import { installMcpServers, parseMcpServerConfig } from './mcp.js';
 import { markdownToToml } from './convert.js';
 import { createVersionedAlias, removeVersionedAlias, switchConfigSymlink, getConfigSymlinkVersion, ensureClaudeInsideSymlink } from './shims.js';
 import { importInstallScriptBinary } from './import.js';
-import { listInstalledSubagents, transformSubagentForClaude, syncSubagentToOpenclaw, SUBAGENT_CAPABLE_AGENTS } from './subagents.js';
-import { WORKFLOW_CAPABLE_AGENTS, listInstalledWorkflows, syncWorkflowToVersion } from './workflows.js';
+import { listInstalledSubagents, transformSubagentForClaude, syncSubagentToOpenclaw } from './subagents.js';
+import { listInstalledWorkflows, syncWorkflowToVersion } from './workflows.js';
 import { parseHookManifest, registerHooksToSettings } from './hooks.js';
-import { supports, explainSkip } from './capabilities.js';
+import { supports, explainSkip, capableAgents } from './capabilities.js';
 import { discoverPlugins, syncPluginToVersion, isPluginSynced, pluginSupportsAgent, cleanOrphanedPluginSkills } from './plugins.js';
 import { composeRulesFromState } from './rules/compose.js';
 import { loadManifest, saveManifest, buildManifest as buildSyncManifest, isStale } from './staleness/index.js';
-import { PLUGINS_CAPABLE_AGENTS } from './agents.js';
 import { emit } from './events.js';
 import { safeJoin } from './paths.js';
 import { installCommandSkillToVersion, listCommandSkillsInVersion, shouldInstallCommandAsSkill } from './command-skills.js';
+import { getWriter, getDetector } from './staleness/registry.js';
 
 /** Promisified exec for running shell commands. */
 const execAsync = promisify(exec);
@@ -322,10 +322,8 @@ function skillDirsMatch(src: string, dest: string): boolean {
  * This is the source of truth - not the tracking in agents.yaml.
  */
 export function getActuallySyncedResources(agent: AgentId, version: string, options: { cwd?: string } = {}): AvailableResources {
-  const agentConfig = AGENTS[agent];
   const versionHome = path.join(getVersionsDir(), agent, version, 'home');
-  const configDir = path.join(versionHome, `.${agent}`);
-  const projectAgentsDir = getProjectAgentsDir(options.cwd || process.cwd());
+  const cwd = options.cwd || process.cwd();
 
   const result: AvailableResources = {
     commands: [],
@@ -340,224 +338,20 @@ export function getActuallySyncedResources(agent: AgentId, version: string, opti
     promptcuts: false,
   };
 
-  // Commands - check what files exist in version home.
-  // For agent/version pairs that store commands as converted skills (e.g. Codex >= 0.117.0),
-  // detect them via the agents_command marker in skills/<name>/SKILL.md — otherwise the
-  // diff falsely reports every command as "new" every run and re-prompts on `agents view`.
-  if (shouldInstallCommandAsSkill(agent, version)) {
-    result.commands = listCommandSkillsInVersion(path.join(configDir));
-  } else {
-    const commandsDir = path.join(configDir, agentConfig.commandsSubdir);
-    if (fs.existsSync(commandsDir)) {
-      const ext = agentConfig.format === 'toml' ? '.toml' : '.md';
-      result.commands = fs.readdirSync(commandsDir)
-        .filter(f => f.endsWith(ext))
-        .map(f => f.replace(new RegExp(`\\${ext}$`), ''));
-    }
-  }
-
-  // Skills - check what directories exist AND content matches central source
-  const skillsDir = path.join(configDir, 'skills');
-  const centralSkillsDir = getSkillsDir();
-  const projectSkillsDir = projectAgentsDir ? path.join(projectAgentsDir, 'skills') : null;
-  const userAgentsDir = getUserAgentsDir();
-  const extraRepos = getEnabledExtraRepos();
-  if (fs.existsSync(skillsDir)) {
-    const installedSkills = fs.readdirSync(skillsDir, { withFileTypes: true })
-      .filter(d => d.isDirectory() && !d.name.startsWith('.'))
-      .map(d => d.name);
-    for (const skill of installedSkills) {
-      const versionSkillDir = path.join(skillsDir, skill);
-      const sourceCandidates: Array<string | null> = [
-        projectSkillsDir ? path.join(projectSkillsDir, skill) : null,
-        path.join(userAgentsDir, 'skills', skill),
-        path.join(centralSkillsDir, skill),
-        ...extraRepos.map((e) => path.join(e.dir, 'skills', skill)),
-      ];
-      const sourceDir = sourceCandidates.find((p) => p && fs.existsSync(p)) || null;
-      if (!sourceDir) {
-        // True orphan — no source in project, primary, or any extra. Still
-        // count as synced so version-home cleanup knows it's accounted for.
-        result.skills.push(skill);
-        continue;
-      }
-      const allMatch = skillDirsMatch(sourceDir, versionSkillDir);
-      if (allMatch) {
-        result.skills.push(skill);
-      }
-    }
-  }
-
-  // Hooks - check what files exist AND content matches central source
-  const hooksDir = path.join(configDir, 'hooks');
-  const centralHooksDir = getHooksDir();
-  const projectHooksDir = projectAgentsDir ? path.join(projectAgentsDir, 'hooks') : null;
-  const userHooksDir = path.join(userAgentsDir, 'hooks');
-  if (fs.existsSync(hooksDir)) {
-    const installedHooks = fs.readdirSync(hooksDir).filter(f => !f.startsWith('.'));
-    for (const hook of installedHooks) {
-      const projectFile = projectHooksDir ? path.join(projectHooksDir, hook) : null;
-      const centralFile = path.join(centralHooksDir, hook);
-      const userFile = path.join(userHooksDir, hook);
-      const versionFile = path.join(hooksDir, hook);
-      const hasProject = projectFile ? fs.existsSync(projectFile) : false;
-      const hasUser = fs.existsSync(userFile);
-      const hasCentral = fs.existsSync(centralFile);
-      const sourceFile = hasProject ? projectFile! : hasUser ? userFile : centralFile;
-      if (!hasProject && !hasCentral && !hasUser) {
-        result.hooks.push(hook);
-        continue;
-      }
-      try {
-        const centralContent = fs.readFileSync(sourceFile, 'utf-8');
-        const versionContent = fs.readFileSync(versionFile, 'utf-8');
-        if (centralContent === versionContent) {
-          result.hooks.push(hook);
-        }
-      } catch {
-        // If read fails, consider not synced
-      }
-    }
-  }
-
-  // Rules — single composed instruction file per agent. If the file exists in
-  // the version home, we consider the active preset synced. Available presets
-  // are surfaced from rules.yaml; this set is the subset that materialized.
-  const instrFile = path.join(configDir, agentConfig.instructionsFile);
-  if (fs.existsSync(instrFile)) {
-    const activePreset = getActiveRulesPreset(agent, version);
-    result.memory.push(activePreset);
-  }
-
-  // MCP - use canonical config path + parser per agent
-  if (MCP_CAPABLE_AGENTS.includes(agent)) {
-    const mcpConfigPath = getMcpConfigPathForHome(agent, versionHome);
-    if (fs.existsSync(mcpConfigPath)) {
-      try {
-        const servers = parseMcpConfig(agent, mcpConfigPath);
-        result.mcp = Object.keys(servers);
-      } catch {
-        // Ignore parse errors
-      }
-    }
-  }
-
-  // Permissions - check agent-specific config files
-  const settingsPath = path.join(configDir, 'settings.json');
-  if (PERMISSIONS_CAPABLE_AGENTS.includes(agent)) {
-    if (agent === 'claude' && fs.existsSync(settingsPath)) {
-      // Claude: check settings.json permissions.allow and deny
-      try {
-        const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-        const allowRules = settings.permissions?.allow || [];
-        const denyRules = settings.permissions?.deny || [];
-
-        if (allowRules.length > 0 || denyRules.length > 0) {
-          const permGroups = discoverPermissionGroups();
-          const appliedGroups: string[] = [];
-
-          for (const group of permGroups) {
-            const groupSet = buildPermissionsFromGroups([group.name]);
-
-            // Empty groups (like header files) are considered synced if ANY permissions are applied
-            if (groupSet.allow.length === 0 && (!groupSet.deny || groupSet.deny.length === 0)) {
-              appliedGroups.push(group.name);
-              continue;
-            }
-
-            const hasAllowRule = groupSet.allow.some(rule => allowRules.includes(rule));
-            const hasDenyRule = groupSet.deny?.some(rule => denyRules.includes(rule)) || false;
-
-            if (hasAllowRule || hasDenyRule) {
-              appliedGroups.push(group.name);
-            }
-          }
-          result.permissions = appliedGroups;
-        }
-      } catch {
-        // Ignore parse errors
-      }
-    } else if (agent === 'codex') {
-      // Codex: config.toml for approval_policy/sandbox_mode, .rules for deny
-      const codexConfigPath = path.join(configDir, 'config.toml');
-      const codexRulesPath = path.join(configDir, 'rules', CODEX_RULES_FILENAME);
-      const hasConfig = fs.existsSync(codexConfigPath);
-      const hasRules = fs.existsSync(codexRulesPath);
-      if (hasConfig || hasRules) {
-        try {
-          // Codex format is lossy — all groups merge into a few keys.
-          // If any permission artifacts exist, all groups were applied together.
-          let hasPermKeys = false;
-          if (hasConfig) {
-            const content = fs.readFileSync(codexConfigPath, 'utf-8');
-            const config = TOML.parse(content) as Record<string, unknown>;
-            hasPermKeys = !!(config.approval_policy || config.sandbox_mode || config.sandbox_workspace_write);
-          }
-          if (hasPermKeys || hasRules) {
-            result.permissions = discoverPermissionGroups().map(g => g.name);
-          }
-        } catch {
-          // Ignore parse errors
-        }
-      }
-    } else if (agent === 'opencode') {
-      // OpenCode: opencode.jsonc for permission.bash
-      const opencodeConfigPath = path.join(configDir, 'opencode.jsonc');
-      if (fs.existsSync(opencodeConfigPath)) {
-        try {
-          const content = fs.readFileSync(opencodeConfigPath, 'utf-8');
-          const stripped = content.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
-          const config = JSON.parse(stripped);
-          if (config.permission && Object.keys(config.permission.bash || {}).length > 0) {
-            result.permissions = discoverPermissionGroups().map(g => g.name);
-          }
-        } catch {
-          // Ignore parse errors
-        }
-      }
-    }
-  }
-
-  // Subagents - check agent-specific locations
-  if (SUBAGENT_CAPABLE_AGENTS.includes(agent)) {
-    if (agent === 'claude') {
-      const agentsDir = path.join(configDir, 'agents');
-      if (fs.existsSync(agentsDir)) {
-        result.subagents = fs.readdirSync(agentsDir)
-          .filter(f => f.endsWith('.md'))
-          .map(f => f.replace('.md', ''));
-      }
-    } else if (agent === 'openclaw') {
-      // OpenClaw: directories with AGENTS.md
-      const openclawDir = path.join(versionHome, '.openclaw');
-      if (fs.existsSync(openclawDir)) {
-        result.subagents = fs.readdirSync(openclawDir, { withFileTypes: true })
-          .filter(d => d.isDirectory() && fs.existsSync(path.join(openclawDir, d.name, 'AGENTS.md')))
-          .map(d => d.name);
-      }
-    }
-  }
-
-  // Plugins - check which discovered plugins have their skills in the version
-  if (PLUGINS_CAPABLE_AGENTS.includes(agent)) {
-    const allPlugins = discoverPlugins();
-    for (const plugin of allPlugins) {
-      if (isPluginSynced(plugin, agent, versionHome)) {
-        result.plugins.push(plugin.name);
-      }
-    }
-  }
-
-  // Workflows - check {versionHome}/workflows/ for synced workflow directories
-  if (WORKFLOW_CAPABLE_AGENTS.includes(agent)) {
-    const workflowsDir = path.join(versionHome, 'workflows');
-    if (fs.existsSync(workflowsDir)) {
-      result.workflows = fs.readdirSync(workflowsDir, { withFileTypes: true })
-        .filter(d => d.isDirectory() && fs.existsSync(path.join(workflowsDir, d.name, 'WORKFLOW.md')))
-        .map(d => d.name);
-    }
-  }
-
+  // Dispatch each kind through DETECTORS. The registry guarantees a detector
+  // exists for every supported (agent, kind) pair; unsupported pairs leave
+  // the field empty. The previous per-agent if-ladder silently dropped
+  // antigravity/gemini/grok detection — see PR description for details.
+  const ctx = { version, versionHome, cwd };
+  result.commands    = getDetector('commands',    agent)?.list(ctx) ?? [];
+  result.skills      = getDetector('skills',      agent)?.list(ctx) ?? [];
+  result.hooks       = getDetector('hooks',       agent)?.list(ctx) ?? [];
+  result.memory      = getDetector('rules',       agent)?.list(ctx) ?? [];
+  result.mcp         = getDetector('mcp',         agent)?.list(ctx) ?? [];
+  result.permissions = getDetector('permissions', agent)?.list(ctx) ?? [];
+  result.subagents   = getDetector('subagents',   agent)?.list(ctx) ?? [];
+  result.plugins     = getDetector('plugins',     agent)?.list(ctx) ?? [];
+  result.workflows   = getDetector('workflows',   agent)?.list(ctx) ?? [];
   return result;
 }
 
@@ -702,9 +496,9 @@ export function hasNewResources(diff: AvailableResources, agent?: AgentId, versi
   const hooksApply = agent ? supports(agent, 'hooks', version).ok : true;
   const mcpApply = agent ? supports(agent, 'mcp', version).ok : true;
   const permsApply = agent ? supports(agent, 'allowlist', version).ok : true;
-  const subagentsApply = agent ? SUBAGENT_CAPABLE_AGENTS.includes(agent) : true;
+  const subagentsApply = agent ? supports(agent, 'subagents', version).ok : true;
   const pluginsApply = agent ? supports(agent, 'plugins', version).ok : true;
-  const workflowsApply = agent ? WORKFLOW_CAPABLE_AGENTS.includes(agent) : true;
+  const workflowsApply = agent ? supports(agent, 'workflows', version).ok : true;
   return (
     (diff.commands.length > 0 && commandsApply) ||
     diff.skills.length > 0 ||
@@ -729,8 +523,9 @@ function buildNewResourcesSummary(newResources: AvailableResources, agent: Agent
   // Use version-aware gates so Codex >= 0.117.0 (which converts commands to skills) doesn't
   // double-count and so "16 commands" never appears in the summary when commands have
   // already been emitted as skills in the version home.
-  const commandsApply = version ? supports(agent, 'commands', version).ok : COMMANDS_CAPABLE_AGENTS.includes(agent);
+  const commandsApply = supports(agent, 'commands', version).ok;
   const commandsAsSkills = version ? shouldInstallCommandAsSkill(agent, version) : false;
+  const rulesApply = supports(agent, 'rules', version).ok;
 
   if (newResources.commands.length > 0 && (commandsApply || commandsAsSkills)) {
     parts.push(`${newResources.commands.length} command${newResources.commands.length === 1 ? '' : 's'}`);
@@ -741,22 +536,22 @@ function buildNewResourcesSummary(newResources: AvailableResources, agent: Agent
   if (newResources.hooks.length > 0 && agentConfig.supportsHooks) {
     parts.push(`${newResources.hooks.length} hook${newResources.hooks.length === 1 ? '' : 's'}`);
   }
-  if (newResources.memory.length > 0 && (commandsApply || commandsAsSkills)) {
+  if (newResources.memory.length > 0 && rulesApply) {
     parts.push(`${newResources.memory.length} rule file${newResources.memory.length === 1 ? '' : 's'}`);
   }
-  if (newResources.mcp.length > 0 && MCP_CAPABLE_AGENTS.includes(agent)) {
+  if (newResources.mcp.length > 0 && supports(agent, 'mcp', version).ok) {
     parts.push(`${newResources.mcp.length} MCP${newResources.mcp.length === 1 ? '' : 's'}`);
   }
-  if (newResources.permissions.length > 0 && PERMISSIONS_CAPABLE_AGENTS.includes(agent)) {
+  if (newResources.permissions.length > 0 && supports(agent, 'allowlist', version).ok) {
     parts.push(`${newResources.permissions.length} permission group${newResources.permissions.length === 1 ? '' : 's'}`);
   }
-  if (newResources.subagents.length > 0 && SUBAGENT_CAPABLE_AGENTS.includes(agent)) {
+  if (newResources.subagents.length > 0 && supports(agent, 'subagents', version).ok) {
     parts.push(`${newResources.subagents.length} subagent${newResources.subagents.length === 1 ? '' : 's'}`);
   }
-  if (newResources.plugins.length > 0 && PLUGINS_CAPABLE_AGENTS.includes(agent)) {
+  if (newResources.plugins.length > 0 && supports(agent, 'plugins', version).ok) {
     parts.push(`${newResources.plugins.length} plugin${newResources.plugins.length === 1 ? '' : 's'}`);
   }
-  if (newResources.workflows.length > 0 && WORKFLOW_CAPABLE_AGENTS.includes(agent)) {
+  if (newResources.workflows.length > 0 && supports(agent, 'workflows', version).ok) {
     parts.push(`${newResources.workflows.length} workflow${newResources.workflows.length === 1 ? '' : 's'}`);
   }
 
@@ -778,9 +573,10 @@ export async function promptNewResourceSelection(
   // Version-aware gates. When version is known, prefer per-version capability checks; the
   // commands branch is allowed when either native commands are supported OR when the
   // version emits commands as converted skills (Codex >= 0.117.0).
-  const commandsApply = version ? supports(agent, 'commands', version).ok : COMMANDS_CAPABLE_AGENTS.includes(agent);
+  const commandsApply = supports(agent, 'commands', version).ok;
   const commandsAsSkills = version ? shouldInstallCommandAsSkill(agent, version) : false;
   const commandsBranch = commandsApply || commandsAsSkills;
+  const rulesBranch = supports(agent, 'rules', version).ok;
 
   // Get permission group info for display
   const permissionGroups = discoverPermissionGroups();
@@ -812,12 +608,12 @@ export async function promptNewResourceSelection(
     if (newResources.commands.length > 0 && commandsBranch) selection.commands = newResources.commands;
     if (newResources.skills.length > 0) selection.skills = newResources.skills;
     if (newResources.hooks.length > 0 && agentConfig.supportsHooks) selection.hooks = newResources.hooks;
-    if (newResources.memory.length > 0 && commandsBranch) selection.memory = newResources.memory;
-    if (newResources.mcp.length > 0 && MCP_CAPABLE_AGENTS.includes(agent)) selection.mcp = newResources.mcp;
-    if (newResources.permissions.length > 0 && PERMISSIONS_CAPABLE_AGENTS.includes(agent)) selection.permissions = newResources.permissions;
-    if (newResources.subagents.length > 0 && SUBAGENT_CAPABLE_AGENTS.includes(agent)) selection.subagents = newResources.subagents;
-    if (newResources.plugins.length > 0 && PLUGINS_CAPABLE_AGENTS.includes(agent)) selection.plugins = newResources.plugins;
-    if (newResources.workflows.length > 0 && WORKFLOW_CAPABLE_AGENTS.includes(agent)) selection.workflows = newResources.workflows;
+    if (newResources.memory.length > 0 && rulesBranch) selection.memory = newResources.memory;
+    if (newResources.mcp.length > 0 && supports(agent, 'mcp', version).ok) selection.mcp = newResources.mcp;
+    if (newResources.permissions.length > 0 && supports(agent, 'allowlist', version).ok) selection.permissions = newResources.permissions;
+    if (newResources.subagents.length > 0 && supports(agent, 'subagents', version).ok) selection.subagents = newResources.subagents;
+    if (newResources.plugins.length > 0 && supports(agent, 'plugins', version).ok) selection.plugins = newResources.plugins;
+    if (newResources.workflows.length > 0 && supports(agent, 'workflows', version).ok) selection.workflows = newResources.workflows;
     return selection;
   }
 
@@ -846,7 +642,7 @@ export async function promptNewResourceSelection(
     if (selected.length > 0) selection.hooks = selected;
   }
 
-  if (newResources.memory.length > 0 && commandsBranch) {
+  if (newResources.memory.length > 0 && rulesBranch) {
     const selected = await checkbox({
       message: 'Select new rule files to sync:',
       choices: newResources.memory.map(m => ({ name: m, value: m, checked: true })),
@@ -854,7 +650,7 @@ export async function promptNewResourceSelection(
     if (selected.length > 0) selection.memory = selected;
   }
 
-  if (newResources.mcp.length > 0 && MCP_CAPABLE_AGENTS.includes(agent)) {
+  if (newResources.mcp.length > 0 && supports(agent, 'mcp', version).ok) {
     const selected = await checkbox({
       message: 'Select new MCPs to sync:',
       choices: newResources.mcp.map(m => ({ name: m, value: m, checked: true })),
@@ -862,7 +658,7 @@ export async function promptNewResourceSelection(
     if (selected.length > 0) selection.mcp = selected;
   }
 
-  if (newResources.permissions.length > 0 && PERMISSIONS_CAPABLE_AGENTS.includes(agent)) {
+  if (newResources.permissions.length > 0 && supports(agent, 'allowlist', version).ok) {
     const selected = await checkbox({
       message: 'Select new permission groups to sync:',
       choices: newPermissionGroups.map(g => ({
@@ -874,7 +670,7 @@ export async function promptNewResourceSelection(
     if (selected.length > 0) selection.permissions = selected;
   }
 
-  if (newResources.subagents.length > 0 && SUBAGENT_CAPABLE_AGENTS.includes(agent)) {
+  if (newResources.subagents.length > 0 && supports(agent, 'subagents', version).ok) {
     const selected = await checkbox({
       message: 'Select new subagents to sync:',
       choices: newResources.subagents.map(s => ({ name: s, value: s, checked: true })),
@@ -882,7 +678,7 @@ export async function promptNewResourceSelection(
     if (selected.length > 0) selection.subagents = selected;
   }
 
-  if (newResources.plugins.length > 0 && PLUGINS_CAPABLE_AGENTS.includes(agent)) {
+  if (newResources.plugins.length > 0 && supports(agent, 'plugins', version).ok) {
     const allPlugins = discoverPlugins();
     const pluginMap = new Map(allPlugins.map(p => [p.name, p]));
     const selected = await checkbox({
@@ -896,7 +692,7 @@ export async function promptNewResourceSelection(
     if (selected.length > 0) selection.plugins = selected;
   }
 
-  if (newResources.workflows.length > 0 && WORKFLOW_CAPABLE_AGENTS.includes(agent)) {
+  if (newResources.workflows.length > 0 && supports(agent, 'workflows', version).ok) {
     const selected = await checkbox({
       message: 'Select new workflows to sync:',
       choices: newResources.workflows.map(w => ({ name: w, value: w, checked: true })),
@@ -925,14 +721,14 @@ export async function promptResourceSelection(agent: AgentId): Promise<ResourceS
   // for visibility but is never synced per-version, so it has no ResourceSelection entry.
   type CategoryKey = keyof ResourceSelection;
   const categories: { key: CategoryKey; label: string; available: boolean; displayCount: string }[] = [
-    { key: 'commands', label: 'Commands', available: COMMANDS_CAPABLE_AGENTS.includes(agent) && available.commands.length > 0, displayCount: `${available.commands.length} available` },
+    { key: 'commands', label: 'Commands', available: supports(agent, 'commands').ok && available.commands.length > 0, displayCount: `${available.commands.length} available` },
     { key: 'skills', label: 'Skills', available: available.skills.length > 0, displayCount: `${available.skills.length} available` },
     { key: 'hooks', label: 'Hooks', available: agentConfig.supportsHooks && available.hooks.length > 0, displayCount: `${available.hooks.length} available` },
-    { key: 'memory', label: 'Rules', available: COMMANDS_CAPABLE_AGENTS.includes(agent) && available.memory.length > 0, displayCount: `${available.memory.length} available` },
-    { key: 'mcp', label: 'MCPs', available: MCP_CAPABLE_AGENTS.includes(agent) && available.mcp.length > 0, displayCount: `${available.mcp.length} available` },
-    { key: 'permissions', label: 'Permissions', available: PERMISSIONS_CAPABLE_AGENTS.includes(agent) && permissionGroups.length > 0, displayCount: `${permissionGroups.length} groups, ${totalPermissionRules} rules` },
-    { key: 'subagents', label: 'Subagents', available: SUBAGENT_CAPABLE_AGENTS.includes(agent) && available.subagents.length > 0, displayCount: `${available.subagents.length} available` },
-    { key: 'plugins', label: 'Plugins', available: PLUGINS_CAPABLE_AGENTS.includes(agent) && available.plugins.length > 0, displayCount: `${available.plugins.length} available` },
+    { key: 'memory', label: 'Rules', available: supports(agent, 'rules').ok && available.memory.length > 0, displayCount: `${available.memory.length} available` },
+    { key: 'mcp', label: 'MCPs', available: supports(agent, 'mcp').ok && available.mcp.length > 0, displayCount: `${available.mcp.length} available` },
+    { key: 'permissions', label: 'Permissions', available: supports(agent, 'allowlist').ok && permissionGroups.length > 0, displayCount: `${permissionGroups.length} groups, ${totalPermissionRules} rules` },
+    { key: 'subagents', label: 'Subagents', available: supports(agent, 'subagents').ok && available.subagents.length > 0, displayCount: `${available.subagents.length} available` },
+    { key: 'plugins', label: 'Plugins', available: supports(agent, 'plugins').ok && available.plugins.length > 0, displayCount: `${available.plugins.length} available` },
   ];
 
   const availableCategories = categories.filter(c => c.available);
@@ -2000,57 +1796,24 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
     return [];
   };
 
-  // Sync commands
+  // Sync commands — dispatch through WRITERS.commands. The writer dispatches
+  // between native (file copy / TOML conversion) and commands-as-skills
+  // (grok, Codex >= 0.117.0) based on `shouldInstallCommandAsSkill`. The
+  // previous COMMANDS_CAPABLE_AGENTS gate excluded grok even though it
+  // takes the commands-as-skills path — silently dropping every command.
+  const commandsWriter = getWriter('commands', agent);
   const commandsToSync = selection
     ? resolveSelection(selection.commands, available.commands)
     : available.commands; // No selection = sync all
 
-  if (commandsToSync.length > 0 && COMMANDS_CAPABLE_AGENTS.includes(agent)) {
+  if (commandsToSync.length > 0 && commandsWriter) {
     const commandsTarget = path.join(agentDir, agentConfig.commandsSubdir);
     const commandsAsSkills = shouldInstallCommandAsSkill(agent, version);
     if (commandsAsSkills) {
       removePath(commandsTarget);
-    } else {
-      fs.mkdirSync(commandsTarget, { recursive: true });
     }
-
-    const syncedCommands: string[] = [];
-    for (const cmd of commandsToSync) {
-      // Commands are content that gets injected into the agent's prompt
-      // surface (slash commands, skill bodies). We intentionally do NOT pull
-      // from the project's own .agents/commands/ directory: a cloned public
-      // repo could ship a command whose body instructs the agent to do
-      // something harmful the next time the user invokes it. Commands must
-      // come from the user's central ~/.agents/commands/, the system layer,
-      // or an explicitly enabled extra repo. Same defense as hooks below.
-      const candidates: Array<string | null> = [
-        safeJoin(path.join(userAgentsDir, 'commands'), `${cmd}.md`),
-        safeJoin(getCommandsDir(), `${cmd}.md`),
-        ...extraRepos.map((e) => safeJoin(path.join(e.dir, 'commands'), `${cmd}.md`)),
-      ];
-      const srcFile = candidates.find((p) => p && fs.existsSync(p) && !fs.lstatSync(p).isSymbolicLink()) || null;
-      if (!srcFile) continue;
-
-      if (commandsAsSkills) {
-        // Project skills dir is intentionally excluded for the same reason
-        // commands are: the body of a project skill becomes agent context.
-        const skillSourceDirs = [
-          path.join(userAgentsDir, 'skills'),
-          getSkillsDir(),
-          ...extraRepos.map((e) => path.join(e.dir, 'skills')),
-        ];
-        const installed = installCommandSkillToVersion(agentDir, cmd, srcFile, skillSourceDirs);
-        if (!installed.success) continue;
-      } else if (agentConfig.format === 'toml') {
-        const content = fs.readFileSync(srcFile, 'utf-8');
-        const tomlContent = markdownToToml(cmd, content);
-        fs.writeFileSync(safeJoin(commandsTarget, `${cmd}.toml`), tomlContent);
-      } else {
-        fs.copyFileSync(srcFile, safeJoin(commandsTarget, `${cmd}.md`));
-      }
-      syncedCommands.push(cmd);
-    }
-    result.commands = syncedCommands.length > 0;
+    const r = commandsWriter.write({ version, versionHome, selection: commandsToSync, cwd });
+    result.commands = r.synced.length > 0;
   }
 
   // Orphan-sweep stale top-level command files from previous syncs under a
@@ -2060,7 +1823,7 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
   // alone), so the sweep would be a contract violation there. The
   // cross-project leak always comes from the no-selection shim auto-sync at
   // launch.
-  if (!userPassedSelection && COMMANDS_CAPABLE_AGENTS.includes(agent) && !shouldInstallCommandAsSkill(agent, version)) {
+  if (!userPassedSelection && commandsWriter && !shouldInstallCommandAsSkill(agent, version)) {
     const commandsTargetSweep = path.join(agentDir, agentConfig.commandsSubdir);
     if (fs.existsSync(commandsTargetSweep)) {
       const ext = agentConfig.format === 'toml' ? '.toml' : '.md';
@@ -2076,53 +1839,20 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
     }
   }
 
-  // Sync skills (skip if agent natively reads ~/.agents/skills/)
+  // Sync skills — dispatch through WRITERS.skills. Agents that natively read
+  // ~/.agents/skills/ (Gemini) are not registered; we clear the version-home
+  // skills dir for them so a stale per-version copy never shadows central.
+  const skillsWriter = getWriter('skills', agent);
+  const skillsToSync = selection
+    ? resolveSelection(selection.skills, available.skills)
+    : available.skills;
+
   if (agentConfig.nativeAgentsSkillsDir) {
-    // Clean up stale skills symlink/dir — agent reads from ~/.agents/skills/ directly
-    const skillsTarget = path.join(agentDir, 'skills');
-    removePath(skillsTarget);
-  } else {
-    const skillsToSync = selection
-      ? resolveSelection(selection.skills, available.skills)
-      : available.skills;
-
+    removePath(path.join(agentDir, 'skills'));
+  } else if (skillsWriter) {
     if (skillsToSync.length > 0) {
-      const skillsTarget = path.join(agentDir, 'skills');
-      // Old version homes may have skills -> ~/.agents/skills. Replace the
-      // parent symlink before touching children so removePath(destDir) cannot
-      // delete the central source through it.
-      try {
-        if (fs.lstatSync(skillsTarget).isSymbolicLink()) {
-          removePath(skillsTarget);
-        }
-      } catch { /* target does not exist yet */ }
-      fs.mkdirSync(skillsTarget, { recursive: true });
-
-      const syncedSkills: string[] = [];
-      for (const skill of skillsToSync) {
-        // Same defense as commands and hooks: don't pull skills from the
-        // project's .agents/skills/ directory. A skill's contents (SKILL.md
-        // and any auxiliary scripts) get loaded into the agent's tool/context
-        // surface, and a malicious public repo could ship a SKILL.md whose
-        // body coerces the agent. Trusted layers only.
-        const skillCandidates: Array<string> = [
-          safeJoin(path.join(userAgentsDir, 'skills'), skill),
-          safeJoin(getSkillsDir(), skill),
-          ...extraRepos.map((e) => safeJoin(path.join(e.dir, 'skills'), skill)),
-        ];
-        const srcDir = skillCandidates.find((p) =>
-          fs.existsSync(p) &&
-          !fs.lstatSync(p).isSymbolicLink() &&
-          fs.lstatSync(p).isDirectory()
-        ) || null;
-        if (!srcDir) continue;
-
-        const destDir = safeJoin(skillsTarget, skill);
-        removePath(destDir);
-        copyDir(srcDir, destDir);
-        syncedSkills.push(skill);
-      }
-      result.skills = syncedSkills.length > 0;
+      const r = skillsWriter.write({ version, versionHome, selection: skillsToSync, cwd });
+      result.skills = r.synced.length > 0;
     }
 
     // Orphan-sweep stale skill directories from previous syncs under a
@@ -2141,9 +1871,11 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
     }
   }
 
-  // Sync hooks (if agent supports them at this version)
+  // Sync hooks — dispatch through WRITERS.hooks. supports() gate enforces
+  // the version cutoff (codex >= 0.116.0, gemini >= 0.26.0).
   const hooksGate = supports(agent, 'hooks', version);
-  if (agentConfig.supportsHooks) {
+  const hooksWriter = getWriter('hooks', agent);
+  if (agentConfig.supportsHooks && hooksWriter) {
     if (!hooksGate.ok) {
       console.warn(explainSkip(agent, 'hooks', hooksGate, version) + ' -- skipped');
     } else {
@@ -2152,36 +1884,13 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
         : available.hooks;
 
       if (hooksToSync.length > 0) {
-        const centralHooks = getHooksDir();
-        const hooksTarget = path.join(agentDir, 'hooks');
-        fs.mkdirSync(hooksTarget, { recursive: true });
-
-        const syncedHooks: string[] = [];
-        for (const hook of hooksToSync) {
-          // Hooks are executable shell scripts that run on agent events. We
-          // intentionally do NOT pull from the project's own .agents/hooks/
-          // directory: that would let any cloned public repo plant an
-          // executable that fires the next time the user runs `agents use`
-          // inside that repo. Hooks must come from the user's central
-          // ~/.agents/hooks/ or an explicitly enabled extra repo.
-          const candidates: Array<string | null> = [
-            safeJoin(path.join(userAgentsDir, 'hooks'), hook),
-            safeJoin(centralHooks, hook),
-            ...extraRepos.map((e) => safeJoin(path.join(e.dir, 'hooks'), hook)),
-          ];
-          const srcFile = candidates.find((p) => p && fs.existsSync(p) && !fs.lstatSync(p).isSymbolicLink()) || null;
-          if (!srcFile) continue;
-
-          const destFile = safeJoin(hooksTarget, hook);
-          fs.copyFileSync(srcFile, destFile);
-          fs.chmodSync(destFile, 0o755);
-          syncedHooks.push(hook);
-        }
+        const r = hooksWriter.write({ version, versionHome, selection: hooksToSync, cwd });
         // Remove orphan files from version home. The trusted set is the
         // manifest-declared hook list (`available.hooks`) — auxiliary files
         // like README.md or promptcuts.yaml may exist alongside hooks at the
         // source but are not hooks and must not linger in version homes from
         // older syncs.
+        const hooksTarget = path.join(agentDir, 'hooks');
         const trustedHookNames = new Set(available.hooks);
         if (fs.existsSync(hooksTarget)) {
           for (const file of fs.readdirSync(hooksTarget).filter(f => !f.startsWith('.'))) {
@@ -2190,26 +1899,20 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
             }
           }
         }
-
-        result.hooks = syncedHooks.length > 0;
-
-        // Register hooks into agent-native settings.json/hooks.json. Gemini
-        // shipped hooks in 0.26.0; gate already passed above so this is safe.
-        // Grok auto-discovers from ~/.grok/hooks/ so the script copy above
-        // is sufficient — no settings.json registration needed.
-        if (agent === 'claude' || agent === 'codex' || agent === 'gemini' || agent === 'antigravity') {
-          registerHooksToSettings(agent, versionHome);
-        }
+        result.hooks = r.synced.length > 0;
       }
     }
   }
 
-  // Sync rules — compose from layered subrules + active preset and write a
-  // single inlined instruction file. No @-import expansion; no per-fragment
-  // copies. Project rules are NOT synced into the version home — they are
-  // composed into the workspace at agents-run time (see compileRulesForProject).
+  // Sync rules — dispatch through WRITERS.rules. The registry routes to the
+  // single-target writer for any agent that declares `rules: { file }` in
+  // its capability matrix (grok included; the previous gate used the wrong
+  // CAPABLE_AGENTS list and silently skipped it). Project rules are NOT
+  // synced into the version home — they are composed into the workspace at
+  // agents-run time (see compileRulesForProject).
   const skipMemory = selection && (selection.memory === undefined || (Array.isArray(selection.memory) && selection.memory.length === 0));
-  if (!skipMemory && COMMANDS_CAPABLE_AGENTS.includes(agent)) {
+  const rulesWriter = getWriter('rules', agent);
+  if (!skipMemory && rulesWriter) {
     try {
       // If selection.memory names a single preset, treat it as a one-shot
       // override; otherwise read the persisted active preset.
@@ -2217,15 +1920,8 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
         ? selection!.memory[0]
         : null;
       const preset = overridePreset || getActiveRulesPreset(agent, version);
-      const composed = composeRulesFromState({ preset });
-
-      const targetName = agentConfig.instructionsFile;
-      const destFile = safeJoin(agentDir, targetName);
-      fs.mkdirSync(path.dirname(destFile), { recursive: true });
-      removePath(destFile);
-      fs.writeFileSync(destFile, composed.content);
-      result.memory.push(targetName);
-
+      const r = rulesWriter.write({ version, versionHome, selection: { preset }, cwd });
+      result.memory.push(...r.synced);
       // rulesPreset is tracked separately via setActiveRulesPreset.
     } catch (err) {
       // No rules.yaml yet, or a typo'd preset name. Don't fail the whole sync —
@@ -2256,6 +1952,7 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
       console.warn(`${PERMISSION_PRESET_ENV_VAR}=${activePresetName} but no recipe at ~/.agents/permissions/presets/${activePresetName}.yaml — falling back to all groups`);
     }
   }
+  const permissionsWriter = getWriter('permissions', agent);
   let permsToSync: string[];
   if (selection) {
     permsToSync = resolveSelection(selection.permissions, allGroupNames);
@@ -2269,19 +1966,13 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
       permsToSync = permsToSync.filter(g => filterSet.has(g));
     }
   } else {
-    permsToSync = PERMISSIONS_CAPABLE_AGENTS.includes(agent)
-      ? (presetFilteredGroups ?? allGroupNames)
-      : [];
+    permsToSync = permissionsWriter ? (presetFilteredGroups ?? allGroupNames) : [];
   }
 
-  if (permsToSync.length > 0 && PERMISSIONS_CAPABLE_AGENTS.includes(agent)) {
-    // Build permissions from selected groups
-    const builtPerms = buildPermissionsFromGroups(permsToSync);
-    if (builtPerms.allow.length > 0 || (builtPerms.deny && builtPerms.deny.length > 0)) {
-      const permResult = applyPermsToVersion(agent, builtPerms, versionHome, true);
-      result.permissions = permResult.success;
-      // permissions patterns already written via ensureVersionResourcePatterns above.
-    }
+  if (permsToSync.length > 0 && permissionsWriter) {
+    const r = permissionsWriter.write({ version, versionHome, selection: permsToSync, cwd });
+    result.permissions = r.synced.length > 0;
+    // permissions patterns already written via ensureVersionResourcePatterns above.
   }
 
   // Install MCP servers (if agent supports them)
@@ -2299,60 +1990,33 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
   const projectScopedMcpNames = new Set(
     getScopedMcpResources(cwd).filter(r => r.scope === 'project').map(r => r.name)
   );
+  const mcpWriter = getWriter('mcp', agent);
   const mcpToSyncAll = selection
     ? resolveSelection(selection.mcp, available.mcp)
-    : (MCP_CAPABLE_AGENTS.includes(agent) ? available.mcp : []);
+    : (mcpWriter ? available.mcp : []);
   const mcpToSync = mcpToSyncAll.filter(n => !projectScopedMcpNames.has(n));
 
-  if (mcpToSync.length > 0 && MCP_CAPABLE_AGENTS.includes(agent)) {
-    const mcpResult = installMcpServers(agent, version, versionHome, mcpToSync, { cwd });
-    result.mcp = mcpResult.applied;
+  if (mcpToSync.length > 0 && mcpWriter) {
+    const r = mcpWriter.write({ version, versionHome, selection: mcpToSync, cwd });
+    result.mcp = r.synced;
     // mcp patterns already written via ensureVersionResourcePatterns above.
   }
 
-  // Sync subagents (claude and openclaw only).
-  // Note: listInstalledSubagents (used to populate the map below) reads only
-  // user + system layers — never project. Subagents bundle prompts that fire
-  // when the agent delegates work, so a cloned public repo must not be able
-  // to plant a subagent the user later invokes. Same defense as hooks.
+  // Sync subagents — dispatch through WRITERS.subagents. listInstalledSubagents
+  // reads only user + system layers (project excluded for the same defense
+  // as commands/skills/hooks).
+  const subagentsWriter = getWriter('subagents', agent);
   const subagentsToSync = selection
     ? resolveSelection(selection.subagents, available.subagents)
-    : (SUBAGENT_CAPABLE_AGENTS.includes(agent) ? available.subagents : []);
+    : (subagentsWriter ? available.subagents : []);
 
-  if (subagentsToSync.length > 0 && SUBAGENT_CAPABLE_AGENTS.includes(agent)) {
-    const allSubagents = listInstalledSubagents();
-    const subagentsMap = new Map(allSubagents.map(s => [s.name, s]));
+  if (subagentsToSync.length > 0 && subagentsWriter) {
+    const r = subagentsWriter.write({ version, versionHome, selection: subagentsToSync, cwd });
+    result.subagents.push(...r.synced);
 
-    for (const name of subagentsToSync) {
-      const subagent = subagentsMap.get(name);
-      if (!subagent) continue;
-
-      try {
-        if (agent === 'claude') {
-          // Claude: flatten to single .md file
-          const agentsDir = path.join(agentDir, 'agents');
-          fs.mkdirSync(agentsDir, { recursive: true });
-          const transformed = transformSubagentForClaude(subagent.path);
-          fs.writeFileSync(safeJoin(agentsDir, `${subagent.name}.md`), transformed);
-          result.subagents.push(subagent.name);
-        } else if (agent === 'openclaw') {
-          // OpenClaw: copy full directory, rename AGENT.md -> AGENTS.md
-          const targetDir = safeJoin(path.join(versionHome, '.openclaw'), subagent.name);
-          const syncResult = syncSubagentToOpenclaw(subagent.path, targetDir);
-          if (syncResult.success) {
-            result.subagents.push(subagent.name);
-          }
-        }
-      } catch { /* resource sync failed for this item */ }
-    }
-
-    // Orphan-sweep stale subagents. Same selection-mode guard as the
-    // commands/skills sweeps above. Claude stores them as flat .md files
-    // under `<agentDir>/agents/`; OpenClaw stores them as subdirs at the
-    // same level as commands/skills/hooks/plugins (no isolated parent dir),
-    // which means a directory-readdir sweep would unsafely hit unrelated
-    // resources. For OpenClaw we lean on the existing per-name copy path —
-    // if the user wants strict isolation on OpenClaw, track via manifest.
+    // Orphan-sweep for Claude only — see comment on commands/skills sweep
+    // for the no-selection guard. OpenClaw stores subagents as siblings of
+    // other resources so a readdir sweep would over-reach.
     if (!userPassedSelection && agent === 'claude') {
       const claudeAgentsDir = path.join(agentDir, 'agents');
       if (fs.existsSync(claudeAgentsDir)) {
@@ -2367,56 +2031,28 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
         }
       }
     }
-
-    // subagent patterns already written via ensureVersionResourcePatterns above.
   }
 
-  // Sync plugins (claude and openclaw)
+  // Sync plugins — dispatch through WRITERS.plugins.
+  const pluginsWriter = getWriter('plugins', agent);
   const pluginsToSync = selection
     ? resolveSelection(selection.plugins, available.plugins)
-    : (PLUGINS_CAPABLE_AGENTS.includes(agent) ? available.plugins : []);
+    : (pluginsWriter ? available.plugins : []);
 
-  if (pluginsToSync.length > 0 && PLUGINS_CAPABLE_AGENTS.includes(agent)) {
-    const allPlugins = discoverPlugins();
-    const pluginMap = new Map(allPlugins.map(p => [p.name, p]));
-
-    // Clean orphaned plugin skills from plugins that no longer exist
-    const activePluginNames = new Set(allPlugins.map(p => p.name));
-    cleanOrphanedPluginSkills(agent, versionHome, activePluginNames);
-
-    for (const name of pluginsToSync) {
-      const plugin = pluginMap.get(name);
-      if (!plugin || !pluginSupportsAgent(plugin, agent)) continue;
-
-      const pluginResult = syncPluginToVersion(plugin, agent, versionHome, { version });
-      if (pluginResult.success) {
-        result.plugins.push(name);
-      }
-    }
-
-    // plugin patterns already written via ensureVersionResourcePatterns above.
+  if (pluginsToSync.length > 0 && pluginsWriter) {
+    const r = pluginsWriter.write({ version, versionHome, selection: pluginsToSync, cwd });
+    result.plugins.push(...r.synced);
   }
 
-  // Sync workflows (claude only)
+  // Sync workflows — dispatch through WRITERS.workflows.
+  const workflowsWriter = getWriter('workflows', agent);
   const workflowsToSync = selection
     ? resolveSelection(selection.workflows, available.workflows)
-    : (WORKFLOW_CAPABLE_AGENTS.includes(agent) ? available.workflows : []);
+    : (workflowsWriter ? available.workflows : []);
 
-  if (workflowsToSync.length > 0 && WORKFLOW_CAPABLE_AGENTS.includes(agent)) {
-    const allWorkflows = listInstalledWorkflows();
-
-    for (const name of workflowsToSync) {
-      const workflow = allWorkflows.get(name);
-      if (!workflow) continue;
-      try {
-        const syncResult = syncWorkflowToVersion(workflow.path, name, agent, versionHome);
-        if (syncResult.success) {
-          result.workflows.push(name);
-        }
-      } catch { /* resource sync failed for this item */ }
-    }
-
-    // workflow patterns already written via ensureVersionResourcePatterns above.
+  if (workflowsToSync.length > 0 && workflowsWriter) {
+    const r = workflowsWriter.write({ version, versionHome, selection: workflowsToSync, cwd });
+    result.workflows.push(...r.synced);
   }
 
   // Write manifest after a full sync (no user-passed selection) so the next

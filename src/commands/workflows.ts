@@ -14,10 +14,10 @@ import * as path from 'path';
 import { select, checkbox } from '@inquirer/prompts';
 
 import { resolveAgentName, agentLabel } from '../lib/agents.js';
+import { capableAgents } from '../lib/capabilities.js';
 import type { AgentId } from '../lib/types.js';
 import { cloneRepo } from '../lib/git.js';
 import {
-  WORKFLOW_CAPABLE_AGENTS,
   discoverWorkflowsFromRepo,
   installWorkflowCentrally,
   removeWorkflow,
@@ -268,7 +268,7 @@ Examples:
         let versionSelections: Map<AgentId, string[]>;
 
         if (options.agents) {
-          const result = await resolveAgentTargetsAutoInstalling(options.agents, WORKFLOW_CAPABLE_AGENTS, { yes: options.yes });
+          const result = await resolveAgentTargetsAutoInstalling(options.agents, capableAgents('workflows'), { yes: options.yes });
           if (!result) {
             console.log(chalk.gray('Cancelled.'));
             return;
@@ -276,7 +276,7 @@ Examples:
           selectedAgents = result.selectedAgents;
           versionSelections = result.versionSelections;
         } else {
-          const result = await promptAgentVersionSelection(WORKFLOW_CAPABLE_AGENTS, {
+          const result = await promptAgentVersionSelection(capableAgents('workflows'), {
             skipPrompts: options.yes,
           });
           selectedAgents = result.selectedAgents;
