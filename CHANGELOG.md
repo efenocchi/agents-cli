@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+**Headless Linux: encrypted-file fallback when libsecret collection is locked (#183)**
+
+- On server-class Linux (Ubuntu 24.04 over SSH on the reporter's box), `agents secrets create x` failed with `secret-tool: Cannot create an item in a locked collection`. Diagnosis in the issue: `gnome-keyring-daemon` is running and D-Bus is reachable, but the default `login` collection is locked because no graphical login has fed the daemon the passphrase, and `secret-tool` from `libsecret-tools` has no `--collection` flag so it can't target the unlocked `session` collection. This made `agents secrets` effectively macOS-only on any headless box.
+- `src/lib/secrets/linux.ts` now transparently falls back to a file-based AES-256-GCM encrypted store at `~/.agents/.cache/secrets/<item>.enc` (mode 0600, per-file random scrypt salt + 96-bit IV, GCM auth tag). The encryption key is scrypt-derived from a passphrase read from `AGENTS_SECRETS_PASSPHRASE` (preferred) or a TTY prompt via `/dev/tty` with `stty -echo` for non-echoing input. The fallback also activates when `libsecret-tools` is not installed at all but `AGENTS_SECRETS_PASSPHRASE` is set, so a fresh install can store secrets without any apt-get step.
+- The decision is cached per process; on first activation we emit one stderr line: `[agents] secret-service collection locked, using file-based store at <dir>`. The `KeychainBackend` interface in `src/lib/secrets/index.ts` is unchanged — `has`/`get`/`set`/`delete`/`list` work identically against either backend, so `bundles.ts`, `sync.ts`, and every consumer above it sees no API change.
+- Items written into the file store before the fallback was added remain accessible only via libsecret if/when the collection is later unlocked; this PR does not migrate stranded items in either direction — the user simply re-creates them on a freshly headless box.
+
 ## 1.20.4
 
 **Plugin marketplace sync (skip outside-pointing symlinks)**
