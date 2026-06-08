@@ -1,0 +1,10 @@
+export NVM_DIR="$HOME/.nvm"
+
+# Added by Antigravity CLI installer
+export PATH="$HOME/.local/bin:$PATH"
+
+# >>> grok installer >>>
+export PATH="$HOME/.grok/bin:$PATH"
+# <<< grok installer <<<
+# agents-cli: version-managed agent CLIs
+export PATH="__SHIMS_DIR__:$PATH"
