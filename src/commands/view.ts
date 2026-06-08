@@ -67,6 +67,7 @@ import { getCentralRulesFileName } from '../lib/rules/rules.js';
 import { composeRulesFromState, type ComposedSubrule } from '../lib/rules/compose.js';
 import { getConfiguredRunStrategy } from '../lib/rotate.js';
 import { listProfiles, profileSummary, type ProfileSummary } from '../lib/profiles.js';
+import { loadManifest, isStale } from '../lib/staleness/index.js';
 import { confirm } from '@inquirer/prompts';
 import { formatPath, isInteractiveTerminal, isPromptCancelled } from './utils.js';
 
@@ -609,6 +610,12 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
   if (filterAgentId && versionManaged.length > 0) {
     const defaultVersion = getGlobalDefault(filterAgentId);
     if (defaultVersion) {
+      const manifest = loadManifest(filterAgentId, defaultVersion);
+      const cwd = process.cwd();
+      if (manifest && !isStale(manifest, filterAgentId, defaultVersion, cwd)) {
+        return;
+      }
+
       const available = getAvailableResources();
       const synced = getActuallySyncedResources(filterAgentId, defaultVersion);
       const projectOnly = getProjectOnlyResources();
