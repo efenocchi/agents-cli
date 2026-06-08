@@ -68,6 +68,7 @@ const AGENT_NAMES: Record<AgentType, string> = {
   opencode: 'OpenCode',
   grok: 'Grok',
   antigravity: 'Antigravity',
+  kimi: 'Kimi',
 };
 
 const VALID_AGENTS = Object.keys(AGENT_NAMES) as AgentType[];

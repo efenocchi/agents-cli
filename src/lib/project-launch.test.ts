@@ -27,10 +27,10 @@ vi.mock('./state.js', () => ({
   }; },
   get getEnabledExtraRepos() { return () => []; },
   get getVersionsDir() { return () => path.join(USER_DIR, '.history', 'versions'); },
-  // capabilities.ts → agents.ts invokes getCliVersionCachePath() at module load,
-  // BEFORE beforeEach initializes USER_DIR. Use an os.tmpdir() constant so the
-  // call resolves without crashing — tests don't read this cache.
-  get getCliVersionCachePath() { return () => path.join(os.tmpdir(), 'agents-cli-test-version-cache.json'); },
+  // agents.ts calls getCliVersionCachePath() at module-load (not lazily) to
+  // build a const. Return an os.tmpdir()-based path because USER_DIR isn't
+  // initialized until beforeEach; runLaunchSync doesn't touch this file.
+  get getCliVersionCachePath() { return () => path.join(os.tmpdir(), 'agents-cli-version.json'); },
   // rules/compose.ts calls these to discover user + system rule layers.
   // Point at directories that won't exist so only the project layer is active.
   get getUserRulesDir() { return () => path.join(USER_DIR, 'rules'); },

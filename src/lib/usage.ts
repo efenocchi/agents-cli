@@ -4,7 +4,7 @@
  * Fetches live usage data from the Anthropic OAuth API (Claude) or parses
  * rate-limit events from Codex session logs. Results are normalized into a
  * common UsageSnapshot shape, cached to disk, and rendered as terminal
- * progress bars for the `agents view` and `agents status` commands.
+ * progress bars for the `agents view` command.
  */
 import { execFile } from 'child_process';
 import { createHash } from 'crypto';

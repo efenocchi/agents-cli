@@ -373,7 +373,9 @@ describe('shims - generateShimScript', () => {
   test('does not include foreground project sync in shim', () => {
     const script = generateShimScript('claude');
     expect(script).not.toContain('find_project_agents_dir');
-    expect(script).not.toContain('"$AGENTS_BIN" sync --agent "$AGENT"');
+    // sync IS called on the hot path, but only with --launch (filesystem-only,
+    // sub-50ms, non-blocking). A foreground sync without --launch is forbidden.
+    expect(script).not.toMatch(/"\$AGENTS_BIN" sync\b(?![^\n]*--launch)/);
   });
 
   test('non-@-capable agents do not refresh rules on the launch hot path', () => {

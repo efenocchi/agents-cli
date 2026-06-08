@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
 # Build, sign, and notarize the keychain helper as a .app bundle.
 #
-# Items are gated by a biometry access control (kSecAttrAccessControl), which
-# the OS enforces with Touch ID regardless of which signed binary reads them.
-# That needs no entitlement and no provisioning profile. We still ship a .app
-# bundle because that is the shape `agents helper` installs into
-# ~/Library/Application Support/agents-cli/ and what kc-install expects; the
-# binary is signed with the hardened runtime and notarized for Gatekeeper.
+# macOS 26 (Tahoe) tightened the data-protection keychain daemon (secd):
+# writes from a signed binary now require keychain-access-groups entitlement
+# + matching embedded provisioning profile. Without them, SecItemAdd fails
+# with OSStatus -34018 (errSecMissingEntitlement). The biometry ACL alone
+# does NOT satisfy this — it's an additive policy on top of the access-group
+# check, not a replacement. Strip either piece and writes break.
 #
-# Requires: APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID in env.
+# Requires: APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID in env;
+#           bin/embedded.provisionprofile checked into the repo.
 # Output: bin/Agents CLI.app (universal, signed, notarized)
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SOURCE="$REPO_ROOT/src/lib/secrets/keychain-helper.swift"
+PROFILE="$REPO_ROOT/bin/embedded.provisionprofile"
 ENTITLEMENTS="$REPO_ROOT/scripts/keychain-entitlements.plist"
 APP="$REPO_ROOT/bin/Agents CLI.app"
 BIN="$APP/Contents/MacOS/Agents CLI"
@@ -21,6 +23,8 @@ BIN="$APP/Contents/MacOS/Agents CLI"
 : "${APPLE_ID:?APPLE_ID not set}"
 : "${APPLE_APP_SPECIFIC_PASSWORD:?APPLE_APP_SPECIFIC_PASSWORD not set}"
 : "${APPLE_TEAM_ID:?APPLE_TEAM_ID not set}"
+
+[ -f "$PROFILE" ] || { echo "Missing $PROFILE. Generate at developer.apple.com and check it in." >&2; exit 1; }
 
 SIGN_IDENTITY="Developer ID Application: Muqit Nawaz ($APPLE_TEAM_ID)"
 
@@ -63,6 +67,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+
+echo "Embedding provisioning profile..."
+cp "$PROFILE" "$APP/Contents/embedded.provisionprofile"
 
 echo "Signing..."
 codesign \
