@@ -1368,34 +1368,54 @@ export function removeLegacyUserShim(agent: AgentId, overrides?: { homeDir?: str
  * `alias` line elsewhere in the file would surface as a false positive
  * (e.g. seen in zshrc setups that conditionally clear an alias later).
  */
-export function hasAliasShadowingShim(agent: AgentId, overrides?: { homeDir?: string }): boolean {
-  const cliCommand = AGENTS[agent].cliCommand;
-  const HOME = overrides?.homeDir || os.homedir();
-  const rcFiles = [
-    path.join(HOME, '.zshrc'),
-    path.join(HOME, '.bashrc'),
-    path.join(HOME, '.bash_profile'),
-    path.join(HOME, '.profile'),
-  ];
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
-  const escaped = cliCommand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  // `alias <cmd>=...`
-  const aliasPattern = new RegExp(`^\\s*alias\\s+${escaped}\\s*=`);
-  // `unalias <name>...` where one name is <cmd>. Matches:
-  //   unalias codex
-  //   unalias claude codex gemini 2>/dev/null || true
-  const unaliasPattern = new RegExp(`^\\s*unalias\\b[^\\n]*\\b${escaped}\\b`);
+/** Walk rc lines in order; a later `unalias` clears an earlier `alias`. */
+function isAliasActiveInRcContent(content: string, cliCommand: string): boolean {
+  let active = false;
+  const aliasPattern = new RegExp(`^\\s*alias\\s+${escapeRegex(cliCommand)}\\s*=`);
+
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    if (aliasPattern.test(line)) {
+      active = true;
+      continue;
+    }
+
+    const unaliasMatch = trimmed.match(/^unalias\s+(.+)$/);
+    if (!unaliasMatch) continue;
+
+    const tokens = unaliasMatch[1].split(/\s+/).filter((token) => !token.startsWith('-'));
+    if (tokens.includes(cliCommand)) {
+      active = false;
+    }
+  }
+
+  return active;
+}
+
+export function hasAliasShadowingShim(
+  agent: AgentId,
+  overrides?: { homeDir?: string },
+): boolean {
+  const cliCommand = AGENTS[agent].cliCommand;
+  const homeDir = overrides?.homeDir ?? os.homedir();
+  const rcFiles = [
+    path.join(homeDir, '.zshrc'),
+    path.join(homeDir, '.bashrc'),
+    path.join(homeDir, '.bash_profile'),
+    path.join(homeDir, '.profile'),
+  ];
 
   for (const rcFile of rcFiles) {
     try {
       if (!fs.existsSync(rcFile)) continue;
       const content = fs.readFileSync(rcFile, 'utf-8');
-      let lastAction: 'alias' | 'unalias' | null = null;
-      for (const line of content.split('\n')) {
-        if (aliasPattern.test(line)) lastAction = 'alias';
-        else if (unaliasPattern.test(line)) lastAction = 'unalias';
-      }
-      if (lastAction === 'alias') return true;
+      if (isAliasActiveInRcContent(content, cliCommand)) return true;
     } catch {
       // unreadable rc file — skip
     }
@@ -1433,6 +1453,7 @@ function isShimPathCommandLine(line: string, shimsDir: string): boolean {
   const markerRegexes = exactMarkers.map((marker) => new RegExp(`${escapeRegex(marker)}(?=$|[:\\s])`));
   const suffixRegexes = [
     /\/\.agents-system\/shims(?=$|[:\s])/,
+    /\/\.agents\/\.cache\/shims(?=$|[:\s])/,
     /\/\.agents\/shims(?=$|[:\s])/,
   ];
 
@@ -1507,10 +1528,10 @@ export function getPathSetupInstructions(): string {
   fish_add_path ${shimsDir}`;
   }
 
-  return `Add to ~/${rcFile} (AFTER any nvm/node setup):
+  return `Add to the end of ~/${rcFile} (after any nvm/node setup and agent installers):
   export PATH="${shimsDir}:$PATH"
 
-IMPORTANT: Shims must come FIRST in PATH to override global installs.
+IMPORTANT: Shims must be the last PATH prepend in your shell config to override global installs.
 
 Then restart your shell or run:
   source ~/${rcFile}`;
@@ -1546,27 +1567,6 @@ export function addShimsToPath(
 
   const contentWithoutShimLines = stripShimPathLines(content, shimsDir);
 
-  // Find insertion point - AFTER node/nvm/fnm setup if present, otherwise append.
-  const insertAfterPatterns = [
-    /^export NVM_DIR=/m,
-    /^source.*nvm/m,
-    /^\[ -s.*nvm/m,
-    /^eval.*fnm/m,
-    /^export PATH.*node/m,
-    /^export PATH.*npm/m,
-  ];
-
-  let insertIndex = -1;
-  const lines = contentWithoutShimLines.split('\n');
-  let offset = 0;
-  for (const line of lines) {
-    const lineWithNewline = `${line}\n`;
-    if (insertAfterPatterns.some((pattern) => pattern.test(line))) {
-      insertIndex = offset + lineWithNewline.length;
-    }
-    offset += lineWithNewline.length;
-  }
-
   // Write the updated content
   try {
     // Ensure parent directories exist (especially for fish: ~/.config/fish/)
@@ -1575,18 +1575,9 @@ export function addShimsToPath(
       fs.mkdirSync(rcDir, { recursive: true });
     }
 
-    let newContent: string;
-    if (insertIndex >= 0) {
-      // Insert after the last node/nvm/fnm-related line so our prepend wins.
-      const before = contentWithoutShimLines.slice(0, insertIndex);
-      const separator = before.length > 0 && !before.endsWith('\n\n') ? '\n' : '';
-      newContent = before + separator + exportBlock + contentWithoutShimLines.slice(insertIndex);
-    } else {
-      // Append to end
-      const separator = contentWithoutShimLines.length > 0 && !contentWithoutShimLines.endsWith('\n') ? '\n' : '';
-      newContent = contentWithoutShimLines + separator + exportBlock;
-    }
-
+    // Append at EOF so later installer PATH prepends cannot shadow the shims.
+    const separator = contentWithoutShimLines.length > 0 && !contentWithoutShimLines.endsWith('\n') ? '\n' : '';
+    let newContent = contentWithoutShimLines + separator + exportBlock;
     newContent = newContent.replace(/\n{2,}$/g, '\n');
 
     if (newContent === content) {

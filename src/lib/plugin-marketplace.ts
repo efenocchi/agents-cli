@@ -145,9 +145,17 @@ export function syncMarketplaceManifest(agent: AgentId, versionHome: string): Ma
 
   const entries: MarketplacePluginEntry[] = [];
   for (const entry of fs.readdirSync(pluginsDir, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+    if (entry.name.startsWith('.')) continue;
+    // Follow symlinks: Dirent.isDirectory() is false for a symlink even when the
+    // target is a directory. statSync follows the link.
+    const entryPath = path.join(pluginsDir, entry.name);
+    let isDir = entry.isDirectory();
+    if (!isDir && entry.isSymbolicLink()) {
+      try { isDir = fs.statSync(entryPath).isDirectory(); } catch { isDir = false; }
+    }
+    if (!isDir) continue;
 
-    const manifestFile = path.join(pluginsDir, entry.name, '.claude-plugin', 'plugin.json');
+    const manifestFile = path.join(entryPath, '.claude-plugin', 'plugin.json');
     if (!fs.existsSync(manifestFile)) continue;
 
     let manifest: PluginManifest & { author?: { name: string; email?: string } };
