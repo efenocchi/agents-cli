@@ -7,6 +7,7 @@ import {
   addShimsToPath,
   generateShimScript,
   generateVersionedAliasScript,
+  hasAliasShadowingShim,
   removeLegacyUserShim,
   SHIM_SCHEMA_VERSION,
   VERSIONED_ALIAS_SCHEMA_VERSION,
@@ -259,5 +260,46 @@ describe('generateShimScript', () => {
     expect(script).toContain('if [ -z "$AGENTS_BIN" ] || [ ! -x "$AGENTS_BIN" ]; then');
     expect(script).toContain('agents: agents-cli entrypoint missing or not executable: $AGENTS_BIN');
     expect(script).toContain('exit 127');
+  });
+});
+
+describe('hasAliasShadowingShim', () => {
+  let home: string;
+  let originalHome: string | undefined;
+
+  beforeEach(() => {
+    originalHome = process.env.HOME;
+    home = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-alias-test-'));
+    process.env.HOME = home;
+  });
+
+  afterEach(() => {
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it('returns true when an alias is defined without a later unalias', () => {
+    fs.writeFileSync(
+      path.join(home, '.zshrc'),
+      'alias codex="codex --sandbox workspace-write"\n',
+      'utf8',
+    );
+    expect(hasAliasShadowingShim('codex', { homeDir: home })).toBe(true);
+  });
+
+  it('returns false when a later unalias removes the alias', () => {
+    fs.writeFileSync(
+      path.join(home, '.zshrc'),
+      [
+        'alias codex="codex --sandbox workspace-write"',
+        'unalias claude codex gemini 2>/dev/null || true',
+      ].join('\n'),
+      'utf8',
+    );
+    expect(hasAliasShadowingShim('codex', { homeDir: home })).toBe(false);
   });
 });
