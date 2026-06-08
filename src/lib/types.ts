@@ -478,6 +478,13 @@ export interface DiscoveredPlugin {
   hasMcp: boolean;
   /** Whether the plugin root contains a settings.json with non-permission keys to merge. */
   hasSettings: boolean;
+  /**
+   * Marketplace this plugin was discovered in (from marketplaceNameFor() of the
+   * owning MarketplaceSpec): "agents-cli" (user repo), "agents-<alias>" (extra
+   * repo), or "agents-project" (project repo). Absent on hand-built plugins
+   * (e.g. workflow-scoped) — those default to the user marketplace on sync.
+   */
+  marketplace?: string;
 }
 
 /**
