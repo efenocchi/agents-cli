@@ -12,7 +12,16 @@ process.env.HOME = TEST_HOME;
 
 const { getDB, getDBPath, querySessions, closeDB } = await import('../db.js');
 
+// JSONL files live under TEST_HOME so they're isolated and torn down with it.
+// querySessions filters out rows whose file_path no longer exists on disk
+// (defense against phantom rows after a config-symlink swap, see #136), so
+// every seeded row needs a real backing file.
+const SEED_FILES_DIR = path.join(TEST_HOME, 'seed-files');
+fs.mkdirSync(SEED_FILES_DIR, { recursive: true });
+
 function seed(id: string, version: string | null, timestamp: string): void {
+  const filePath = path.join(SEED_FILES_DIR, `${id}.jsonl`);
+  fs.writeFileSync(filePath, '');
   const db = getDB();
   db.prepare(`
     INSERT INTO sessions (
@@ -26,8 +35,8 @@ function seed(id: string, version: string | null, timestamp: string): void {
     version,
     timestamp,
     'agents-cli',
-    '/tmp/test',
-    `/tmp/test/${id}.jsonl`,
+    SEED_FILES_DIR,
+    filePath,
     0,
     0,
     0,
