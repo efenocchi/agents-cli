@@ -10,11 +10,10 @@
  *   agents worktree release   <terminal-id>   -> removes if clean + merged
  *   agents worktree prune                     -> removes every clean+merged one
  *
- * Worktrees live at <repo>/.history/worktrees/<terminal-id>, on a branch
- * named agent/<terminal-id>. The branch starts at HEAD of the parent repo.
- * .history/ mirrors the agents-cli runtime-state convention at ~/.agents/.history/
- * but scoped to the repo. .agents/ is reserved for project resources
- * (skills, hooks, commands) per the agents-cli DotAgents repo layout.
+ * Worktrees live at <repo>/.agents/worktrees/<terminal-id>, on a branch
+ * named agents/<terminal-id>. The branch starts at HEAD of the parent repo.
+ * This matches the agent-system rule that keeps all coding-agent worktrees
+ * under the repo-local .agents/ state directory.
  */
 import type { Command } from 'commander';
 import chalk from 'chalk';
@@ -27,8 +26,8 @@ import { setHelpSections } from '../lib/help.js';
 
 const execFileAsync = promisify(execFile);
 
-const WORKTREE_SUBDIR = path.join('.history', 'worktrees');
-const BRANCH_PREFIX = 'agent/';
+const WORKTREE_SUBDIR = path.join('.agents', 'worktrees');
+const BRANCH_PREFIX = 'agents/';
 
 function die(msg: string, code = 1): never {
   console.error(chalk.red(msg));
@@ -210,7 +209,7 @@ export function registerWorktreeCommands(program: Command): void {
       agents worktree prune
     `,
     notes: `
-      Worktrees live at <repo>/.history/worktrees/<terminal-id> on branch agent/<terminal-id>.
+      Worktrees live at <repo>/.agents/worktrees/<terminal-id> on branch agents/<terminal-id>.
       Use --force on 'release' to skip safety checks (DANGEROUS — discards unpushed work).
     `,
   });
@@ -245,7 +244,7 @@ export function registerWorktreeCommands(program: Command): void {
     });
 
   wt.command('prune')
-    .description('Try to release every agent worktree under .history/worktrees/. Skips dirty or unpushed ones.')
+    .description('Try to release every agent worktree under .agents/worktrees/. Skips dirty or unpushed ones.')
     .option('--root <path>', 'Repo root (defaults to current working directory)')
     .option('--dry-run', 'Report what would be removed without touching anything')
     .action(async (opts: { root?: string; dryRun?: boolean }) => {
