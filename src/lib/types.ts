@@ -501,7 +501,8 @@ export interface DiscoveredPlugin {
 export type MarketplaceSpec =
   | { kind: 'user' }
   | { kind: 'extra'; alias: string; root: string }
-  | { kind: 'project'; root: string };
+  | { kind: 'project'; root: string }
+  | { kind: 'system'; root: string };
 
 /**
  * A marketplace found on the source side (before any per-version sync), with

@@ -37,6 +37,7 @@ import { getPluginsDir, getEnabledExtraRepos, getProjectPluginsDir } from './sta
  * the `marketplaces/agents-cli/` on-disk path that existing installs already have.
  */
 export const MARKETPLACE_NAME = 'agents-cli';
+export const SYSTEM_MARKETPLACE_NAME = 'agents-system';
 
 /** Marketplace name for <cwd>/.agents/plugins/*. */
 export const PROJECT_MARKETPLACE_NAME = 'agents-project';
@@ -81,6 +82,7 @@ export function marketplaceNameFor(spec: MarketplaceSpec): string {
     case 'user':    return MARKETPLACE_NAME;          // "agents-cli"
     case 'extra':   return `agents-${spec.alias}`;    // e.g. "agents-extras"
     case 'project': return PROJECT_MARKETPLACE_NAME;  // "agents-project"
+    case 'system':  return SYSTEM_MARKETPLACE_NAME;   // "agents-system"
   }
 }
 
@@ -94,6 +96,7 @@ function descriptionFor(spec: MarketplaceSpec): string {
     case 'user':    return 'Plugins from the user repo (~/.agents/plugins/)';
     case 'extra':   return `Plugins from extra repo "${spec.alias}" (~/.agents-${spec.alias}/plugins/)`;
     case 'project': return 'Project-scoped plugins from <cwd>/.agents/plugins/';
+    case 'system':  return 'Plugins from the system repo (~/.agents/.system/plugins/)';
   }
 }
 

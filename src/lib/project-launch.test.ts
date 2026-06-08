@@ -27,6 +27,10 @@ vi.mock('./state.js', () => ({
   }; },
   get getEnabledExtraRepos() { return () => []; },
   get getVersionsDir() { return () => path.join(USER_DIR, '.history', 'versions'); },
+  // capabilities.ts → agents.ts invokes getCliVersionCachePath() at module load,
+  // BEFORE beforeEach initializes USER_DIR. Use an os.tmpdir() constant so the
+  // call resolves without crashing — tests don't read this cache.
+  get getCliVersionCachePath() { return () => path.join(os.tmpdir(), 'agents-cli-test-version-cache.json'); },
 }));
 
 import { runLaunchSync } from './project-launch.js';
@@ -145,7 +149,7 @@ describe('runLaunchSync — scoped plugin marketplaces', () => {
     const result = runLaunchSync({ agent: 'claude', version: '1.0.0', cwd: PROJECT_DIR });
 
     expect(result.marketplaces[PROJECT_MARKETPLACE_NAME]).toContain('myproj');
-    const manifestPath = marketplaceManifestPath('claude', VERSION_HOME, PROJECT_MARKETPLACE_NAME);
+    const manifestPath = marketplaceManifestPath(PROJECT_MARKETPLACE_NAME, 'claude', VERSION_HOME);
     const manifest = readJson(manifestPath) as { name: string; plugins: Array<{ name: string }> };
     expect(manifest.name).toBe(PROJECT_MARKETPLACE_NAME);
     expect(manifest.plugins.map(p => p.name)).toEqual(['myproj']);
@@ -166,7 +170,7 @@ describe('runLaunchSync — scoped plugin marketplaces', () => {
       : { enabledPlugins: undefined };
     expect(settings.enabledPlugins?.[`evil@${PROJECT_MARKETPLACE_NAME}`]).toBeUndefined();
     // But the marketplace install dir should exist — user can still `/plugin enable` it.
-    expect(fs.existsSync(path.join(marketplaceRoot('claude', VERSION_HOME, PROJECT_MARKETPLACE_NAME), 'plugins', 'evil'))).toBe(true);
+    expect(fs.existsSync(path.join(marketplaceRoot(PROJECT_MARKETPLACE_NAME, 'claude', VERSION_HOME), 'plugins', 'evil'))).toBe(true);
   });
 
   it('DOES auto-enable a user-scope plugin even when it ships exec surfaces', () => {
@@ -216,8 +220,8 @@ describe('runLaunchSync — scoped plugin marketplaces', () => {
     expect(result.marketplaces[SYSTEM_MARKETPLACE_NAME]).toEqual(['sysplug']);
     expect(result.marketplaces[MARKETPLACE_NAME]).toEqual(['userplug']);
 
-    expect(fs.existsSync(path.join(marketplaceRoot('claude', VERSION_HOME, SYSTEM_MARKETPLACE_NAME), 'plugins', 'sysplug'))).toBe(true);
-    expect(fs.existsSync(path.join(marketplaceRoot('claude', VERSION_HOME, MARKETPLACE_NAME), 'plugins', 'userplug'))).toBe(true);
+    expect(fs.existsSync(path.join(marketplaceRoot(SYSTEM_MARKETPLACE_NAME, 'claude', VERSION_HOME), 'plugins', 'sysplug'))).toBe(true);
+    expect(fs.existsSync(path.join(marketplaceRoot(MARKETPLACE_NAME, 'claude', VERSION_HOME), 'plugins', 'userplug'))).toBe(true);
 
     const known = readJson(path.join(VERSION_HOME, '.claude', 'plugins', 'known_marketplaces.json')) as Record<string, unknown>;
     expect(Object.keys(known).sort()).toEqual([MARKETPLACE_NAME, SYSTEM_MARKETPLACE_NAME].sort());
@@ -233,7 +237,7 @@ describe('runLaunchSync — scoped plugin marketplaces', () => {
     writePluginManifest(path.join(USER_DIR, 'plugins', 'fast'), 'fast');
 
     runLaunchSync({ agent: 'claude', version: '1.0.0', cwd: PROJECT_DIR });
-    const manifestPath = marketplaceManifestPath('claude', VERSION_HOME, MARKETPLACE_NAME);
+    const manifestPath = marketplaceManifestPath(MARKETPLACE_NAME, 'claude', VERSION_HOME);
     const mtime1 = fs.statSync(manifestPath).mtimeMs;
 
     // Sleep enough to make a rewrite detectable, then re-run.
