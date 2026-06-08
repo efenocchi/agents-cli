@@ -694,6 +694,59 @@ describe('applyPermissionsToVersion', () => {
     expect(settings.otherSetting).toBe('preserved');
   });
 
+  it('preserves env, hooks, mcpServers, and custom top-level keys (regression #137)', () => {
+    const versionHome = join(testDir, 'claude-version-survival');
+    const claudeDir = join(versionHome, '.claude');
+    mkdirSync(claudeDir, { recursive: true });
+
+    const existing = {
+      env: { FOO: 'bar', DEBUG: 'true' },
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: 'Bash',
+            hooks: [{ type: 'command', command: 'echo test' }],
+          },
+        ],
+      },
+      mcpServers: {
+        fooServer: { command: '/bin/foo', args: ['--bar'] },
+      },
+      customKey: { nested: 'preserved' },
+      permissions: { allow: ['Bash(npm *)'], deny: [] },
+    };
+    writeFileSync(join(claudeDir, 'settings.json'), JSON.stringify(existing, null, 2));
+
+    const set: PermissionSet = {
+      name: 'test',
+      allow: ['Bash(git *)'],
+      deny: ['Bash(rm *)'],
+    };
+
+    const result = applyPermissionsToVersion('claude', set, versionHome, true);
+    expect(result.success).toBe(true);
+
+    const settings = JSON.parse(readFileSync(join(claudeDir, 'settings.json'), 'utf-8'));
+
+    expect(settings.env).toEqual({ FOO: 'bar', DEBUG: 'true' });
+    expect(settings.hooks).toEqual({
+      PreToolUse: [
+        {
+          matcher: 'Bash',
+          hooks: [{ type: 'command', command: 'echo test' }],
+        },
+      ],
+    });
+    expect(settings.mcpServers).toEqual({
+      fooServer: { command: '/bin/foo', args: ['--bar'] },
+    });
+    expect(settings.customKey).toEqual({ nested: 'preserved' });
+
+    expect(settings.permissions.allow).toContain('Bash(npm *)');
+    expect(settings.permissions.allow).toContain('Bash(git *)');
+    expect(settings.permissions.deny).toContain('Bash(rm *)');
+  });
+
   it('applies OpenCode permissions to version home', () => {
     const versionHome = join(testDir, 'opencode-version-home');
     mkdirSync(versionHome, { recursive: true });
