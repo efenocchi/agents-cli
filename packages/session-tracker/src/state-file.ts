@@ -40,13 +40,16 @@ export function parseState(raw: string): SessionState | null {
   const o = obj as Record<string, unknown>;
   if (
     typeof o.session_id !== 'string' ||
-    typeof o.agent !== 'string' ||
     typeof o.cwd !== 'string' ||
     typeof o.pid !== 'number' ||
     typeof o.ts !== 'number'
   ) {
     return null;
   }
+  // Legacy hooks (the pre-package SessionStart capture script) wrote a subset
+  // of fields. Default the rest rather than reject — session_id is the load-
+  // bearing field and is always present.
+  if (typeof o.agent !== 'string') o.agent = 'unknown' as any;
   if (typeof o.method !== 'string') o.method = 'hook-stdin';
   return o as unknown as SessionState;
 }

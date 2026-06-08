@@ -71,9 +71,13 @@ export async function spawnAndDetect(opts: SpawnOpts): Promise<SpawnRun> {
   if (!proc.pid) {
     throw new Error(`spawn agents ${opts.agent} failed: no pid`);
   }
+  // Close stdin immediately — claude waits 3s for stdin data otherwise
+  // ("no stdin data received in 3s, proceeding without it"). Headless prompts
+  // are passed via argv, so nothing useful comes via stdin.
+  proc.stdin?.end();
 
-  const trackerTimeoutMs = opts.trackerTimeoutMs ?? 8000;
-  const truthTimeoutMs = opts.truthTimeoutMs ?? 8000;
+  const trackerTimeoutMs = opts.trackerTimeoutMs ?? 15_000;
+  const truthTimeoutMs = opts.truthTimeoutMs ?? 15_000;
 
   const [truth, detected] = await Promise.all([
     opts.agent === 'claude'

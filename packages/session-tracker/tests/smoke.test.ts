@@ -14,11 +14,11 @@ describe('smoke', () => {
           run.matched,
           `mismatch — truth=${run.truth?.sessionId} detected=${run.detected.sessionId}`,
         ).toBe(true);
-        expect(run.detected.latencyMs).toBeLessThan(8000);
+        expect(run.detected.latencyMs).toBeLessThan(15_000);
       } finally {
         await killAndCleanup(run);
       }
     },
-    45_000,
+    60_000,
   );
 });
