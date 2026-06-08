@@ -480,6 +480,36 @@ export interface DiscoveredPlugin {
   hasSettings: boolean;
 }
 
+/**
+ * Identifies one DotAgents repo that contributes a plugin marketplace. Each
+ * repo synthesizes its own catalog and registers under its own name:
+ *   user    — ~/.agents/plugins/         → "agents-cli"   (the canonical name)
+ *   extra   — ~/.agents-<alias>/plugins/ → "agents-<alias>" (e.g. "agents-extras")
+ *   project — <cwd>/.agents/plugins/     → "agents-project"
+ *
+ * `root` on the extra/project variants is the absolute path to that repo's
+ * plugins/ directory (the source side). The user variant needs no path — it is
+ * always ~/.agents/plugins/ via getPluginsDir().
+ */
+export type MarketplaceSpec =
+  | { kind: 'user' }
+  | { kind: 'extra'; alias: string; root: string }
+  | { kind: 'project'; root: string };
+
+/**
+ * A marketplace found on the source side (before any per-version sync), with
+ * its resolved name, source plugins directory, and catalog description.
+ */
+export interface DiscoveredMarketplace {
+  spec: MarketplaceSpec;
+  /** e.g. "agents-cli", "agents-extras", "agents-project". */
+  name: string;
+  /** Absolute path to the source plugins/ directory on disk. */
+  pluginsRoot: string;
+  /** Human description embedded in the synthesized catalog. */
+  description: string;
+}
+
 /** Frontmatter fields parsed from a subagent's agent.md file. */
 export interface SubagentFrontmatter {
   name: string;
