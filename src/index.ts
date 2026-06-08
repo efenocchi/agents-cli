@@ -812,6 +812,20 @@ const helpOrVersionRequested = passedArgs.some(
   (arg) => arg === '--help' || arg === '-h' || arg === '--version' || arg === '-V',
 );
 
+// Fold legacy ~/.agents-system/ into ~/.agents/.system/ BEFORE ensureInitialized
+// runs. ensureInitialized checks for .git inside the new path; if the user is
+// upgrading from a layout where .git lives under the legacy path, the check
+// would fail and exit before the migrator ever runs. Also runs outside the
+// sentinel guard below because the sentinel was set by pre-fold releases and
+// would otherwise skip this step on every existing install. Idempotent —
+// no-ops when legacy is missing or already a symlink.
+if (process.env.AGENTS_SKIP_MIGRATION !== '1') {
+  try {
+    const { foldLegacySystemRepo } = await import('./lib/migrate.js');
+    foldLegacySystemRepo();
+  } catch { /* must never block CLI startup */ }
+}
+
 if (
   !firstRun &&
   requestedCommand &&

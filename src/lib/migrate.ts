@@ -39,7 +39,7 @@ const CACHE_DIR = path.join(USER_DIR, '.cache');
  * Idempotent: re-running converges to "contents at SYSTEM_DIR, symlink at
  * LEGACY_SYSTEM_DIR" without duplicating data.
  */
-function foldLegacySystemRepo(): void {
+export function foldLegacySystemRepo(): void {
   let legacyStat: fs.Stats | null = null;
   try { legacyStat = fs.lstatSync(LEGACY_SYSTEM_DIR); } catch { /* missing */ }
   if (!legacyStat) return;

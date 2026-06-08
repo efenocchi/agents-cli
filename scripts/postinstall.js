@@ -48,9 +48,16 @@ To complete setup, run: npx agents setup
 // Create directories. The full migration (legacy ~/.agents-system/ fold,
 // runtime-state bucket moves, etc.) runs from src/lib/migrate.ts on the first
 // CLI invocation — we don't duplicate it here.
+//
+// SYSTEM_DIR is intentionally NOT pre-created: if a legacy ~/.agents-system/
+// exists, the migrator's fast-path rename needs SYSTEM_DIR to be absent so it
+// can move the legacy tree in one shot (including .git). Pre-creating an empty
+// skeleton forces the slower merge path AND can leave the new dir without
+// `.git`, which makes ensureInitialized() exit "not set up" before the
+// migrator runs. The migrator + first `agents setup` create SYSTEM_DIR as
+// needed.
 fs.mkdirSync(USER_DIR, { recursive: true, mode: 0o700 });
 fs.mkdirSync(SHIMS_DIR, { recursive: true });
-fs.mkdirSync(SYSTEM_DIR, { recursive: true });
 
 // Copy the signed macOS Keychain helper to a stable user path so its trusted-app
 // ACLs survive future npm publishes (which re-sign the bundle).
