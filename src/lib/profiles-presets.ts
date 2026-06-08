@@ -43,13 +43,13 @@ export interface Preset {
 //
 // Important limitation of Claude Code + non-Anthropic models via OpenRouter:
 // Claude Code sends `thinking:{type:"enabled"}` in its Anthropic payload by
-// default, and its `--print` consolidation returns empty text when a response
-// contains thinking/redacted_thinking blocks — even when the model *also*
-// emits a text block. This means reasoning models work fine in interactive
-// `claude` mode (same env vars) but `agents run <profile> --print` sees
-// empty stdout.
+// default, and its headless output consolidation returns empty text when a
+// response contains thinking/redacted_thinking blocks — even when the model
+// *also* emits a text block. This means reasoning models work fine in
+// interactive `claude` mode (same env vars) but headless invocations
+// (`agents run <profile> "<prompt>"`) see empty stdout.
 //
-// Presets flagged "print-safe" use non-reasoning variants that ignore
+// Presets flagged "headless-safe" use non-reasoning variants that ignore
 // thinking:enabled. Presets flagged "reasoning" are the leaderboard leaders
 // but are best invoked interactively.
 
@@ -65,7 +65,7 @@ export const PRESETS: Preset[] = [
   // ----- Top coding (via OpenRouter) -----
   {
     name: 'kimi',
-    description: 'Kimi K2.5 via OpenRouter (262K ctx, $0.38/$1.72 per 1M). Top Kimi: 99% HumanEval, 76.8% SWE-bench. REASONING — works interactively, but `agents run --print` returns empty stdout. Use `kimi-chat` preset for scripting.',
+    description: 'Kimi K2.5 via OpenRouter (262K ctx, $0.38/$1.72 per 1M). Top Kimi: 99% HumanEval, 76.8% SWE-bench. REASONING — works interactively, but `agents run kimi "<prompt>"` (headless) returns empty stdout. Use `kimi-chat` preset for scripting.',
     ...OPENROUTER_AUTH,
     env: {
       ANTHROPIC_BASE_URL: OPENROUTER_BASE,
@@ -75,7 +75,7 @@ export const PRESETS: Preset[] = [
   },
   {
     name: 'kimi-chat',
-    description: 'Kimi K2 0905 via OpenRouter (262K ctx, $0.40/$2.00 per 1M). Non-reasoning sibling of K2.5 — slightly older but PRINT-SAFE, works end-to-end with `agents run --print` and in scripts/automation.',
+    description: 'Kimi K2 0905 via OpenRouter (262K ctx, $0.40/$2.00 per 1M). Non-reasoning sibling of K2.5 — slightly older but HEADLESS-SAFE, works end-to-end with `agents run kimi-chat "<prompt>"` and in scripts/automation.',
     ...OPENROUTER_AUTH,
     env: {
       ANTHROPIC_BASE_URL: OPENROUTER_BASE,
@@ -85,7 +85,7 @@ export const PRESETS: Preset[] = [
   },
   {
     name: 'minimax',
-    description: 'MiniMax M2.5 via OpenRouter (230B params). #1 SWE-bench Verified (80.2%) on Apr 2026 leaderboards. REASONING — works interactively, --print returns empty.',
+    description: 'MiniMax M2.5 via OpenRouter (230B params). #1 SWE-bench Verified (80.2%) on Apr 2026 leaderboards. REASONING — works interactively, headless `agents run` returns empty stdout.',
     ...OPENROUTER_AUTH,
     env: {
       ANTHROPIC_BASE_URL: OPENROUTER_BASE,
@@ -95,7 +95,7 @@ export const PRESETS: Preset[] = [
   },
   {
     name: 'glm',
-    description: 'GLM 5 via OpenRouter (80K ctx, $0.72/$2.30 per 1M). #1 Chatbot Arena ELO (1451) among open-weight models on BenchLM.ai (Apr 2026). Prompt-complexity-dependent reasoning — Claude Code\'s 38K system prompt typically triggers thinking blocks, so --print is unreliable. Interactive use is fine.',
+    description: 'GLM 5 via OpenRouter (80K ctx, $0.72/$2.30 per 1M). #1 Chatbot Arena ELO (1451) among open-weight models on BenchLM.ai (Apr 2026). Prompt-complexity-dependent reasoning — Claude Code\'s 38K system prompt typically triggers thinking blocks, so headless invocations are unreliable. Interactive use is fine.',
     ...OPENROUTER_AUTH,
     env: {
       ANTHROPIC_BASE_URL: OPENROUTER_BASE,
@@ -105,7 +105,7 @@ export const PRESETS: Preset[] = [
   },
   {
     name: 'qwen',
-    description: 'Qwen3 Coder Next via OpenRouter (256K ctx, $0.15/$0.80 per 1M, sparse MoE 80B/3B active). Latest coding-specific Qwen (Feb 2026). PRINT-SAFE — works with `agents run --print`.',
+    description: 'Qwen3 Coder Next via OpenRouter (256K ctx, $0.15/$0.80 per 1M, sparse MoE 80B/3B active). Latest coding-specific Qwen (Feb 2026). HEADLESS-SAFE — works with `agents run qwen "<prompt>"`.',
     ...OPENROUTER_AUTH,
     env: {
       ANTHROPIC_BASE_URL: OPENROUTER_BASE,
@@ -115,7 +115,7 @@ export const PRESETS: Preset[] = [
   },
   {
     name: 'deepseek',
-    description: 'DeepSeek Chat V3 (0324) via OpenRouter. Latest DeepSeek Chat variant that ignores thinking:enabled. PRINT-SAFE. The newer V3.2 / V3.1-Terminus / V3.2-Speciale are reasoning variants — use `--model deepseek/deepseek-v3.2` to override if you want those for interactive use.',
+    description: 'DeepSeek Chat V3 (0324) via OpenRouter. Latest DeepSeek Chat variant that ignores thinking:enabled. HEADLESS-SAFE. The newer V3.2 / V3.1-Terminus / V3.2-Speciale are reasoning variants — use `--model deepseek/deepseek-v3.2` to override if you want those for interactive use.',
     ...OPENROUTER_AUTH,
     env: {
       ANTHROPIC_BASE_URL: OPENROUTER_BASE,
