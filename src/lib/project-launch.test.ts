@@ -54,6 +54,8 @@ function readJson(p: string): unknown {
   return JSON.parse(fs.readFileSync(p, 'utf-8'));
 }
 
+let ORIGINAL_HOME: string | undefined;
+
 beforeEach(() => {
   TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'launch-sync-test-'));
   USER_DIR = path.join(TMP_HOME, '.agents');
@@ -62,9 +64,18 @@ beforeEach(() => {
   VERSION_HOME = path.join(USER_DIR, '.history', 'versions', 'claude', '1.0.0', 'home');
   fs.mkdirSync(path.join(VERSION_HOME, '.claude'), { recursive: true });
   fs.mkdirSync(PROJECT_DIR, { recursive: true });
+  // Override $HOME so launchSentinelPath (which reads process.env.HOME directly)
+  // lands the sentinel under TMP_HOME rather than the real user home.
+  ORIGINAL_HOME = process.env.HOME;
+  process.env.HOME = TMP_HOME;
 });
 
 afterEach(() => {
+  if (ORIGINAL_HOME !== undefined) {
+    process.env.HOME = ORIGINAL_HOME;
+  } else {
+    delete process.env.HOME;
+  }
   try { fs.rmSync(TMP_HOME, { recursive: true, force: true }); } catch { /* ignore */ }
 });
 
@@ -264,5 +275,29 @@ describe('runLaunchSync — project rules compile', () => {
     expect(result.rulesCompiled).toBe(true);
     const agentsMd = fs.readFileSync(path.join(PROJECT_DIR, 'AGENTS.md'), 'utf-8');
     expect(agentsMd).toContain('Hello from project rules.');
+  });
+});
+
+describe('runLaunchSync — shim skip-fast sentinel', () => {
+  it('writes the bash skip-fast sentinel at the shim-expected path', () => {
+    runLaunchSync({ agent: 'claude', version: '1.0.0', cwd: PROJECT_DIR });
+
+    // Slug derivation must match shims.ts: `/` and ` ` → `_`.
+    const slug = PROJECT_DIR.replace(/\//g, '_').replace(/ /g, '_');
+    const sentinel = path.join(USER_DIR, '.cache', 'launch-sync', `claude@1.0.0@${slug}`);
+    expect(fs.existsSync(sentinel)).toBe(true);
+  });
+
+  it('sentinel mtime advances on a second run after the first', () => {
+    runLaunchSync({ agent: 'claude', version: '1.0.0', cwd: PROJECT_DIR });
+    const slug = PROJECT_DIR.replace(/\//g, '_').replace(/ /g, '_');
+    const sentinel = path.join(USER_DIR, '.cache', 'launch-sync', `claude@1.0.0@${slug}`);
+    const t1 = fs.statSync(sentinel).mtimeMs;
+    // Spin briefly to make a second write observably later.
+    const target = Date.now() + 25;
+    while (Date.now() < target) { /* spin */ }
+    runLaunchSync({ agent: 'claude', version: '1.0.0', cwd: PROJECT_DIR });
+    const t2 = fs.statSync(sentinel).mtimeMs;
+    expect(t2).toBeGreaterThan(t1);
   });
 });
