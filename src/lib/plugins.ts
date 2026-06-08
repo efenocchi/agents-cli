@@ -455,7 +455,7 @@ export function syncPluginToVersion(
   //     (Codex >= 0.117.0). Skill name is prefixed with plugin name to avoid
   //     collision with standalone command skills.
   if (options.version && shouldInstallCommandAsSkill(agent, options.version) && plugin.commands.length > 0) {
-    const agentDir = path.join(versionHome, `.${AGENTS[agent].id}`);
+    const agentDir = path.join(versionHome, agentConfigDirName(agent));
     const skillSourceDirs = [path.join(agentDir, 'skills')];
     for (const cmd of plugin.commands) {
       const srcPath = path.join(plugin.root, 'commands', `${cmd}.md`);
