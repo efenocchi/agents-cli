@@ -36,6 +36,7 @@ const AGENT_COMMANDS: Record<string, string[]> = {
   claude: ['claude', '-p', '--verbose', '{prompt}', '--output-format', 'stream-json', '--permission-mode', 'plan'],
   codex: ['codex', 'exec', '--sandbox', 'workspace-write', '{prompt}', '--json'],
   gemini: ['gemini', '{prompt}', '--output-format', 'stream-json'],
+  kimi: ['kimi', '--prompt', '{prompt}', '--output-format', 'stream-json'],
 };
 
 /** Build the full CLI argv for executing a job, applying mode, model, and permission flags. */
@@ -104,6 +105,18 @@ export function buildJobCommand(config: JobConfig, resolvedPrompt: string): stri
   if (config.agent === 'gemini') {
     if (mode === 'edit') {
       cmd.push('--approval-mode', 'auto_edit');
+    } else if (mode === 'skip') {
+      cmd.push('--yolo');
+    }
+
+    appendModelAndReasoning(cmd, config);
+  }
+
+  if (config.agent === 'kimi') {
+    if (mode === 'plan') {
+      cmd.push('--plan');
+    } else if (mode === 'auto') {
+      cmd.push('--auto');
     } else if (mode === 'skip') {
       cmd.push('--yolo');
     }
