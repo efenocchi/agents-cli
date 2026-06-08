@@ -388,6 +388,36 @@ function installMcpToCursorConfig(server: InstalledMcpServer, versionHome: strin
 /**
  * Install MCP server to OpenCode config file.
  */
+function installMcpToKimiConfig(server: InstalledMcpServer, versionHome: string): void {
+  const configPath = path.join(versionHome, '.kimi-code', 'mcp.json');
+
+  let config: Record<string, unknown> = {};
+  if (fs.existsSync(configPath)) {
+    config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+  }
+
+  if (!config.mcpServers || typeof config.mcpServers !== 'object') {
+    config.mcpServers = {};
+  }
+
+  const mcpServers = config.mcpServers as Record<string, unknown>;
+
+  if (server.config.transport === 'stdio') {
+    mcpServers[server.name] = {
+      command: server.config.command,
+      args: server.config.args || [],
+      env: server.config.env || {},
+    };
+  } else {
+    mcpServers[server.name] = {
+      url: server.config.url,
+    };
+  }
+
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+}
+
 function installMcpToOpenCodeConfig(server: InstalledMcpServer, versionHome: string): void {
   const configPath = path.join(versionHome, '.opencode', 'opencode.jsonc');
 
@@ -477,6 +507,9 @@ export function installMcpServers(
         // Grok primarily uses [mcp_servers] in ~/.grok/config.toml (or project .grok/config.toml).
         // We have the path helper; full writer can be added (reuse codex toml pattern).
         // For now the general sync + toml editing via agents mcp works via the path helpers.
+        applied.push(server.name);
+      } else if (agentId === 'kimi') {
+        installMcpToKimiConfig(server, versionHome);
         applied.push(server.name);
       }
     } catch (err) {

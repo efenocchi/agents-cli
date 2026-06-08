@@ -161,6 +161,25 @@ function buildGrokDetector(): ResourceDetector {
   };
 }
 
+function buildKimiDetector(): ResourceDetector {
+  return {
+    kind: 'permissions',
+    agent: 'kimi',
+    list({ versionHome }: DetectArgs): string[] {
+      const configPath = path.join(versionHome, '.kimi-code', 'config.toml');
+      if (!fs.existsSync(configPath)) return [];
+      try {
+        const config = TOML.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+        const perm = config.permission as { rules?: unknown[] } | undefined;
+        if (perm && Array.isArray(perm.rules) && perm.rules.length > 0) {
+          return discoverPermissionGroups().map(g => g.name);
+        }
+      } catch { /* parse fail */ }
+      return [];
+    },
+  };
+}
+
 const handlers: Partial<Record<AgentId, () => ResourceDetector>> = {
   claude: buildClaudeDetector,
   codex: buildCodexDetector,
@@ -168,6 +187,7 @@ const handlers: Partial<Record<AgentId, () => ResourceDetector>> = {
   gemini: buildGeminiDetector,
   antigravity: buildAntigravityDetector,
   grok: buildGrokDetector,
+  kimi: buildKimiDetector,
 };
 
 export const permissionsDetectors = lazyAgentMap<ResourceDetector>(() => {

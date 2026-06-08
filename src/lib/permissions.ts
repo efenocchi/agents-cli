@@ -1248,6 +1248,47 @@ export function applyPermissionsToVersion(
       return { success: true };
     }
 
+    if (agentId === 'kimi') {
+      const configPath = path.join(versionHome, '.kimi-code', 'config.toml');
+      let config: Record<string, unknown> = {};
+      if (fs.existsSync(configPath)) {
+        config = TOML.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+      }
+
+      const newRules: Array<{ decision: string; pattern: string }> = [];
+      for (const allow of set.allow) {
+        newRules.push({ decision: 'allow', pattern: allow });
+      }
+      for (const deny of set.deny || []) {
+        newRules.push({ decision: 'deny', pattern: deny });
+      }
+
+      if (merge) {
+        const existingPermission = (typeof config.permission === 'object' && config.permission !== null && !Array.isArray(config.permission))
+          ? config.permission as Record<string, unknown>
+          : {};
+        const existingRules = Array.isArray(existingPermission.rules)
+          ? (existingPermission.rules as Array<{ decision?: string; pattern?: string }>)
+          : [];
+        const seen = new Set<string>();
+        const dedup: Array<{ decision: string; pattern: string }> = [];
+        for (const r of [...existingRules, ...newRules]) {
+          if (!r.decision || !r.pattern) continue;
+          const key = `${r.decision}|${r.pattern}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          dedup.push({ decision: r.decision, pattern: r.pattern });
+        }
+        config.permission = { rules: dedup };
+      } else {
+        config.permission = { rules: newRules };
+      }
+
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
+      fs.writeFileSync(configPath, TOML.stringify(config as any), 'utf-8');
+      return { success: true };
+    }
+
     return { success: false, error: `Agent '${agentId}' does not support permissions` };
   } catch (err) {
     return { success: false, error: (err as Error).message };
