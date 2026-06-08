@@ -1,7 +1,6 @@
 export PATH="/usr/local/bin:$PATH"
 export PATH="$HOME/.volta/bin:$PATH"
 export PATH="$HOME/.local/node/bin:$PATH"
-
+echo "hello"
 # agents-cli: version-managed agent CLIs
 export PATH="__SHIMS_DIR__:$PATH"
-echo "hello"

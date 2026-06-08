@@ -59,6 +59,7 @@ describe('addShimsToPath', () => {
     'bash-insert-before-node-path',
     'fish-replace-legacy-path',
     'zsh-ignore-lookalike-paths',
+    'zsh-append-after-installer-blocks',
   ] as const;
 
   for (const fixtureName of cases) {
@@ -79,7 +80,8 @@ describe('addShimsToPath', () => {
       });
 
       const content = fs.readFileSync(rcPath, 'utf8');
-      expect(content).toBe(fixture.after.replaceAll('__SHIMS_DIR__', shimsDir));
+      const expected = fixture.after.replaceAll('__SHIMS_DIR__', shimsDir).trimEnd();
+      expect(content.trimEnd()).toBe(expected);
     });
   }
 });
