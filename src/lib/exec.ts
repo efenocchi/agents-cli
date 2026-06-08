@@ -244,9 +244,9 @@ export const AGENT_COMMANDS: Record<AgentId, AgentCommandTemplate> = {
       // "workspace-write but no auto-approval" — closer to plan-as-restraint.
       // True read-only requires --sandbox read-only which we haven't wired.
       plan: ['--sandbox', 'workspace-write'],
-      edit: ['--sandbox', 'workspace-write', '--full-auto'],
-      // skip drops the sandbox entirely; --full-auto then approves anything.
-      skip: ['--full-auto'],
+      edit: ['--sandbox', 'workspace-write', '--dangerously-bypass-approvals-and-sandbox'],
+      // skip drops the sandbox entirely; --dangerously-bypass-approvals-and-sandbox then approves anything.
+      skip: ['--dangerously-bypass-approvals-and-sandbox'],
     },
     jsonFlags: ['--json'],
     modelFlag: '--model',
