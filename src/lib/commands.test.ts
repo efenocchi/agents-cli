@@ -135,6 +135,28 @@ Report versions.`);
     };
     expect(diff.toAdd).not.toContain('version');
   });
+
+  it('flags excluded but installed commands as toRemove', () => {
+    const home = makeTempHome();
+    writeSystemCommand(home, 'version', `---
+description: Show versions
+agents: [claude]
+---
+Report versions.`);
+    scaffoldInstalledVersion(home, 'codex', '0.116.0');
+
+    // Simulate a stale install from before frontmatter excluded this agent.
+    const commandsDir = path.join(versionHomePath(home, 'codex', '0.116.0'), '.codex', 'prompts');
+    fs.mkdirSync(commandsDir, { recursive: true });
+    fs.writeFileSync(path.join(commandsDir, 'version.md'), 'Report versions.', 'utf-8');
+
+    const diff = runCommandsExpression(home, "diffVersionCommands('codex', '0.116.0')") as {
+      toRemove: string[];
+      toAdd: string[];
+    };
+    expect(diff.toRemove).toEqual(['version']);
+    expect(diff.toAdd).not.toContain('version');
+  });
 });
 
 describe('version command management', () => {
@@ -161,7 +183,7 @@ describe('version command management', () => {
     const versionHome = path.join(versionHomePath(home, 'codex', '0.117.0'), '.codex');
     expect(installed.success).toBe(true);
     expect(listed).toEqual(['recap']);
-    expect(diff).toMatchObject({ matched: ['recap'], toAdd: [], toUpdate: [], orphans: [] });
+    expect(diff).toMatchObject({ matched: ['recap'], toAdd: [], toUpdate: [], toRemove: [], orphans: [] });
     expect(removed.success).toBe(true);
     // For the skills path, removeCommandSkillFromVersion does a hard rmSync (command-skills.ts:148).
     // There is NO soft-delete for this path; verify the skill dir is gone.

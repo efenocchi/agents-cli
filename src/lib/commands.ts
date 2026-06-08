@@ -401,6 +401,8 @@ export interface VersionCommandDiff {
   toAdd: string[];
   toUpdate: string[];
   matched: string[];
+  /** Installed but excluded by frontmatter agents/since/until — safe to remove. */
+  toRemove: string[];
   orphans: string[];
 }
 
@@ -414,6 +416,7 @@ export function diffVersionCommands(agent: AgentId, version: string): VersionCom
   const toAdd: string[] = [];
   const toUpdate: string[] = [];
   const matched: string[] = [];
+  const toRemove: string[] = [];
   const orphans: string[] = [];
 
   for (const name of central) {
@@ -431,10 +434,26 @@ export function diffVersionCommands(agent: AgentId, version: string): VersionCom
   }
 
   for (const name of installed) {
-    if (!central.has(name)) orphans.push(name);
+    if (!central.has(name)) {
+      orphans.push(name);
+      continue;
+    }
+    const sourcePath = path.join(getCommandsDir(), `${name}.md`);
+    const metadata = parseCommandMetadata(sourcePath);
+    if (!commandAppliesTo(agent, version, metadata).ok) {
+      toRemove.push(name);
+    }
   }
 
-  return { agent, version, toAdd: toAdd.sort(), toUpdate: toUpdate.sort(), matched, orphans: orphans.sort() };
+  return {
+    agent,
+    version,
+    toAdd: toAdd.sort(),
+    toUpdate: toUpdate.sort(),
+    matched,
+    toRemove: toRemove.sort(),
+    orphans: orphans.sort(),
+  };
 }
 
 /**
