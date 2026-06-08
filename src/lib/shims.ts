@@ -832,6 +832,25 @@ export async function switchConfigSymlink(
       fs.mkdirSync(agentBackupDir, { recursive: true });
       fs.renameSync(configPath, finalBackupPath);
 
+      // Session JSONLs that lived under the old configPath have just moved to
+      // finalBackupPath on disk. Rewrite any DB rows pointing at the old prefix
+      // so querySessions stops returning phantom rows (issue #136). The
+      // discoverer at src/lib/session/discover.ts already scans backup dirs, so
+      // future indexer runs will find the new files — this just keeps the
+      // existing rows valid in the meantime.
+      //
+      // Dynamic import so loading shims.ts doesn't transitively open the
+      // sessions DB — many tests partially mock state.js and would break.
+      try {
+        const { updateSessionFilePaths } = await import('./session/db.js');
+        updateSessionFilePaths(configPath, finalBackupPath);
+      } catch (err) {
+        console.error(
+          `Warning: failed to update session file_paths after backing up ${configPath}: ` +
+            `${(err as Error).message}. Stale rows may appear in session listings until the next scan.`
+        );
+      }
+
       // Create symlink (parent already exists since the dir we just moved was here)
       fs.symlinkSync(versionConfigPath, configPath);
 

@@ -711,10 +711,23 @@ function buildSessionWhere(options: QueryOptions): { clause: string; params: any
 export function querySessions(options: QueryOptions = {}): SessionMeta[] {
   const db = getDB();
   const { clause, params } = buildSessionWhere(options);
-  const limitClause = options.limit ? `LIMIT ${Math.max(1, Math.floor(options.limit))}` : '';
+  // When a LIMIT is in play, we still need to filter stale rows AFTER the query,
+  // so over-fetch a small buffer. Without this, a page of 50 rows where the first
+  // 5 are stale would return only 45 to the caller even when there are more.
+  const limitClause = options.limit
+    ? `LIMIT ${Math.max(1, Math.floor(options.limit)) + 16}`
+    : '';
   const sql = `SELECT * FROM sessions ${clause} ORDER BY timestamp DESC ${limitClause}`;
   const rows = db.prepare(sql).all(...params) as SessionRow[];
-  return rows.map(rowToMeta);
+  // Belt-and-suspenders: drop rows whose JSONL no longer exists on disk. The
+  // authoritative fix is to keep file_path in sync (see updateSessionFilePaths
+  // callers), but skipping vanished rows here prevents phantom sessions from
+  // surfacing in the Factory UI if any code path forgets to rewrite (#136).
+  // Synthetic rows (OpenClaw channels/cron — see scanOpenClawIncremental) carry
+  // an empty file_path and are exempt; they're keyed by CLI output, not files.
+  const live = rows.filter(r => !r.file_path || fs.existsSync(r.file_path));
+  const trimmed = options.limit ? live.slice(0, options.limit) : live;
+  return trimmed.map(rowToMeta);
 }
 
 /** Count sessions matching the given filter options. */
