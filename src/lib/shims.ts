@@ -221,8 +221,13 @@ async function promptConflictStrategy(
  *         scoped plugin marketplaces (agents-cli/agents-system/extras-<alias>/
  *         agents-project). Version-home reconciliation stays out of the hot
  *         path — management commands still own that.
+ *   v17 — bash-side skip-fast sentinel under ~/.agents/.cache/launch-sync/.
+ *         When the sentinel mtime is newer than every source dir, exec the
+ *         agent binary directly without spawning node. Cuts steady-state
+ *         hot-path latency from ~400ms (node startup) to <1ms (a few stat
+ *         calls). Node writes the sentinel after each successful sync.
  */
-export const SHIM_SCHEMA_VERSION = 16;
+export const SHIM_SCHEMA_VERSION = 17;
 
 /** Internal marker string used to embed the schema version in shim scripts. */
 const SHIM_VERSION_MARKER = 'agents-shim-version:';
@@ -492,8 +497,30 @@ fi
 ${managedEnv}
 
 # Project-scoped compile (rules, workspace resources, scoped plugin marketplaces).
-# Filesystem-only — sub-50ms steady state. Never blocks launch on failure.
-"$AGENTS_BIN" sync --agent "$AGENT" --agent-version "$VERSION" --launch --cwd "$PWD" --quiet 2>/dev/null || true
+# Skip-fast: if a sentinel from the last sync exists and is newer than all
+# source dirs (project .agents/, user plugins, system plugins), exec directly
+# without spawning node. Cuts steady-state hot-path latency from ~400ms
+# (node startup) to <1ms (a handful of stat calls).
+#
+# Known limitation: POSIX dir mtime updates only on entry add/remove. Deep
+# edits to existing plugin contents (e.g. editing a SKILL.md inside a
+# plugin) won't bump the dir mtime, so the marketplace copy stays stale
+# until \`agents sync\` runs explicitly or a top-level entry changes.
+PROJECT_SLUG=\$(printf '%s' "\$PWD" | tr / _ | tr ' ' _)
+LAUNCH_SENTINEL="\$AGENTS_USER_DIR/.cache/launch-sync/\${AGENT}@\${VERSION}@\${PROJECT_SLUG}"
+LAUNCH_SKIP=0
+if [ -f "\$LAUNCH_SENTINEL" ]; then
+  LAUNCH_SKIP=1
+  for LAUNCH_SRC in "\$PWD/.agents" "\$AGENTS_USER_DIR/plugins" "\$AGENTS_USER_DIR/.system/plugins"; do
+    if [ -e "\$LAUNCH_SRC" ] && [ "\$LAUNCH_SRC" -nt "\$LAUNCH_SENTINEL" ]; then
+      LAUNCH_SKIP=0
+      break
+    fi
+  done
+fi
+if [ "\$LAUNCH_SKIP" = "0" ]; then
+  "\$AGENTS_BIN" sync --agent "\$AGENT" --agent-version "\$VERSION" --launch --cwd "\$PWD" --quiet 2>/dev/null || true
+fi
 
 exec "$BINARY"${launchArgs} "$@"
 `;
