@@ -10,6 +10,11 @@
  * production CLI launch.
  */
 import { describe, expect, it } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { execFileSync } from 'child_process';
+import { fileURLToPath } from 'url';
 import { AGENTS } from '../agents.js';
 import { supports } from '../capabilities.js';
 import type { AgentId } from '../types.js';
@@ -26,6 +31,9 @@ function isExempt(agent: AgentId, kind: ResourceKind): boolean {
   if (kind === 'skills' && AGENTS[agent].nativeAgentsSkillsDir) return true;
   return false;
 }
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(__dirname, '../../..');
 
 describe('staleness/registry', () => {
   it('boots without throwing', () => {
@@ -67,6 +75,104 @@ describe('staleness/registry', () => {
   it('antigravity has a permissions writer + detector', () => {
     expect(WRITERS.permissions.antigravity).toBeDefined();
     expect(DETECTORS.permissions.antigravity).toBeDefined();
+  });
+
+  it('writer registry full-sync roundtrip leaves manifests non-stale', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'staleness-registry-roundtrip-'));
+    try {
+      const script = String.raw`
+        import * as fs from 'fs';
+        import * as path from 'path';
+        import { AGENTS } from './src/lib/agents.ts';
+        import { supports } from './src/lib/capabilities.ts';
+        import { getVersionHomePath, syncResourcesToVersion } from './src/lib/versions.ts';
+        import { buildManifest, isStale } from './src/lib/staleness/index.ts';
+        import {
+          ALL_RESOURCE_KINDS,
+          WRITERS,
+          DETECTORS,
+          kindToCapability,
+        } from './src/lib/staleness/registry.ts';
+
+        const home = process.env.HOME;
+        if (!home) throw new Error('HOME missing');
+
+        const userDir = path.join(home, '.agents');
+        const systemDir = path.join(userDir, '.system');
+        const projectRoot = path.join(home, 'project');
+        const write = (rel, content, mode) => {
+          const p = path.join(userDir, rel);
+          fs.mkdirSync(path.dirname(p), { recursive: true });
+          fs.writeFileSync(p, content);
+          if (mode) fs.chmodSync(p, mode);
+        };
+        const writeSystem = (rel, content) => {
+          const p = path.join(systemDir, rel);
+          fs.mkdirSync(path.dirname(p), { recursive: true });
+          fs.writeFileSync(p, content);
+        };
+
+        fs.mkdirSync(projectRoot, { recursive: true });
+        write('commands/roundtrip-command.md', '# Roundtrip\n');
+        write('skills/roundtrip-skill/SKILL.md', '---\nname: roundtrip-skill\ndescription: fixture\n---\n');
+        write('hooks/roundtrip-hook', '#!/usr/bin/env sh\nexit 0\n', 0o755);
+        write('mcp/roundtrip-mcp.yaml', 'name: roundtrip-mcp\ntransport: stdio\ncommand: echo\nargs: ["ok"]\n');
+        write('permissions/groups/roundtrip-permission.yaml', 'name: roundtrip-permission\nallow:\n  - Bash(echo:*)\n');
+        write('subagents/roundtrip-subagent/AGENT.md', '---\nname: roundtrip-subagent\ndescription: fixture\n---\nBody\n');
+        write('plugins/roundtrip-plugin/.claude-plugin/plugin.json', JSON.stringify({
+          name: 'roundtrip-plugin',
+          version: '0.0.0',
+          description: 'fixture',
+        }, null, 2));
+        write('workflows/roundtrip-workflow/WORKFLOW.md', '---\nname: roundtrip-workflow\ndescription: fixture\n---\n');
+        writeSystem('rules/rules.yaml', 'presets:\n  default:\n    subrules:\n      - roundtrip-rule\n');
+        writeSystem('rules/subrules/roundtrip-rule.md', 'Roundtrip rule\n');
+
+        const version = '0.0.0-test';
+        const failures = [];
+        for (const agent of Object.keys(AGENTS)) {
+          const coveredKinds = ALL_RESOURCE_KINDS.filter((kind) => {
+            const cap = kindToCapability(kind);
+            if (!supports(agent, cap).ok) return false;
+            if (kind === 'skills' && AGENTS[agent].nativeAgentsSkillsDir) return false;
+            return Boolean(WRITERS[kind][agent] && DETECTORS[kind][agent]);
+          });
+          if (coveredKinds.length === 0) continue;
+
+          const versionHome = getVersionHomePath(agent, version);
+          const fakeBin = path.join(home, '.agents', '.history', 'versions', agent, version, 'node_modules', '.bin', AGENTS[agent].cliCommand);
+          fs.mkdirSync(path.dirname(fakeBin), { recursive: true });
+          fs.writeFileSync(fakeBin, '#!/usr/bin/env sh\nexit 0\n');
+          fs.chmodSync(fakeBin, 0o755);
+
+          syncResourcesToVersion(agent, version, undefined, { cwd: projectRoot, force: true });
+          const manifest = buildManifest(agent, version, projectRoot);
+          if (isStale(manifest, agent, version, projectRoot)) {
+            failures.push(agent + ': stale after full sync');
+          }
+          for (const kind of coveredKinds) {
+            try {
+              DETECTORS[kind][agent].list({ version, versionHome, cwd: projectRoot });
+            } catch (err) {
+              failures.push(agent + '/' + kind + ': detector threw ' + ((err && err.message) || err));
+            }
+          }
+        }
+
+        if (failures.length > 0) {
+          throw new Error(failures.join('\n'));
+        }
+      `;
+
+      execFileSync('bun', ['--eval', script], {
+        cwd: repoRoot,
+        env: { ...process.env, HOME: home },
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   // Gemini's allowlist capability is `false` in the matrix today even though
