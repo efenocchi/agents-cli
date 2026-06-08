@@ -15,15 +15,13 @@ import * as path from 'path';
 import * as yaml from 'yaml';
 import * as TOML from 'smol-toml';
 import type { AgentId, Layer, ResolvedItem, ResourceHandler, ResourceKind } from './types.js';
+import { capableAgents } from '../capabilities.js';
 import {
   getSystemMcpDir,
   getUserMcpDir,
   getProjectAgentsDir,
   getEnabledExtraRepos,
 } from '../state.js';
-
-/** Agents from resources/types.ts that support MCP. */
-const MCP_CAPABLE_AGENTS: AgentId[] = ['claude', 'codex', 'gemini', 'cursor', 'opencode', 'openclaw', 'antigravity', 'grok'];
 
 /**
  * MCP server item as stored in mcp/*.yaml files.
@@ -476,7 +474,7 @@ export const McpHandler: ResourceHandler<McpItem> = {
   kind: 'mcp' as ResourceKind,
 
   listAll(agent: AgentId, cwd?: string): ResolvedItem<McpItem>[] {
-    if (!MCP_CAPABLE_AGENTS.includes(agent)) {
+    if (!capableAgents('mcp').includes(agent)) {
       return [];
     }
 
@@ -502,7 +500,7 @@ export const McpHandler: ResourceHandler<McpItem> = {
   },
 
   resolve(agent: AgentId, name: string, cwd?: string): ResolvedItem<McpItem> | null {
-    if (!MCP_CAPABLE_AGENTS.includes(agent)) {
+    if (!capableAgents('mcp').includes(agent)) {
       return null;
     }
 
@@ -539,7 +537,7 @@ export const McpHandler: ResourceHandler<McpItem> = {
   },
 
   sync(agent: AgentId, versionHome: string, cwd?: string): void {
-    if (!MCP_CAPABLE_AGENTS.includes(agent)) {
+    if (!capableAgents('mcp').includes(agent)) {
       return;
     }
 
