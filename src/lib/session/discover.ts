@@ -15,12 +15,11 @@ import * as readline from 'readline';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { getAgentsDir, getUserAgentsDir, getHistoryDir } from '../state.js';
-import { AGENTS, agentConfigDirName } from '../agents.js';
 
 const execFileAsync = promisify(execFile);
 import type { SessionAgentId, SessionMeta } from './types.js';
 import type { AgentId } from '../types.js';
-import { AGENTS, getCliVersion } from '../agents.js';
+import { AGENTS, agentConfigDirName, getCliVersion } from '../agents.js';
 import { walkForFiles } from '../fs-walk.js';
 import { getConfigSymlinkVersion } from '../shims.js';
 import { SESSION_AGENTS } from './types.js';
