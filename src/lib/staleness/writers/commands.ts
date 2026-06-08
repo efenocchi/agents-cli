@@ -24,6 +24,7 @@ import { AGENTS } from '../../agents.js';
 import { supports } from '../../capabilities.js';
 import { safeJoin } from '../../paths.js';
 import { markdownToToml } from '../../convert.js';
+import { commandAppliesTo, parseCommandMetadata } from '../../commands.js';
 import { installCommandSkillToVersion, shouldInstallCommandAsSkill } from '../../command-skills.js';
 import type { ResourceWriter, WriteArgs, WriteResult } from './types.js';
 import { resolveCommandSource, trustedSkillRoots } from './sources.js';
@@ -55,6 +56,9 @@ function buildCommandsWriter(agent: AgentId): ResourceWriter<string[]> {
       for (const cmd of selection) {
         const srcFile = resolveCommandSource(cmd);
         if (!srcFile) continue;
+
+        const metadata = parseCommandMetadata(srcFile);
+        if (!commandAppliesTo(agent, version, metadata).ok) continue;
 
         if (commandsAsSkills) {
           const installed = installCommandSkillToVersion(agentDir, cmd, srcFile, skillRoots);

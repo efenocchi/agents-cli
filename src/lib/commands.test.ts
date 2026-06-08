@@ -4,6 +4,7 @@ import * as path from 'path';
 import { pathToFileURL } from 'url';
 import { spawnSync } from 'child_process';
 import { afterEach, describe, expect, it } from 'vitest';
+import { commandAppliesTo, parseCommandMetadata } from './commands.js';
 
 const tempDirs: string[] = [];
 
@@ -78,6 +79,63 @@ function trashCommandsDir(home: string): string {
 function versionHomePath(home: string, agent: string, version: string): string {
   return path.join(home, '.agents', '.history', 'versions', agent, version, 'home');
 }
+
+describe('commandAppliesTo()', () => {
+  it('excludes agents not listed in frontmatter', () => {
+    expect(commandAppliesTo('cursor', '1.0.0', { agents: ['claude'] })).toEqual({
+      ok: false,
+      reason: 'agent_excluded',
+    });
+  });
+
+  it('passes when agent is listed', () => {
+    expect(commandAppliesTo('claude', '2.0.0', { agents: ['claude', 'codex'] })).toEqual({ ok: true });
+  });
+
+  it('gates codex versions with since/until on the command', () => {
+    const meta = { agents: ['codex' as const], since: '0.117.0', until: '0.118.0' };
+    expect(commandAppliesTo('codex', '0.116.0', meta).ok).toBe(false);
+    expect(commandAppliesTo('codex', '0.117.0', meta)).toEqual({ ok: true });
+    expect(commandAppliesTo('codex', '0.118.0', meta).ok).toBe(false);
+  });
+});
+
+describe('command frontmatter install gating', () => {
+  it('skips install when agents list excludes the target', () => {
+    const home = makeTempHome();
+    writeSystemCommand(home, 'version', `---
+description: Show versions
+agents: [claude]
+---
+Report versions.`);
+    scaffoldInstalledVersion(home, 'codex', '0.116.0');
+
+    const result = runCommandsExpression(
+      home,
+      "installCommandToVersion('codex', '0.116.0', 'version')"
+    ) as { success: boolean; skipped?: boolean };
+
+    expect(result.success).toBe(true);
+    expect(result.skipped).toBe(true);
+    const commandsDir = path.join(versionHomePath(home, 'codex', '0.116.0'), '.codex', 'prompts');
+    expect(fs.existsSync(path.join(commandsDir, 'version.md'))).toBe(false);
+  });
+
+  it('omits excluded commands from diffVersionCommands toAdd', () => {
+    const home = makeTempHome();
+    writeSystemCommand(home, 'version', `---
+description: Show versions
+agents: [claude]
+---
+Report versions.`);
+    scaffoldInstalledVersion(home, 'codex', '0.116.0');
+
+    const diff = runCommandsExpression(home, "diffVersionCommands('codex', '0.116.0')") as {
+      toAdd: string[];
+    };
+    expect(diff.toAdd).not.toContain('version');
+  });
+});
 
 describe('version command management', () => {
   it('installs, lists, diffs, and removes generated command skills for Codex 0.117.0+', () => {
