@@ -63,18 +63,18 @@ describe('buildExecCommand', () => {
       const cmd = buildExecCommand(opts({ agent: 'codex', mode: 'plan' }));
       expect(cmd).toContain('--sandbox');
       expect(cmd[cmd.indexOf('--sandbox') + 1]).toBe('workspace-write');
-      expect(cmd).not.toContain('--full-auto');
+      expect(cmd).not.toContain('--dangerously-bypass-approvals-and-sandbox');
     });
 
-    it('codex edit produces --sandbox workspace-write --full-auto', () => {
+    it('codex edit produces --sandbox workspace-write --dangerously-bypass-approvals-and-sandbox', () => {
       const cmd = buildExecCommand(opts({ agent: 'codex', mode: 'edit' }));
       expect(cmd).toContain('--sandbox');
-      expect(cmd).toContain('--full-auto');
+      expect(cmd).toContain('--dangerously-bypass-approvals-and-sandbox');
     });
 
-    it('codex skip produces --full-auto without --sandbox', () => {
+    it('codex skip produces --dangerously-bypass-approvals-and-sandbox without --sandbox', () => {
       const cmd = buildExecCommand(opts({ agent: 'codex', mode: 'skip' }));
-      expect(cmd).toContain('--full-auto');
+      expect(cmd).toContain('--dangerously-bypass-approvals-and-sandbox');
       expect(cmd).not.toContain('--sandbox');
     });
 
@@ -560,7 +560,7 @@ describe('buildExecCommand', () => {
       }));
       expect(cmd).toEqual([
         'codex', 'exec',
-        '--full-auto',
+        '--dangerously-bypass-approvals-and-sandbox',
         'fix the bug',
       ]);
     });
@@ -591,7 +591,7 @@ describe('buildExecCommand', () => {
         'codex',
         '-c', 'model_reasoning_effort=medium',
         'exec',
-        '--full-auto',
+        '--dangerously-bypass-approvals-and-sandbox',
         'fix the bug',
       ]);
     });

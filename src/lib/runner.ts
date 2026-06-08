@@ -90,12 +90,12 @@ export function buildJobCommand(config: JobConfig, resolvedPrompt: string): stri
 
   if (config.agent === 'codex') {
     if (mode === 'edit') {
-      cmd.push('--full-auto');
+      cmd.push('--dangerously-bypass-approvals-and-sandbox');
     } else if (mode === 'skip') {
-      // Remove sandbox restriction, just --full-auto
+      // Remove sandbox restriction, just --dangerously-bypass-approvals-and-sandbox
       const sbIndex = cmd.indexOf('--sandbox');
       if (sbIndex !== -1) cmd.splice(sbIndex, 2);
-      cmd.push('--full-auto');
+      cmd.push('--dangerously-bypass-approvals-and-sandbox');
     }
 
     appendModelAndReasoning(cmd, config);
