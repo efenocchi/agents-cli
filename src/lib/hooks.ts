@@ -863,6 +863,9 @@ export function registerHooksToSettings(
   if (agentId === 'grok') {
     return registerHooksForGrok(versionHome, manifest, resolveScript, managedPrefixes);
   }
+  if (agentId === 'kimi') {
+    return registerHooksForKimi(versionHome, manifest, resolveScript, managedPrefixes);
+  }
   return { registered: [], errors: [] };
 }
 
@@ -1431,6 +1434,104 @@ function registerHooksForGrok(
     } catch (e) {
       errors.push(`Failed to write ${fileName}: ${(e as Error).message}`);
     }
+  }
+
+  return { registered, errors };
+}
+
+function registerHooksForKimi(
+  versionHome: string,
+  manifest: Record<string, ManifestHook>,
+  resolveScript: (script: string) => string | null,
+  managedPrefixes: string[]
+): { registered: string[]; errors: string[] } {
+  const registered: string[] = [];
+  const errors: string[] = [];
+
+  const configPath = path.join(versionHome, '.kimi-code', 'config.toml');
+
+  // Read existing config.toml
+  let config: Record<string, unknown> = {};
+  if (fs.existsSync(configPath)) {
+    try {
+      config = TOML.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+    } catch {
+      errors.push('Failed to parse config.toml');
+      return { registered, errors };
+    }
+  }
+
+  // Build set of current manifest command paths for GC
+  const currentManifestPaths = new Set<string>();
+  for (const [hookName, hookDef] of Object.entries(manifest)) {
+    if (!hookDef.events || hookDef.events.length === 0) continue;
+    const resolved = resolveHookCommand(hookName, hookDef, resolveScript);
+    if (resolved) currentManifestPaths.add(resolved);
+  }
+
+  // Remove stale managed hooks from existing hooks array
+  let hooksArray: Array<Record<string, unknown>> = [];
+  if (Array.isArray(config.hooks)) {
+    hooksArray = config.hooks as Array<Record<string, unknown>>;
+  }
+
+  const filteredHooks = hooksArray.filter((h) => {
+    const cmd = typeof h.command === 'string' ? h.command : '';
+    if (!cmd) return true;
+    const isManaged = managedPrefixes.some((p) => cmd.startsWith(p));
+    if (!isManaged) return true;
+    return currentManifestPaths.has(cmd);
+  });
+
+  // Add/update hooks from manifest
+  for (const [name, hookDef] of Object.entries(manifest)) {
+    if (!hookDef.events || hookDef.events.length === 0) continue;
+
+    const commandPath = resolveHookCommand(name, hookDef, resolveScript);
+    if (!commandPath) {
+      errors.push(`${name}: script not found in user or system hooks dir`);
+      continue;
+    }
+
+    const timeout = hookDef.timeout ?? 30;
+
+    for (const event of hookDef.events) {
+      const matcher = hookDef.matcher;
+
+      // Find existing hook with same event, command, and matcher
+      const existingIdx = filteredHooks.findIndex((h) => {
+        const sameEvent = h.event === event;
+        const sameCmd = h.command === commandPath;
+        const sameMatcher = (h.matcher ?? '') === (matcher ?? '');
+        return sameEvent && sameCmd && sameMatcher;
+      });
+
+      const hookEntry: Record<string, unknown> = {
+        event,
+        command: commandPath,
+        timeout,
+      };
+      if (matcher) {
+        hookEntry.matcher = matcher;
+      }
+
+      if (existingIdx >= 0) {
+        filteredHooks[existingIdx] = hookEntry;
+      } else {
+        filteredHooks.push(hookEntry);
+      }
+
+      registered.push(`${name} -> ${event}`);
+    }
+  }
+
+  config.hooks = filteredHooks;
+
+  try {
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, TOML.stringify(config as Parameters<typeof TOML.stringify>[0]), 'utf-8');
+  } catch (err) {
+    errors.push(`Failed to write config.toml: ${(err as Error).message}`);
   }
 
   return { registered, errors };
