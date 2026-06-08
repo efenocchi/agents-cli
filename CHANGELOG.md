@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 1.20.5
+
+**`agents inspect` — per-agent+version detail view with drill-down (#217)**
+
+- New top-level command `agents inspect <agent>[@version]`. Summary mode shows install path, config symlink target, shim path, versioned alias, run strategy, capability table (`hooks`/`mcp`/`skills`/`commands`/`subagents`/`plugins`/`workflows`/`rules`/`allowlist`), resource counts with project/user/system scope breakdown, and session total. Replaces the awkward `agents view <agent>@<version>` deep-detail mode as a dedicated verb; `view` itself is unchanged.
+- Drill-down flags for every resource kind — `--commands`, `--skills`, `--hooks`, `--mcp`, `--rules`, `--plugins`, `--workflows`, `--subagents`. Bare flag lists every entry; passing a positional query fuzzy-searches that kind, ranking exact > substring > Damerau-Levenshtein. Zero matches exit 1 with the three closest names as suggestions. One drill-down at a time (validation error otherwise). `--json` works with summary and every drill-down for scriptable consumption.
+- Resource names render as OSC-8 terminal hyperlinks to the marker file (`SKILL.md` / `WORKFLOW.md` / `AGENT.md`) for clickable navigation in modern terminals (Ghostty, iTerm2, WezTerm) — no inline path noise. Plain text on terminals without OSC-8 support.
+- MCP detail intentionally suppresses path and env values to avoid leaking secrets — only the server name, scope, and version reach the output.
+- Removes the deprecated `agents status` alias for `view @default`. Top-level help text updated; no consumers referenced it.
+
 **Headless Linux: encrypted-file fallback when libsecret collection is locked (#183)**
 
 - On server-class Linux (Ubuntu 24.04 over SSH on the reporter's box), `agents secrets create x` failed with `secret-tool: Cannot create an item in a locked collection`. Diagnosis in the issue: `gnome-keyring-daemon` is running and D-Bus is reachable, but the default `login` collection is locked because no graphical login has fed the daemon the passphrase, and `secret-tool` from `libsecret-tools` has no `--collection` flag so it can't target the unlocked `session` collection. This made `agents secrets` effectively macOS-only on any headless box.

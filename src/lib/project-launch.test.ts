@@ -13,8 +13,10 @@ let VERSION_HOME: string;
 // path-providing getters used by the launch path to point at TMP_HOME;
 // getVersionsDir feeds versions.ts:getVersionHomePath transitively. Real fs
 // writes/reads under the temp dir — no business logic mocked. Other state
-// exports keep their real implementations (vitest is strict about partial
-// mocks — must use importOriginal).
+// exports inherit from the real module via importOriginal (vitest is strict
+// about partial mocks — exports not in the returned object would otherwise
+// resolve to undefined and break transitive imports like agents.ts's
+// getCliVersionCachePath() at module-load time).
 vi.mock('./state.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./state.js')>();
   return {

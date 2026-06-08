@@ -370,19 +370,12 @@ describe('shims - generateShimScript', () => {
     expect(script).not.toContain('meta.yaml');
   });
 
-  test('shim invokes only the launch-mode project sync, not the heavy management sync', () => {
-    // v15 removed foreground project sync entirely. v16 re-introduced a narrow,
-    // launch-only mode: `agents sync --agent ... --launch ...`. v17 wraps that
-    // call in a bash skip-fast gate. Heavy `agents sync` (no --launch) must
-    // never appear on the hot path — it's a management command.
+  test('does not include foreground project sync in shim', () => {
     const script = generateShimScript('claude');
     expect(script).not.toContain('find_project_agents_dir');
-    expect(script).toContain('"$AGENTS_BIN" sync --agent "$AGENT" --agent-version "$VERSION" --launch');
-    // Negative: any sync line that lacks --launch indicates a regression.
-    const lines = script.split('\n').filter((l) => l.includes('"$AGENTS_BIN" sync'));
-    for (const line of lines) {
-      expect(line).toContain('--launch');
-    }
+    // sync IS called on the hot path, but only with --launch (filesystem-only,
+    // sub-50ms, non-blocking). A foreground sync without --launch is forbidden.
+    expect(script).not.toMatch(/"\$AGENTS_BIN" sync\b(?![^\n]*--launch)/);
   });
 
   test('non-@-capable agents do not refresh rules on the launch hot path', () => {

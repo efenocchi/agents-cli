@@ -87,8 +87,8 @@ describe('addShimsToPath', () => {
 });
 
 describe('SHIM_SCHEMA_VERSION', () => {
-  it('is 15 (launch shims do not run foreground resource sync)', () => {
-    expect(SHIM_SCHEMA_VERSION).toBe(15);
+  it('is 16 (launch shims call sync --launch on hot path, never foreground)', () => {
+    expect(SHIM_SCHEMA_VERSION).toBe(16);
   });
 });
 
@@ -207,10 +207,12 @@ describe('generateShimScript', () => {
     expect(script).not.toContain('required by .agents-version');
   });
 
-  it('does not run project resource sync on the launch hot path', () => {
+  it('does not run foreground project resource sync on the launch hot path', () => {
     const script = generateShimScript('claude');
     expect(script).not.toContain('find_project_agents_dir');
-    expect(script).not.toContain('sync --agent "$AGENT"');
+    // sync IS allowed on the hot path, but only with --launch (filesystem-only,
+    // sub-50ms, non-blocking). A foreground sync without --launch is forbidden.
+    expect(script).not.toMatch(/\bsync --agent "\$AGENT"(?![^\n]*--launch)/);
     expect(script).not.toContain('refresh-rules --agent "$AGENT"');
   });
 
@@ -254,7 +256,9 @@ describe('generateShimScript', () => {
     expect(script).toContain('"$AGENTS_BIN" add "$AGENT@$VERSION" --yes');
     expect(script).not.toMatch(/^\s*agents (refresh-rules|use|add|sync)\b/m);
     expect(script).not.toContain('"$AGENTS_BIN" refresh-rules');
-    expect(script).not.toContain('"$AGENTS_BIN" sync');
+    // sync IS called on the hot path, but only with --launch (filesystem-only,
+    // sub-50ms, non-blocking). A foreground sync without --launch is forbidden.
+    expect(script).not.toMatch(/"\$AGENTS_BIN" sync\b(?![^\n]*--launch)/);
   });
 
   it('fails clearly when the embedded agents-cli entrypoint is not executable', () => {
