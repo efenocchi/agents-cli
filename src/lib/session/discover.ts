@@ -154,6 +154,7 @@ export async function discoverSessions(options?: DiscoverOptions): Promise<Sessi
             case 'openclaw': return scanOpenClawIncremental();
             case 'rush': return scanRushIncremental(onProgress);
             case 'hermes': return scanHermesIncremental(onProgress);
+            case 'kimi': return scanKimiIncremental(onProgress);
           }
         }),
       );
@@ -314,14 +315,22 @@ export function getAgentSessionDirs(agent: string, subdir: string): string[] {
     dirs.push(dir);
   }
 
-  addDir(path.join(HOME, `.${agent}`, subdir));
+  if (agent === 'kimi') {
+    addDir(path.join(HOME, '.kimi-code', subdir));
+  } else {
+    addDir(path.join(HOME, `.${agent}`, subdir));
+  }
 
   for (const root of VERSIONS_ROOTS) {
     const versionsBase = path.join(root, 'versions', agent);
     if (!fs.existsSync(versionsBase)) continue;
     try {
       for (const version of fs.readdirSync(versionsBase)) {
-        addDir(path.join(versionsBase, version, 'home', `.${agent}`, subdir));
+        if (agent === 'kimi') {
+          addDir(path.join(versionsBase, version, 'home', '.kimi-code', subdir));
+        } else {
+          addDir(path.join(versionsBase, version, 'home', `.${agent}`, subdir));
+        }
       }
     } catch { /* dir unreadable */ }
   }
@@ -1799,6 +1808,119 @@ function sumKnownNumbers(values: unknown[]): number | null {
 // ---------------------------------------------------------------------------
 // Time range parsing
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Kimi
+// ---------------------------------------------------------------------------
+// Kimi stores sessions under ~/.kimi-code/sessions/<workdir_hash>/session_<uuid>/.
+// Each session has state.json (metadata) and agents/main/wire.jsonl (conversation).
+// A session_index.jsonl at ~/.kimi-code/ maps session IDs to directories.
+
+/** Incrementally re-scan changed Kimi session state.json files and upsert into the DB. */
+async function scanKimiIncremental(onProgress?: (p: ScanProgress) => void): Promise<void> {
+  const filePaths: string[] = [];
+  for (const sessionsDir of getAgentSessionDirs('kimi', 'sessions')) {
+    if (!fs.existsSync(sessionsDir)) continue;
+    let workDirNames: string[];
+    try {
+      workDirNames = fs.readdirSync(sessionsDir);
+    } catch {
+      continue;
+    }
+    for (const workDirName of workDirNames) {
+      const workDir = path.join(sessionsDir, workDirName);
+      const stat = safeStatSync(workDir);
+      if (!stat?.isDirectory()) continue;
+      let sessionNames: string[];
+      try {
+        sessionNames = fs.readdirSync(workDir);
+      } catch {
+        continue;
+      }
+      for (const sessionName of sessionNames) {
+        if (!sessionName.startsWith('session_')) continue;
+        const statePath = path.join(workDir, sessionName, 'state.json');
+        if (!fs.existsSync(statePath)) continue;
+        filePaths.push(statePath);
+      }
+    }
+  }
+
+  const changed = filterChangedFiles(filePaths);
+  if (changed.length === 0) return;
+
+  onProgress?.({ agent: 'kimi', parsed: 0, total: changed.length });
+
+  const scanEntries: ScanEntry[] = [];
+  const touched: Array<{ filePath: string; scan: ScanStamp }> = [];
+  const seen = new Set<string>();
+  let parsed = 0;
+  for (const { filePath, scan } of changed) {
+    try {
+      const result = readKimiMeta(filePath);
+      if (result && !seen.has(result.meta.id)) {
+        seen.add(result.meta.id);
+        scanEntries.push({ meta: result.meta, content: result.content, scan });
+      } else {
+        touched.push({ filePath, scan });
+      }
+    } catch {
+      touched.push({ filePath, scan });
+    }
+    parsed++;
+    onProgress?.({ agent: 'kimi', parsed, total: changed.length });
+  }
+
+  upsertSessionsBatch(scanEntries);
+  recordScans(touched);
+}
+
+/** Parse a single Kimi session state.json file to extract session metadata. */
+function readKimiMeta(filePath: string): { meta: SessionMeta; content: string } | null {
+  let state: any;
+  try {
+    state = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  } catch {
+    return null;
+  }
+
+  const sessionDir = path.dirname(filePath);
+  const sessionId = path.basename(sessionDir);
+  if (!sessionId.startsWith('session_')) return null;
+
+  const title = typeof state.title === 'string' ? state.title : undefined;
+  const lastPrompt = typeof state.lastPrompt === 'string' ? state.lastPrompt : undefined;
+  const topic = title || lastPrompt || undefined;
+
+  const createdAt = typeof state.createdAt === 'string' ? state.createdAt : undefined;
+  const updatedAt = typeof state.updatedAt === 'string' ? state.updatedAt : undefined;
+  const timestamp = updatedAt || createdAt;
+
+  const shortId = sessionId.replace(/^session_/, '').slice(0, 8);
+
+  // Try to infer project from session directory path
+  // ~/.kimi-code/sessions/<workdir_hash>/session_<uuid>/
+  const workDirName = path.basename(path.dirname(sessionDir));
+  let project: string | undefined;
+  if (workDirName.startsWith('wd_')) {
+    const parts = workDirName.slice(3).split('_');
+    if (parts.length >= 2) {
+      project = parts.slice(0, -1).join('/');
+    }
+  }
+
+  const meta: SessionMeta = {
+    id: sessionId,
+    shortId,
+    agent: 'kimi',
+    timestamp,
+    project,
+    filePath,
+    topic,
+  };
+
+  return { meta, content: lastPrompt || '' };
+}
 
 /** Parse a time filter string (relative like '7d' or ISO timestamp) into epoch milliseconds. */
 export function parseTimeFilter(input: string): number {

@@ -95,8 +95,9 @@ function collectOrphans(types: ResourceType[], all: boolean): OrphanGroup[] {
   if (types.includes('commands')) {
     for (const { agent, version } of scopePairs(iterCommandsCapableVersions(), all)) {
       const diff = diffVersionCommands(agent, version);
-      if (diff.orphans.length > 0) {
-        groups.push({ type: 'commands', agent, version, orphans: diff.orphans });
+      const removable = [...diff.orphans, ...diff.toRemove];
+      if (removable.length > 0) {
+        groups.push({ type: 'commands', agent, version, orphans: removable });
       }
     }
   }

@@ -610,6 +610,7 @@ function buildCommandRows(opts: {
       let status: SyncTarget['status'];
       if (diff.matched.includes(name)) status = 'synced';
       else if (diff.toUpdate.includes(name)) status = 'stale';
+      else if (diff.toRemove.includes(name)) status = 'stale';
       else status = 'missing';
       targets.push({
         agent,

@@ -90,6 +90,7 @@ export function parseSession(filePath: string, agent?: SessionAgentId): SessionE
     case 'rush': events = parseRush(filePath); break;
     case 'openclaw': events = []; break; // OpenClaw sessions don't have parseable files yet
     case 'hermes': events = parseHermes(filePath); break;
+    case 'kimi': events = []; break; // Kimi event parsing not implemented yet — discover.ts builds metadata only
   }
 
   // Chokepoint: every string field that originated in an untrusted session

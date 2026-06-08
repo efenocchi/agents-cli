@@ -10,6 +10,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'yaml';
+import { capableAgents } from './capabilities.js';
 import { getSubagentsDir, getUserSubagentsDir, getTrashSubagentsDir } from './state.js';
 import { listInstalledVersions, getVersionHomePath } from './versions.js';
 import { safeJoin } from './paths.js';
@@ -468,9 +469,6 @@ export function listSubagentsForAgent(
   return subagents;
 }
 
-// Agents that support subagents
-const SUBAGENTS_CAPABLE_AGENTS: AgentId[] = ['claude', 'openclaw'];
-
 export interface VersionSubagentDiff {
   agent: AgentId;
   version: string;
@@ -529,9 +527,9 @@ export function diffVersionSubagents(agent: AgentId, version: string): VersionSu
  */
 export function iterSubagentsCapableVersions(filter?: { agent?: AgentId; version?: string }): Array<{ agent: AgentId; version: string }> {
   const pairs: Array<{ agent: AgentId; version: string }> = [];
-  const agents = filter?.agent ? [filter.agent] : SUBAGENTS_CAPABLE_AGENTS;
+  const agents = filter?.agent ? [filter.agent] : capableAgents('subagents');
   for (const agent of agents) {
-    if (!SUBAGENTS_CAPABLE_AGENTS.includes(agent)) continue;
+    if (!capableAgents('subagents').includes(agent)) continue;
     const versions = listInstalledVersions(agent);
     for (const version of versions) {
       if (filter?.version && filter.version !== version) continue;

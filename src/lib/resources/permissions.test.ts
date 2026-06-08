@@ -265,7 +265,7 @@ describe('PermissionsHandler', () => {
         allow: ['Bash(*)'],
       });
 
-      // Cursor doesn't support permissions (not in PERMISSIONS_CAPABLE_AGENTS).
+      // Cursor doesn't support permissions (`allowlist: false` in the capability matrix).
       // Gemini was capable as of 236b4105 — pick an agent that's still on the
       // excluded list, otherwise this test silently flips when capability is
       // added.

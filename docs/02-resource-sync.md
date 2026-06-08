@@ -237,9 +237,10 @@ Behavior rules, per `src/lib/plugins.ts:379` and `src/lib/plugin-marketplace.ts`
    flows (e.g., `agents use claude@<v>`) from silently arming third-party
    code on every session.
 
-5. **Capability gating.** Only `PLUGINS_CAPABLE_AGENTS` (Claude, OpenClaw —
-   `src/lib/agents.ts:433`) participate. Plugins can additionally declare
-   `agents: [...]` in their manifest to narrow further;
+5. **Capability gating.** Only agents where `supports(agent, 'plugins', version)`
+   passes participate (`capableAgents('plugins')` in `src/lib/agents.ts` —
+   today Claude, OpenClaw, Antigravity, Grok, and Codex >= 0.128.0). Plugins
+   can additionally declare `agents: [...]` in their manifest to narrow further;
    `pluginSupportsAgent()` (`plugins.ts:179`) intersects both lists.
 
 6. **Codex command-to-skill fallback.** Codex `>= 0.117.0` dropped

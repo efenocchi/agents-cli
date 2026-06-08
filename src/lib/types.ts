@@ -7,7 +7,7 @@
  */
 
 /** Unique identifier for a supported AI coding agent. */
-export type AgentId = 'claude' | 'codex' | 'gemini' | 'cursor' | 'opencode' | 'openclaw' | 'copilot' | 'amp' | 'kiro' | 'goose' | 'roo' | 'antigravity' | 'grok';
+export type AgentId = 'claude' | 'codex' | 'gemini' | 'cursor' | 'opencode' | 'openclaw' | 'copilot' | 'amp' | 'kiro' | 'goose' | 'roo' | 'antigravity' | 'grok' | 'kimi';
 
 /** How `agents run <agent>` chooses an installed version when none is pinned. */
 export type RunStrategy = 'pinned' | 'available' | 'balanced';

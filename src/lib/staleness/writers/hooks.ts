@@ -35,7 +35,7 @@ function buildHooksWriter(agent: AgentId): ResourceWriter<string[]> {
 
       // Native hook registration in settings.json/hooks.json. Grok auto-
       // discovers from ~/.grok/hooks/ so the file copy is sufficient.
-      if (agent === 'claude' || agent === 'codex' || agent === 'gemini' || agent === 'antigravity') {
+      if (agent === 'claude' || agent === 'codex' || agent === 'gemini' || agent === 'antigravity' || agent === 'kimi') {
         registerHooksToSettings(agent, versionHome);
       }
       return { synced };
