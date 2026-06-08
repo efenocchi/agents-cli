@@ -550,11 +550,11 @@ export function registerVersionsCommands(program: Command): void {
   useCmd.action(async (agentArg: string, versionArg: string | undefined, options) => {
       try {
         const skipPrompts = options.yes || !isInteractiveTerminal();
-        // Auto-pull ~/.agents-system if it's a git repo with remote (silent on success)
+        // Auto-pull ~/.agents/.system if it's a git repo with remote (silent on success)
         const agentsDir = getAgentsDir();
         const pullResult = await tryAutoPull(agentsDir);
         if (pullResult.pulled) {
-          console.log(chalk.gray('Synced ~/.agents-system from remote'));
+          console.log(chalk.gray('Synced ~/.agents/.system from remote'));
         }
 
         // Support both "claude 2.0.65" and "claude@2.0.65" formats

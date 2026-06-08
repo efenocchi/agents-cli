@@ -25,12 +25,12 @@ Every agents-cli installation maintains two repos:
 
 | Repo | Path | Owner | Purpose |
 |------|------|-------|---------|
-| **System repo** | `~/.agents-system/` | agents-cli maintainers | Core resources and defaults shipped with every install. Updated via `npm update -g agents-cli`. |
+| **System repo** | `~/.agents/.system/` | agents-cli maintainers | Core resources and defaults shipped with every install. Updated via `npm update -g agents-cli`. |
 | **User repo** | `~/.agents/` | You | Your personal additions and overrides. Synced with `agents repo push` / `agents repo pull`. |
 
 A project can also have a local repo — drop a `.agents/` directory at the project root. Its resources apply only while you're inside that project tree.
 
-Extra repos can be registered via `agents repo add <source>`. They clone into `~/.agents-system/.repos/<alias>/` and participate in resolution after the user repo.
+Extra repos can be registered via `agents repo add <source>`. They clone into `~/.agents-<alias>/` (peer of `~/.agents/`) and participate in resolution after the user repo.
 
 ---
 
@@ -62,8 +62,8 @@ When agents-cli resolves a resource it searches four layers in order and stops a
 ```
 project (.agents/ at project root)
   └─ user (~/.agents/)
-       └─ extra repos (~/.agents-system/.repos/<alias>/)
-            └─ system (~/.agents-system/)
+       └─ extra repos (~/.agents-<alias>/)
+            └─ system (~/.agents/.system/)
 ```
 
 **Same-named resource wins at the highest layer.** A `commands/deploy.md` in your user repo overrides the system default. Everything without a name collision unions in — you get all resources from all layers, with higher layers taking precedence on conflicts.
@@ -80,7 +80,7 @@ The resolution logic lives in `src/lib/resources.ts` — `resolveResource(kind, 
 
 ## Version homes
 
-Each installed agent CLI version gets an isolated **version home** — a directory under `~/.agents-system/versions/<agent>/<version>/home/` that contains a complete config environment for that version. Syncing copies (or symlinks) the resolved resource set into the version home in the format each agent expects.
+Each installed agent CLI version gets an isolated **version home** — a directory under `~/.agents/.history/versions/<agent>/<version>/home/` that contains a complete config environment for that version. Syncing copies (or symlinks) the resolved resource set into the version home in the format each agent expects.
 
 When you run `claude` (via the shim), agents-cli reads `agents.yaml`, resolves the version, and sets `HOME` to the matching version home before exec-ing the binary. The agent sees only its version-specific config — no bleed between versions.
 

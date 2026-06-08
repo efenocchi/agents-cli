@@ -71,7 +71,7 @@ async function ensureServer(): Promise<void> {
     await new Promise(r => setTimeout(r, 100));
   }
 
-  throw new Error('PTY server failed to start within 5 seconds. Check ~/.agents-system/helpers/pty/logs.jsonl');
+  throw new Error('PTY server failed to start within 5 seconds. Check ~/.agents/.system/helpers/pty/logs.jsonl');
 }
 
 function getServerSpawnArgs(): { bin: string; args: string[] } {

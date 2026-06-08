@@ -702,7 +702,7 @@ export async function installHooksCentrally(
 }
 
 /**
- * List hooks from user (~/.agents/hooks/) and system (~/.agents-system/hooks/) dirs.
+ * List hooks from user (~/.agents/hooks/) and system (~/.agents/.system/hooks/) dirs.
  * User dir takes priority; deduplication preserves first occurrence.
  */
 export function listCentralHooks(): HookEntry[] {
@@ -720,7 +720,7 @@ export function listCentralHooks(): HookEntry[] {
 }
 
 /**
- * Parse hook manifests. Reads system hooks from ~/.agents-system/hooks.yaml
+ * Parse hook manifests. Reads system hooks from ~/.agents/.system/hooks.yaml
  * (npm-shipped defaults) and user hooks from the `hooks:` section of
  * ~/.agents/agents.yaml. Merges with user-wins-on-key-collision precedence.
  * A user entry with `enabled: false` disables the system-shipped hook of
@@ -785,7 +785,7 @@ type CodexHooksFile = {
  * Register hooks as lifecycle events in an agent's config.
  * Reads hooks.yaml manifest, merges into the agent's config file(s).
  * Only manages hooks whose command paths are under ~/.agents/hooks/ or
- * ~/.agents-system/hooks/. Does not remove user-added hooks.
+ * ~/.agents/.system/hooks/. Does not remove user-added hooks.
  *
  * @param agentsDirOverride - When provided, treats this single dir as the
  *   only managed hook root. Used by tests to inject a temp path. In normal

@@ -24,8 +24,8 @@ function writeUpdateCache(home: string): void {
     JSON.stringify({ lastCheck: Date.now(), latestVersion: packageJson.version }),
     'utf-8'
   );
-  // ensureInitialized() checks for ~/.agents-system/.git to confirm setup.
-  fs.mkdirSync(path.join(home, '.agents-system', '.git'), { recursive: true });
+  // ensureInitialized() checks for ~/.agents/.system/.git to confirm setup.
+  fs.mkdirSync(path.join(home, '.agents', '.system', '.git'), { recursive: true });
 }
 
 function runAgents(args: string[], home: string) {

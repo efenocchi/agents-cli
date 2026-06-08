@@ -2,7 +2,7 @@
  * Extra DotAgent repo management.
  *
  * Registers `agents repo add|init|list|remove|enable|disable` which manage
- * additional DotAgent repos alongside the primary ~/.agents-system/ repo so
+ * additional DotAgent repos alongside the primary ~/.agents/.system/ repo so
  * private, work, or team skills can ship separately from public ones.
  *
  * Extras are user-level config: managed clones live at ~/.agents-<alias>/ as
@@ -314,7 +314,7 @@ export function registerRepoCommands(program: Command): void {
           ? chalk.yellow('not a git repo — run: agents setup')
           : chalk.green('cloned');
       const systemCommitLabel = systemCommit ? chalk.gray(`(${systemCommit})`) : '';
-      console.log(chalk.bold('System  (~/.agents-system/)'));
+      console.log(chalk.bold('System  (~/.agents/.system/)'));
       console.log(`  ${chalk.cyan('system'.padEnd(12))}  ${systemUrl}  ${systemStatus}  ${systemCommitLabel}`);
 
       // User repo
@@ -415,7 +415,7 @@ export function registerRepoCommands(program: Command): void {
 
   repoCmd
     .command('pull [alias]')
-    .description('Pull updates. Aliases: "system" (~/.agents-system/), "user" (~/.agents/), or any registered extra. No arg pulls all.')
+    .description('Pull updates. Aliases: "system" (~/.agents/.system/), "user" (~/.agents/), or any registered extra. No arg pulls all.')
     .action(async (alias: string | undefined) => {
       const targets = collectRepoTargets(alias);
       if (!targets) {

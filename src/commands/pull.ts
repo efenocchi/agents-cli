@@ -2,7 +2,7 @@
  * Config pull command.
  *
  * Registers the `agents pull` command which clones or updates the
- * system ~/.agents-system/ git repo and syncs CLI versions, MCP servers,
+ * system ~/.agents/.system/ git repo and syncs CLI versions, MCP servers,
  * resources, and hooks to installed agent versions.
  */
 
@@ -80,7 +80,7 @@ import { isInteractiveTerminal, isPromptCancelled } from './utils.js';
 
 /**
  * Old repo layout stored promptcuts under claude/promptcuts.yaml (agent-scoped).
- * The new layout is ~/.agents-system/promptcuts.yaml at the repo root — the hook
+ * The new layout is ~/.agents/.system/promptcuts.yaml at the repo root — the hook
  * reads from a fixed path so it survives version upgrades. If the root file
  * doesn't exist yet but an agent-scoped one does, hoist the first one found.
  */
@@ -113,7 +113,7 @@ export function registerPullCommand(program: Command): void {
 
   setHelpSections(pullCmd, {
     examples: `
-      # First time: clone the system repo into ~/.agents-system/
+      # First time: clone the system repo into ~/.agents/.system/
       agents pull
 
       # Sync only one agent's config
@@ -215,7 +215,7 @@ export function registerPullCommand(program: Command): void {
 
         // One-time migration: promptcuts.yaml moved from agent-scoped
         // (e.g. claude/promptcuts.yaml) to repo root. We move it so the
-        // hook at ~/.agents-system/hooks/ can always find it at a fixed path.
+        // hook at ~/.agents/.system/hooks/ can always find it at a fixed path.
         migratePromptcutsToRoot(agentsDir);
 
         // Read manifest for CLI versions and MCP config

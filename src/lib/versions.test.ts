@@ -42,8 +42,8 @@ describe('version resource sync path handling', () => {
   it('intersects explicit resource selections with discovered resources before syncing', async () => {
     const home = makeTempHome();
 
-    fs.mkdirSync(path.join(home, '.agents-system', 'commands'), { recursive: true });
-    fs.writeFileSync(path.join(home, '.agents-system', 'commands', 'safe.md'), 'safe command', 'utf-8');
+    fs.mkdirSync(path.join(home, '.agents', '.system', 'commands'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.agents', '.system', 'commands', 'safe.md'), 'safe command', 'utf-8');
 
     const result = runVersionSync(
       home,
@@ -58,9 +58,9 @@ describe('version resource sync path handling', () => {
   it('keeps prompts for Codex 0.116.x and converts commands to generated skills for Codex 0.117.0+', async () => {
     const home = makeTempHome();
 
-    fs.mkdirSync(path.join(home, '.agents-system', 'commands'), { recursive: true });
+    fs.mkdirSync(path.join(home, '.agents', '.system', 'commands'), { recursive: true });
     fs.writeFileSync(
-      path.join(home, '.agents-system', 'commands', 'recap.md'),
+      path.join(home, '.agents', '.system', 'commands', 'recap.md'),
       ['---', 'description: Summarize the current session', '---', '', 'Recap the conversation so far.'].join('\n'),
       'utf-8'
     );
@@ -94,7 +94,7 @@ describe('version resource sync path handling', () => {
   it('does not follow symlinks inside copied skill resources', async () => {
     const home = makeTempHome();
 
-    const skillDir = path.join(home, '.agents-system', 'skills', 'leaky');
+    const skillDir = path.join(home, '.agents', '.system', 'skills', 'leaky');
     fs.mkdirSync(skillDir, { recursive: true });
     fs.writeFileSync(path.join(skillDir, 'SKILL.md'), 'skill body', 'utf-8');
     const secretPath = path.join(home, 'secret.txt');
@@ -115,7 +115,7 @@ describe('version resource sync path handling', () => {
   it('skips a clean full sync after expanding persisted resource patterns', async () => {
     const home = makeTempHome();
 
-    const skillDir = path.join(home, '.agents-system', 'skills', 'tiny');
+    const skillDir = path.join(home, '.agents', '.system', 'skills', 'tiny');
     fs.mkdirSync(skillDir, { recursive: true });
     fs.writeFileSync(path.join(skillDir, 'SKILL.md'), 'skill body', 'utf-8');
 

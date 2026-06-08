@@ -27,11 +27,11 @@ import { HooksHandler } from './hooks.js';
 describe('HooksHandler', () => {
   beforeEach(() => {
     TEST_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'hooks-handler-'));
-    SYSTEM_DIR = path.join(TEST_ROOT, '.agents-system');
     USER_DIR = path.join(TEST_ROOT, '.agents');
+    SYSTEM_DIR = path.join(USER_DIR, '.system');
     PROJECT_DIR = path.join(TEST_ROOT, 'project', '.agents');
-    fs.mkdirSync(SYSTEM_DIR, { recursive: true });
     fs.mkdirSync(USER_DIR, { recursive: true });
+    fs.mkdirSync(SYSTEM_DIR, { recursive: true });
     fs.mkdirSync(PROJECT_DIR, { recursive: true });
   });
 

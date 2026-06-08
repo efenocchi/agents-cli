@@ -2,7 +2,7 @@
  * MCP resource handler - lists, resolves, and syncs MCP server configs across layers.
  *
  * MCP servers are stored as YAML files in mcp/ directories:
- *   ~/.agents-system/mcp/   (system)
+ *   ~/.agents/.system/mcp/   (system)
  *   ~/.agents/mcp/          (user)
  *   .agents/mcp/            (project)
  *

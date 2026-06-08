@@ -643,7 +643,7 @@ Examples:
         }
         const presets = Array.from(presetSet).sort();
         if (presets.length === 0) {
-          console.log(chalk.red('No presets found. Define presets in ~/.agents-system/rules/rules.yaml or ~/.agents/rules/rules.yaml.'));
+          console.log(chalk.red('No presets found. Define presets in ~/.agents/.system/rules/rules.yaml or ~/.agents/rules/rules.yaml.'));
           process.exit(1);
         }
 

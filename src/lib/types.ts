@@ -262,7 +262,7 @@ export interface InstalledSkill {
   agent: AgentId;
 }
 
-/** Git remote metadata for the ~/.agents-system/ config repository. */
+/** Git remote metadata for the ~/.agents/.system/ config repository. */
 export interface RepoInfo {
   source: string;
   branch: string;
@@ -270,7 +270,7 @@ export interface RepoInfo {
   lastSync: string;
 }
 
-/** Canonical system repo cloned into ~/.agents-system/. */
+/** Canonical system repo cloned into ~/.agents/.system/. */
 export const DEFAULT_SYSTEM_REPO = 'gh:phnx-labs/.agents-system';
 
 /** Strip the `gh:` prefix and `.git` suffix to get a GitHub `owner/repo` slug. */
@@ -409,7 +409,7 @@ export type ResourceType = 'commands' | 'skills' | 'hooks' | 'memory' | 'mcp' | 
 
 /**
  * A resource selection pattern stored in agents.yaml versions:
- *   "system:*"      — all resources from ~/.agents-system/
+ *   "system:*"      — all resources from ~/.agents/.system/
  *   "user:*"        — all resources from ~/.agents/
  *   "rush:*"        — all resources from ~/.agents-rush/  (extra repo alias)
  *   "project:*"     — all resources from .agents/ in the project root
@@ -517,7 +517,7 @@ export interface ExtraRepoConfig {
   enabled: boolean;
 }
 
-/** Top-level structure of ~/.agents-system/agents.yaml -- the CLI's persistent state. */
+/** Top-level structure of ~/.agents/.system/agents.yaml -- the CLI's persistent state. */
 export interface Meta {
   agents?: Partial<Record<AgentId, string>>;
   run?: Partial<Record<AgentId, { strategy?: RunStrategy }>>;
@@ -527,7 +527,7 @@ export interface Meta {
   registries?: Record<RegistryType, Record<string, RegistryConfig>>;
   // Per-version resource tracking
   versions?: Partial<Record<AgentId, Record<string, VersionResources>>>;
-  // Git remote source URL (when ~/.agents-system/ is a git repo)
+  // Git remote source URL (when ~/.agents/.system/ is a git repo)
   source?: string;
   /**
    * Extra DotAgent repos merged after ~/.agents/. Managed clones live as peer

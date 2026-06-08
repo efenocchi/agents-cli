@@ -64,7 +64,7 @@ function scaffoldInstalledVersion(home: string, agent: string, version: string):
 
 /** Place a command .md in the system commands dir so listCentralCommands() finds it. */
 function writeSystemCommand(home: string, name: string, content: string): void {
-  const dir = path.join(home, '.agents-system', 'commands');
+  const dir = path.join(home, '.agents', '.system', 'commands');
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, `${name}.md`), content, 'utf-8');
 }

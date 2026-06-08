@@ -2,7 +2,7 @@
  * Resource selection patterns for agents.yaml versions: entries.
  *
  * Pattern syntax: [!]source:name
- *   "system:*"     — all resources from ~/.agents-system/
+ *   "system:*"     — all resources from ~/.agents/.system/
  *   "user:*"       — all resources from ~/.agents/
  *   "rush:*"       — all resources from ~/.agents-rush/  (extra repo alias)
  *   "project:*"    — all resources from .agents/ in the project root

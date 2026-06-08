@@ -1,22 +1,26 @@
 /**
  * Filesystem layout and persistent state for agents-cli.
  *
- * Two roots:
- *  - ~/.agents-system/ — system repo (npm-shipped resources, read-only defaults)
- *  - ~/.agents/        — user repo (resources + agents.yaml + operational state)
+ * Single root at ~/.agents/ with three internal buckets:
  *
- * Inside ~/.agents/, top-level paths hold ONLY resources + agents.yaml.
- * Operational state lives in two sibling buckets:
- *
- *  - ~/.agents/.history/ — durable runtime data (sessions, versions, runs,
+ *   ~/.agents/           — user repo: user-authored resources + agents.yaml
+ *                          (git-tracked via `agents repo push`).
+ *   ~/.agents/.system/   — system repo: npm-shipped resources, regenerable.
+ *                          Don't hand-edit; maintained by npm install /
+ *                          `agents repo pull system`.
+ *   ~/.agents/.history/  — durable runtime data (sessions, versions, runs,
  *                          teams/agents, trash, backups). Backed up by
  *                          `agents repo push`.
- *  - ~/.agents/.cache/   — regenerable runtime data (shims, packages, helpers
+ *   ~/.agents/.cache/    — regenerable runtime data (shims, packages, helpers
  *                          for daemon/pty, terminals, cloud, drive, browser
  *                          chrome-data, logs, companion). Gitignored.
  *
  * Resolution precedence for resources: project > user > system.
  * Every module that needs a path or reads/writes agents.yaml goes through here.
+ *
+ * Legacy layout (pre-fold): system repo lived at ~/.agents-system/ as a peer
+ * of ~/.agents/. runMigration() folds it into ~/.agents/.system/ on first run
+ * and leaves a back-compat symlink at the old path.
  */
 
 import * as fs from 'fs';
@@ -31,11 +35,18 @@ const HOME = process.env.HOME ?? os.homedir();
 
 // ─── Root directories ─────────────────────────────────────────────────────────
 
-/** System repo — npm-shipped, read-only from user commands. */
-const SYSTEM_AGENTS_DIR = path.join(HOME, '.agents-system');
-
 /** User repo — user-authored resources and agents.yaml. Always-on. */
 const USER_AGENTS_DIR = path.join(HOME, '.agents');
+
+/** System repo — npm-shipped, read-only from user commands. Lives inside the user repo. */
+const SYSTEM_AGENTS_DIR = path.join(USER_AGENTS_DIR, '.system');
+
+/**
+ * Legacy system-repo location (pre-fold). Exported so the migrator can fold
+ * it into SYSTEM_AGENTS_DIR. No runtime code outside the migrator should
+ * reference this — use SYSTEM_AGENTS_DIR.
+ */
+const LEGACY_SYSTEM_AGENTS_DIR = path.join(HOME, '.agents-system');
 
 // ─── Meta file (agents.yaml lives in the user repo) ──────────────────────────
 
@@ -125,14 +136,19 @@ const META_HEADER = `# agents-cli metadata
 
 // ─── Root getters ─────────────────────────────────────────────────────────────
 
-/** Root of the system data directory (~/.agents-system/). */
+/** Root of the system data directory (~/.agents/.system/). */
 export function getAgentsDir(): string {
   return SYSTEM_AGENTS_DIR;
 }
 
-/** Root of the system data directory (~/.agents-system/). */
+/** Root of the system data directory (~/.agents/.system/). */
 export function getSystemAgentsDir(): string {
   return SYSTEM_AGENTS_DIR;
+}
+
+/** Legacy system-repo location (~/.agents-system/). Exported for migration only. */
+export function getLegacySystemAgentsDir(): string {
+  return LEGACY_SYSTEM_AGENTS_DIR;
 }
 
 /** Root of the user repo (~/.agents/). Always present after ensureAgentsDir(). */
@@ -220,7 +236,7 @@ export function getPermissionsDir(): string { return SYSTEM_PERMISSIONS_DIR; }
 /** Path to subagent definition directories — system repo. */
 export function getSubagentsDir(): string { return SYSTEM_SUBAGENTS_DIR; }
 
-/** Path to ~/.agents-system/hooks/promptcuts.yaml (system defaults). */
+/** Path to ~/.agents/.system/hooks/promptcuts.yaml (system defaults). */
 export function getPromptcutsPath(): string { return SYSTEM_PROMPTCUTS_FILE; }
 
 /**

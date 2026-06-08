@@ -33,13 +33,13 @@ CLI for managing AI coding agent versions, config, sessions, and cloud dispatch 
 |---|---|---|
 | `.agents/` (project root) | **Project repo** — project-specific commands, skills, hooks, rules. Scoped to this repo only. | Project maintainers |
 | `~/.agents/` | **User repo** — your resources + ALL operational state (versions, shims, sessions, agents.yaml, browser runtime). | You / CLI |
-| `~/.agents-system/` | **System repo** — npm-shipped defaults ONLY. Nothing else. | Maintainers |
+| `~/.agents/.system/` | **System repo** — npm-shipped defaults ONLY. Nothing else. | Maintainers |
 
 Resources AND `agents.yaml` resolve **project > user > system** — project-level pins override user/system.
 
 ### What lives where
 
-**System repo (`~/.agents-system/`)** — npm-shipped defaults, fully tracked:
+**System repo (`~/.agents/.system/`)** — npm-shipped defaults, fully tracked:
 ```
 commands/  hooks/  hooks.yaml  mcp/  permissions/  profiles/  rules/  skills/
 ```
@@ -94,7 +94,7 @@ src/
 
 `hooks.yaml` is a central manifest, read from system + user (user wins). Each entry has `script`, `events`, optional `timeout`, optional `matches:` predicates, optional `enabled: false` to disable a system-shipped hook from the user side. The `agents:` field is deprecated — the registrar uses the capability table to decide which agents register the hook. Predicates (`prompt_contains`, `prompt_matches`, `tool_name`, `tool_args_match`, `cwd_includes`, `project_has`, `git_dirty`) AND together at fire time.
 
-Promptcuts are hook data, not a top-level resource — `~/.agents-system/hooks/promptcuts.yaml` (defaults) and `~/.agents/hooks/promptcuts.yaml` (user) are merged by the expand-promptcuts script with user precedence.
+Promptcuts are hook data, not a top-level resource — `~/.agents/.system/hooks/promptcuts.yaml` (defaults) and `~/.agents/hooks/promptcuts.yaml` (user) are merged by the expand-promptcuts script with user precedence.
 
 ## Agent config
 

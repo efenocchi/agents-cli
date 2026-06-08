@@ -221,8 +221,8 @@ if ! command -v agents &>/dev/null; then
   sudo npm install -g @phnx-labs/agents-cli 2>/dev/null || true
 fi
 if command -v agents &>/dev/null; then
-  # First-time setup: clones ~/.agents-system (public) and provisions ~/.agents
-  if [[ ! -d ~/.agents-system ]]; then
+  # First-time setup: clones ~/.agents/.system (public) and provisions ~/.agents
+  if [[ ! -d ~/.agents/.system ]]; then
     echo "Setting up agents-cli..."
     agents setup 2>&1 | tail -3 || true
   fi

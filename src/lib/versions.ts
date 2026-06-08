@@ -2,7 +2,7 @@
  * Version management module for agents-cli.
  *
  * Handles installing, removing, listing, and switching between agent CLI versions.
- * Each version is installed into an isolated directory under ~/.agents-system/versions/{agent}/{version}/
+ * Each version is installed into an isolated directory under ~/.agents/.system/versions/{agent}/{version}/
  * with its own HOME directory for config isolation. Resources (commands, skills, hooks, memory,
  * MCP servers, permissions, subagents, plugins) from ~/.agents/ are synced into version homes
  * via copies or conversions (not symlinks).
@@ -1410,10 +1410,10 @@ function removeInstallArtifacts(versionDir: string): void {
 }
 
 /**
- * Soft-delete a version directory by moving it to ~/.agents-system/trash/versions/.
+ * Soft-delete a version directory by moving it to ~/.agents/.system/trash/versions/.
  * Returns the trash path on success or null on failure / no source.
  *
- * Trash layout: ~/.agents-system/trash/versions/<agent>/<version>/<timestamp>/
+ * Trash layout: ~/.agents/.system/trash/versions/<agent>/<version>/<timestamp>/
  * The timestamp suffix lets a user soft-delete the same version twice (after
  * re-install) without collision and gives a chronological audit trail.
  *
@@ -1443,7 +1443,7 @@ export function softDeleteVersionDir(agent: AgentId, version: string): string | 
  * Remove a specific version of an agent.
  *
  * Soft-delete only: moves the entire version directory (including `home/`)
- * to ~/.agents-system/trash/versions/. Recoverable via `agents trash restore`.
+ * to ~/.agents/.system/trash/versions/. Recoverable via `agents trash restore`.
  * Nothing is hard-deleted.
  */
 export function removeVersion(agent: AgentId, version: string): boolean {
@@ -1594,7 +1594,7 @@ export function resolveVersionAliasLoose(agent: AgentId, raw: string | undefined
 }
 
 /**
- * Get version specified in a project-root agents.yaml (not the user ~/.agents-system/agents.yaml).
+ * Get version specified in a project-root agents.yaml (not the user ~/.agents/.system/agents.yaml).
  */
 export function getProjectVersion(agent: AgentId, startPath: string): string | null {
   const userAgentsYaml = path.join(getUserAgentsDir(), 'agents.yaml');

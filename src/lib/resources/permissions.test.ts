@@ -61,11 +61,11 @@ describe('PermissionsHandler', () => {
       const home = makeTempHome();
 
       // Create system and user directories
-      fs.mkdirSync(path.join(home, '.agents-system'), { recursive: true });
+      fs.mkdirSync(path.join(home, '.agents', '.system'), { recursive: true });
       fs.mkdirSync(path.join(home, '.agents'), { recursive: true });
 
       // Create permissions in both layers
-      writePermissionYaml(home, '.agents-system', 'base', {
+      writePermissionYaml(home, path.join('.agents', '.system'), 'base', {
         name: 'base',
         description: 'Base permissions',
         allow: ['Bash(git *)'],
@@ -95,11 +95,11 @@ describe('PermissionsHandler', () => {
     it('user layer wins on name conflict', () => {
       const home = makeTempHome();
 
-      fs.mkdirSync(path.join(home, '.agents-system'), { recursive: true });
+      fs.mkdirSync(path.join(home, '.agents', '.system'), { recursive: true });
       fs.mkdirSync(path.join(home, '.agents'), { recursive: true });
 
       // Same name in both layers - user should win
-      writePermissionYaml(home, '.agents-system', 'shared', {
+      writePermissionYaml(home, path.join('.agents', '.system'), 'shared', {
         name: 'shared',
         description: 'System version',
         allow: ['Bash(git *)'],
@@ -125,11 +125,11 @@ describe('PermissionsHandler', () => {
       const home = makeTempHome();
       const projectDir = makeTempHome();
 
-      fs.mkdirSync(path.join(home, '.agents-system'), { recursive: true });
+      fs.mkdirSync(path.join(home, '.agents', '.system'), { recursive: true });
       fs.mkdirSync(path.join(home, '.agents'), { recursive: true });
       fs.mkdirSync(path.join(projectDir, '.agents'), { recursive: true });
 
-      writePermissionYaml(home, '.agents-system', 'perms', {
+      writePermissionYaml(home, path.join('.agents', '.system'), 'perms', {
         name: 'perms',
         description: 'System',
         allow: ['Read(**)'],
@@ -165,7 +165,7 @@ describe('PermissionsHandler', () => {
     it('returns null for non-existent permission', () => {
       const home = makeTempHome();
 
-      fs.mkdirSync(path.join(home, '.agents-system'), { recursive: true });
+      fs.mkdirSync(path.join(home, '.agents', '.system'), { recursive: true });
       fs.mkdirSync(path.join(home, '.agents'), { recursive: true });
 
       const result = runPermissionsExpression(home, `PermissionsHandler.resolve('claude', 'nonexistent')`);
@@ -175,10 +175,10 @@ describe('PermissionsHandler', () => {
     it('resolves from user layer when name exists in both', () => {
       const home = makeTempHome();
 
-      fs.mkdirSync(path.join(home, '.agents-system'), { recursive: true });
+      fs.mkdirSync(path.join(home, '.agents', '.system'), { recursive: true });
       fs.mkdirSync(path.join(home, '.agents'), { recursive: true });
 
-      writePermissionYaml(home, '.agents-system', 'dev', {
+      writePermissionYaml(home, path.join('.agents', '.system'), 'dev', {
         name: 'dev',
         description: 'System dev',
         allow: ['Bash(ls)'],
@@ -200,7 +200,7 @@ describe('PermissionsHandler', () => {
     it('supports both .yaml and .yml extensions', () => {
       const home = makeTempHome();
 
-      fs.mkdirSync(path.join(home, '.agents-system'), { recursive: true });
+      fs.mkdirSync(path.join(home, '.agents', '.system'), { recursive: true });
       fs.mkdirSync(path.join(home, '.agents'), { recursive: true });
 
       // Write with .yml extension
@@ -224,10 +224,10 @@ describe('PermissionsHandler', () => {
       const home = makeTempHome();
       const versionHome = makeTempHome();
 
-      fs.mkdirSync(path.join(home, '.agents-system'), { recursive: true });
+      fs.mkdirSync(path.join(home, '.agents', '.system'), { recursive: true });
       fs.mkdirSync(path.join(home, '.agents'), { recursive: true });
 
-      writePermissionYaml(home, '.agents-system', 'base', {
+      writePermissionYaml(home, path.join('.agents', '.system'), 'base', {
         name: 'base',
         allow: ['Read(**)', 'Bash(git *)'],
       });
@@ -257,7 +257,7 @@ describe('PermissionsHandler', () => {
       const home = makeTempHome();
       const versionHome = makeTempHome();
 
-      fs.mkdirSync(path.join(home, '.agents-system'), { recursive: true });
+      fs.mkdirSync(path.join(home, '.agents', '.system'), { recursive: true });
       fs.mkdirSync(path.join(home, '.agents'), { recursive: true });
 
       writePermissionYaml(home, '.agents', 'test', {

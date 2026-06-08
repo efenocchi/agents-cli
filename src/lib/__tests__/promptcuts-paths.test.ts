@@ -15,9 +15,9 @@ import {
 describe('promptcuts path resolution', () => {
   const home = os.homedir();
 
-  it('system promptcuts file lives in ~/.agents-system/hooks/', () => {
+  it('system promptcuts file lives in ~/.agents/.system/hooks/', () => {
     expect(getSystemPromptcutsPath()).toBe(
-      path.join(home, '.agents-system', 'hooks', 'promptcuts.yaml')
+      path.join(home, '.agents', '.system', 'hooks', 'promptcuts.yaml')
     );
   });
 
@@ -36,7 +36,7 @@ describe('promptcuts path resolution', () => {
 
   it('neither path is at the repo root anymore', () => {
     expect(getSystemPromptcutsPath()).not.toBe(
-      path.join(home, '.agents-system', 'promptcuts.yaml')
+      path.join(home, '.agents', '.system', 'promptcuts.yaml')
     );
     expect(getUserPromptcutsPath()).not.toBe(
       path.join(home, '.agents', 'promptcuts.yaml')

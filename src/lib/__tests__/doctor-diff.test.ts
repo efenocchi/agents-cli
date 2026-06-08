@@ -11,11 +11,11 @@ let projectDir: string;
 
 beforeEach(() => {
   testHome = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-diff-test-'));
-  systemDir = path.join(testHome, '.agents-system');
   userDir = path.join(testHome, '.agents');
+  systemDir = path.join(userDir, '.system');
   projectDir = path.join(testHome, 'work');
-  fs.mkdirSync(systemDir, { recursive: true });
   fs.mkdirSync(userDir, { recursive: true });
+  fs.mkdirSync(systemDir, { recursive: true });
   fs.mkdirSync(projectDir, { recursive: true });
 
   // Avoid the migrator running and failing on a missing legacy state.

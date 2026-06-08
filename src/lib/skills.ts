@@ -401,7 +401,7 @@ export function skillContentMatches(
 }
 
 /**
- * List skill names from user (~/.agents/skills/) and system (~/.agents-system/skills/) dirs.
+ * List skill names from user (~/.agents/skills/) and system (~/.agents/.system/skills/) dirs.
  * User dir takes priority; deduplication preserves first occurrence.
  */
 export function listCentralSkills(): string[] {

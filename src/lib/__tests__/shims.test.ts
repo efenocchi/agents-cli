@@ -191,10 +191,10 @@ describe('generateShimScript', () => {
     expect(script).toContain('agents.yaml');
   });
 
-  it('skips $HOME/.agents-system/agents.yaml when walking up', () => {
+  it('skips $HOME/.agents/agents.yaml when walking up', () => {
     const script = generateShimScript('claude');
     expect(script).toContain('user_agents_yaml');
-    expect(script).toContain('$HOME/.agents-system/agents.yaml');
+    expect(script).toContain('$HOME/.agents/agents.yaml');
     expect(script).toContain('"$candidate" != "$user_agents_yaml"');
   });
 

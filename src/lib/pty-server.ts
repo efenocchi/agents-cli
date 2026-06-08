@@ -6,7 +6,7 @@
  * across multiple CLI invocations. Each session holds a real PTY (via node-pty)
  * and a headless terminal emulator (via @xterm/headless) for screen rendering.
  *
- * Protocol: newline-delimited JSON over ~/.agents-system/pty.sock
+ * Protocol: newline-delimited JSON over ~/.agents/.system/pty.sock
  */
 
 import * as net from 'net';

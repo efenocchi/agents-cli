@@ -12,18 +12,18 @@ const PACKAGE_VERSION = JSON.parse(
 
 function makeTempHome(): string {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-cli-non-interactive-'));
+  // User dir: commands, agents.yaml live here
+  const userDir = path.join(home, '.agents');
+  fs.mkdirSync(userDir, { recursive: true });
   // System dir: update-check and versions live here.
   // Needs a .git dir so ensureInitialized() doesn't block commands.
-  const systemDir = path.join(home, '.agents-system');
+  const systemDir = path.join(userDir, '.system');
   fs.mkdirSync(systemDir, { recursive: true });
   fs.mkdirSync(path.join(systemDir, '.git'), { recursive: true });
   fs.writeFileSync(
     path.join(systemDir, '.update-check'),
     JSON.stringify({ lastCheck: Date.now(), latestVersion: PACKAGE_VERSION.version }),
   );
-  // User dir: commands, agents.yaml live here
-  const userDir = path.join(home, '.agents');
-  fs.mkdirSync(userDir, { recursive: true });
   return home;
 }
 

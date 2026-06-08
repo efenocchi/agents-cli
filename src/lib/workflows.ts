@@ -48,7 +48,7 @@ export interface DiscoveredWorkflow {
   subagentCount: number;
 }
 
-/** A workflow in central storage (~/.agents/workflows/ or ~/.agents-system/workflows/). */
+/** A workflow in central storage (~/.agents/workflows/ or ~/.agents/.system/workflows/). */
 export interface InstalledWorkflow {
   name: string;
   path: string;
@@ -193,7 +193,7 @@ export function discoverWorkflowsFromRepo(repoPath: string): DiscoveredWorkflow[
 
 /**
  * List all workflows in central storage.
- * User layer (~/.agents/workflows/) wins over system (~/.agents-system/workflows/).
+ * User layer (~/.agents/workflows/) wins over system (~/.agents/.system/workflows/).
  */
 export function listInstalledWorkflows(): Map<string, InstalledWorkflow> {
   const result = new Map<string, InstalledWorkflow>();

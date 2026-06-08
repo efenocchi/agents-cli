@@ -1,10 +1,10 @@
 /**
  * `agents trash` — list and restore soft-deleted version directories.
  *
- * `removeVersion` moves a version dir to ~/.agents-system/trash/versions/<agent>/<version>/<timestamp>/
+ * `removeVersion` moves a version dir to ~/.agents/.history/trash/versions/<agent>/<version>/<timestamp>/
  * instead of hard-deleting. These commands let the user inspect what's there
  * and put a soft-deleted version back. The trash never auto-expires; only
- * `rm -rf ~/.agents-system/trash/` removes bytes from disk.
+ * `rm -rf ~/.agents/.history/trash/` removes bytes from disk.
  */
 import type { Command } from 'commander';
 import chalk from 'chalk';
@@ -150,7 +150,7 @@ export function registerTrashCommands(program: Command): void {
 
   trash
     .command('restore <target>')
-    .description('Restore a soft-deleted version (e.g. "claude@2.1.110") back to ~/.agents-system/versions/')
+    .description('Restore a soft-deleted version (e.g. "claude@2.1.110") back to ~/.agents/.history/versions/')
     .action((target: string) => {
       const parsed = parseAgentVersion(target);
       if (!parsed) {

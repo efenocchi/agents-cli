@@ -2,7 +2,7 @@
  * HooksHandler - ResourceHandler implementation for hooks.
  *
  * Hook declarations live in:
- *   - System: ~/.agents-system/hooks.yaml (npm-shipped defaults)
+ *   - System: ~/.agents/.system/hooks.yaml (npm-shipped defaults)
  *   - User:   `hooks:` section of ~/.agents/agents.yaml
  *   - Project: <project>/.agents/hooks.yaml
  *

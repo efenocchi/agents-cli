@@ -5,7 +5,7 @@
  * For the user repo + enabled extras: `git fetch` + write a status marker the foreground
  * CLI surfaces on its next invocation.
  *
- * Per-repo lock files at ~/.agents-system/.fetch/<alias>.lock prevent concurrent fetches.
+ * Per-repo lock files at ~/.agents/.system/.fetch/<alias>.lock prevent concurrent fetches.
  * Lock mtime under 5 min => skip (another invocation already in flight).
  */
 
@@ -24,7 +24,7 @@ import { lockFilePath, statusFilePath, type FetchStatusMarker } from './auto-pul
 const LOCK_TTL_MS = 5 * 60 * 1000;
 
 /**
- * Background auto-pull of ~/.agents-system/ is off by default. When enabled it
+ * Background auto-pull of ~/.agents/.system/ is off by default. When enabled it
  * silently fast-forwards a tracked source tree that the CLI then reads as a
  * source of skills, hooks, install manifests, and commands — anyone with push
  * access to that upstream gets remote code execution on every user the next

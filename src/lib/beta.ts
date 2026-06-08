@@ -3,7 +3,7 @@
  *
  * Preview features live in the git-trackable user repo (~/.agents/agents.yaml)
  * when present, and otherwise fall back to the local system state file
- * (~/.agents-system/agents.yaml). This keeps opt-ins portable for users with a
+ * (~/.agents/.system/agents.yaml). This keeps opt-ins portable for users with a
  * personal agents repo without mixing them into unrelated version capability
  * checks.
  */

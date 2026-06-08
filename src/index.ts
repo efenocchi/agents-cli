@@ -184,7 +184,7 @@ Diagnostics:
 
 Config sync:
   drive                           Sync session history across machines via rsync
-  pull                            Clone or pull the system repo at ~/.agents-system/
+  pull                            Clone or pull the system repo at ~/.agents/.system/
   repo init --path <dir>          Scaffold your own editable repo from a template
   repo add <path|gh:user/repo>    Merge an extra repo after the system repo
 
@@ -202,7 +202,7 @@ Options:
   -V, --version                   Show version number
   -h, --help                      Show help
 
-System config lives in ~/.agents-system/. Run 'agents <command> --help' for details.
+System config lives in ~/.agents/.system/. Run 'agents <command> --help' for details.
 `;
   }
   return originalHelpInformation();

@@ -22,8 +22,8 @@ import {
 } from '../state.js';
 
 describe('state paths', () => {
-  it('keeps system resource directories under ~/.agents-system', () => {
-    const systemRoot = path.join(os.homedir(), '.agents-system');
+  it('keeps system resource directories under ~/.agents/.system', () => {
+    const systemRoot = path.join(os.homedir(), '.agents', '.system');
 
     expect(getCommandsDir()).toBe(path.join(systemRoot, 'commands'));
     expect(getHooksDir()).toBe(path.join(systemRoot, 'hooks'));
@@ -128,7 +128,7 @@ describe('readMeta merges agents.yaml from both repos', () => {
   beforeEach(() => {
     testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'state-test-'));
     userDir = path.join(testDir, '.agents');
-    systemDir = path.join(testDir, '.agents-system');
+    systemDir = path.join(userDir, '.system');
     fs.mkdirSync(userDir, { recursive: true });
     fs.mkdirSync(systemDir, { recursive: true });
   });
@@ -290,7 +290,7 @@ describe('readMeta merges agents.yaml from both repos', () => {
       import { syncBuiltinESMExports } from 'module';
 
       const targetUser = path.join(process.env.HOME, '.agents', 'agents.yaml');
-      const targetSystem = path.join(process.env.HOME, '.agents-system', 'agents.yaml');
+      const targetSystem = path.join(process.env.HOME, '.agents', '.system', 'agents.yaml');
       const originalRead = fs.readFileSync;
       let reads = 0;
       fs.readFileSync = (file, opts) => {

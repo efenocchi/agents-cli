@@ -22,8 +22,8 @@ function writeUpdateCache(tempHome: string): void {
     JSON.stringify({ lastCheck: Date.now(), latestVersion: packageJson.version }),
     'utf-8'
   );
-  // ensureInitialized() checks for ~/.agents-system/.git to confirm setup.
-  fs.mkdirSync(path.join(tempHome, '.agents-system', '.git'), { recursive: true });
+  // ensureInitialized() checks for ~/.agents/.system/.git to confirm setup.
+  fs.mkdirSync(path.join(tempHome, '.agents', '.system', '.git'), { recursive: true });
 }
 
 function writeClaudeSession(

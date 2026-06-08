@@ -1,6 +1,6 @@
 /**
  * Background sync for tracked git repos:
- *   - System repo (~/.agents-system/) is read-only locally — fast-forward auto-pull is safe.
+ *   - System repo (~/.agents/.system/) is read-only locally — fast-forward auto-pull is safe.
  *   - User repo (~/.agents/) and enabled extras may have local commits, so we only
  *     `git fetch` and write a status marker. Next CLI invocation surfaces a one-line
  *     notice if upstream is ahead. Pulling is left to the user via `agents repo pull`.

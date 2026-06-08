@@ -11,10 +11,63 @@ import * as os from 'os';
 import * as yaml from 'yaml';
 
 const HOME = process.env.HOME ?? os.homedir();
-const SYSTEM_DIR = path.join(HOME, '.agents-system');
 const USER_DIR = path.join(HOME, '.agents');
+/** Canonical system-repo location (post-fold). */
+const SYSTEM_DIR = path.join(USER_DIR, '.system');
+/** Legacy system-repo location — folded into SYSTEM_DIR by foldLegacySystemRepo(). */
+const LEGACY_SYSTEM_DIR = path.join(HOME, '.agents-system');
 const HISTORY_DIR = path.join(USER_DIR, '.history');
 const CACHE_DIR = path.join(USER_DIR, '.cache');
+
+/**
+ * Fold ~/.agents-system/ into ~/.agents/.system/.
+ *
+ * MUST run first in runMigration() — every other migrator reads SYSTEM_DIR
+ * (the new path), so the contents have to be there before they execute.
+ *
+ * Strategy:
+ *   1. If legacy dir doesn't exist or is already a symlink, no-op.
+ *   2. If new path doesn't exist yet, rename in one shot (fast path).
+ *   3. If both exist (mid-migration / re-run on partially-migrated state),
+ *      merge legacy → new with new winning on collision, then drop legacy.
+ *
+ * After the contents move, the legacy path becomes a symlink → SYSTEM_DIR
+ * so external tooling that still references ~/.agents-system/ keeps
+ * resolving correctly. The symlink is harmless on its own and can be
+ * removed with `rm ~/.agents-system` once everything has updated.
+ *
+ * Idempotent: re-running converges to "contents at SYSTEM_DIR, symlink at
+ * LEGACY_SYSTEM_DIR" without duplicating data.
+ */
+function foldLegacySystemRepo(): void {
+  let legacyStat: fs.Stats | null = null;
+  try { legacyStat = fs.lstatSync(LEGACY_SYSTEM_DIR); } catch { /* missing */ }
+  if (!legacyStat) return;
+  if (legacyStat.isSymbolicLink()) return;
+  if (!legacyStat.isDirectory()) return;
+
+  try {
+    fs.mkdirSync(USER_DIR, { recursive: true, mode: 0o700 });
+  } catch { /* best-effort */ }
+
+  if (!fs.existsSync(SYSTEM_DIR)) {
+    try {
+      fs.renameSync(LEGACY_SYSTEM_DIR, SYSTEM_DIR);
+      try { fs.symlinkSync(SYSTEM_DIR, LEGACY_SYSTEM_DIR); } catch { /* best-effort */ }
+      console.error('Folded ~/.agents-system/ into ~/.agents/.system/ (left back-compat symlink)');
+      return;
+    } catch {
+      // Cross-device rename or perm issue — fall through to copy + remove.
+    }
+  }
+
+  try {
+    copyDirSkipExisting(LEGACY_SYSTEM_DIR, SYSTEM_DIR);
+    fs.rmSync(LEGACY_SYSTEM_DIR, { recursive: true, force: true });
+    try { fs.symlinkSync(SYSTEM_DIR, LEGACY_SYSTEM_DIR); } catch { /* best-effort */ }
+    console.error('Merged ~/.agents-system/ into ~/.agents/.system/ (left back-compat symlink)');
+  } catch { /* best-effort */ }
+}
 
 /**
  * Move ~/.agents-system/agents.yaml -> ~/.agents/agents.yaml.
@@ -1332,6 +1385,8 @@ function migrateVersionResourcesToPatterns(): void {
 
 /** Run all idempotent migrations. Safe to call multiple times. */
 export async function runMigration(): Promise<void> {
+  // MUST run first: every other migrator reads SYSTEM_DIR (the new path).
+  foldLegacySystemRepo();
   migrateAgentsYaml();
   deleteSystemPromptsJson();
   migrateSystemConfigJson();

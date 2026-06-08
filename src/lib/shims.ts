@@ -286,7 +286,6 @@ export GROK_HOME="$VERSION_DIR/home/.grok"
 # Shim for ${agentConfig.name}
 # ${SHIM_VERSION_MARKER} ${SHIM_SCHEMA_VERSION}
 
-AGENTS_SYSTEM_DIR="$HOME/.agents-system"
 AGENTS_USER_DIR="$HOME/.agents"
 AGENTS_BIN=${agentsBin}
 AGENT="${agent}"
@@ -297,10 +296,10 @@ if [ -z "$AGENTS_BIN" ] || [ ! -x "$AGENTS_BIN" ]; then
   exit 127
 fi
 
-# Find project agents.yaml walking up from cwd (skip $HOME/.agents-system/agents.yaml)
+# Find project agents.yaml walking up from cwd (skip $HOME/.agents/agents.yaml)
 find_project_version() {
   local dir="$PWD"
-  local user_agents_yaml="$AGENTS_SYSTEM_DIR/agents.yaml"
+  local user_agents_yaml="$AGENTS_USER_DIR/agents.yaml"
   while [ "$dir" != "/" ]; do
     local candidate="$dir/agents.yaml"
     if [ -f "$candidate" ] && [ "$candidate" != "$user_agents_yaml" ]; then

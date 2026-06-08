@@ -84,7 +84,7 @@ export function getProjectRunStrategy(agent: AgentId, startPath: string): RunStr
 /**
  * Resolve the configured strategy. Lookup order:
  *   1. project-local agents.yaml (nearest to `startPath`)
- *   2. ~/.agents-system/agents.yaml
+ *   2. ~/.agents/.system/agents.yaml
  *   3. default: `available` (use the pinned default version when healthy,
  *      otherwise fall through to a healthy account so a single rate-limited
  *      account doesn't block the run).

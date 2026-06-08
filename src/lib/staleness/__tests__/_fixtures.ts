@@ -2,7 +2,7 @@
  * End-to-end fixture helpers for the staleness library.
  *
  * Each test gets a temp directory acting as $HOME, with `.agents/` (user),
- * `.agents-system/` (system), and `project/.agents/` (project). The
+ * `.agents/.system/` (system), and `project/.agents/` (project). The
  * `harness()` function spawns a Bun subprocess with HOME=<tmpdir> so the
  * library resolves paths into that temp tree — no module mocking, no
  * `vi.resetModules`, just real filesystem isolation. Works under both
@@ -30,7 +30,7 @@ export interface Fixture {
 export function newFixture(prefix: string): Fixture {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), `stale-e2e-${prefix}-`));
   const userDir = path.join(home, '.agents');
-  const systemDir = path.join(home, '.agents-system');
+  const systemDir = path.join(userDir, '.system');
   const projectRoot = path.join(home, 'project');
   const projectAgents = path.join(projectRoot, '.agents');
   fs.mkdirSync(userDir, { recursive: true });

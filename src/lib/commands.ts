@@ -654,7 +654,7 @@ export function installCommandCentrally(
 }
 
 /**
- * List commands from user (~/.agents/commands/) and system (~/.agents-system/commands/) dirs.
+ * List commands from user (~/.agents/commands/) and system (~/.agents/.system/commands/) dirs.
  * User dir takes priority; deduplication preserves first occurrence.
  */
 export function listCentralCommands(): string[] {

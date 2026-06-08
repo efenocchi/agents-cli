@@ -11,9 +11,11 @@ import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 const HOME = os.homedir();
-const SHIMS_DIR = path.join(HOME, '.agents', '.cache', 'shims');
-const SYSTEM_DIR = path.join(HOME, '.agents-system');
 const USER_DIR = path.join(HOME, '.agents');
+const SHIMS_DIR = path.join(USER_DIR, '.cache', 'shims');
+// System repo lives inside the user repo (folded in v1.21). Legacy installs at
+// ~/.agents-system/ are migrated by src/lib/migrate.ts on first CLI invocation.
+const SYSTEM_DIR = path.join(USER_DIR, '.system');
 const AGENTS_BIN = fileURLToPath(new URL('../dist/index.js', import.meta.url));
 const INSTALL_HELPER_SCRIPT = fileURLToPath(new URL('./install-helper.js', import.meta.url));
 
@@ -43,72 +45,16 @@ To complete setup, run: npx agents setup
   process.exit(0);
 }
 
-// Create directories
+// Create directories. The full migration (legacy ~/.agents-system/ fold,
+// runtime-state bucket moves, etc.) runs from src/lib/migrate.ts on the first
+// CLI invocation — we don't duplicate it here.
+fs.mkdirSync(USER_DIR, { recursive: true, mode: 0o700 });
 fs.mkdirSync(SHIMS_DIR, { recursive: true });
 fs.mkdirSync(SYSTEM_DIR, { recursive: true });
-fs.mkdirSync(USER_DIR, { recursive: true, mode: 0o700 });
 
 // Copy the signed macOS Keychain helper to a stable user path so its trusted-app
 // ACLs survive future npm publishes (which re-sign the bundle).
 installKeychainHelper();
-
-// One-shot idempotent migrations
-function runMigrations() {
-  // 1. Move agents.yaml from system to user repo
-  const src = path.join(SYSTEM_DIR, 'agents.yaml');
-  const dest = path.join(USER_DIR, 'agents.yaml');
-  if (fs.existsSync(src) && !fs.existsSync(dest)) {
-    try { fs.renameSync(src, dest); } catch { /* best-effort */ }
-  }
-
-  // 2. Delete dead prompts.json
-  const promptsJson = path.join(SYSTEM_DIR, 'prompts.json');
-  if (fs.existsSync(promptsJson)) {
-    try { fs.unlinkSync(promptsJson); } catch { /* best-effort */ }
-  }
-
-  // 3. Move legacy config.json to ~/.agents/teams/config.json
-  const configSrc = path.join(SYSTEM_DIR, 'config.json');
-  const configDest = path.join(USER_DIR, 'teams', 'config.json');
-  if (fs.existsSync(configSrc) && !fs.existsSync(configDest)) {
-    try {
-      fs.mkdirSync(path.dirname(configDest), { recursive: true });
-      fs.copyFileSync(configSrc, configDest);
-      fs.unlinkSync(configSrc);
-    } catch { /* best-effort */ }
-  }
-
-  // 4. Move installed agent versions from ~/.agents/versions/ -> ~/.agents-system/versions/
-  // Pre-split layout put binaries under the user repo. Post-split, listInstalledVersions
-  // only scans the system root, so legacy installs become invisible without this move.
-  const userVersions = path.join(USER_DIR, 'versions');
-  const sysVersions = path.join(SYSTEM_DIR, 'versions');
-  if (fs.existsSync(userVersions)) {
-    try {
-      let moved = 0;
-      let skipped = 0;
-      for (const agent of fs.readdirSync(userVersions, { withFileTypes: true })) {
-        if (!agent.isDirectory()) continue;
-        const srcAgentDir = path.join(userVersions, agent.name);
-        const dstAgentDir = path.join(sysVersions, agent.name);
-        try { fs.mkdirSync(dstAgentDir, { recursive: true }); } catch {}
-        for (const ver of fs.readdirSync(srcAgentDir, { withFileTypes: true })) {
-          if (!ver.isDirectory()) continue;
-          const src = path.join(srcAgentDir, ver.name);
-          const dst = path.join(dstAgentDir, ver.name);
-          if (fs.existsSync(dst)) { skipped++; continue; }
-          try { fs.renameSync(src, dst); moved++; } catch {}
-        }
-        try { if (fs.readdirSync(srcAgentDir).length === 0) fs.rmdirSync(srcAgentDir); } catch {}
-      }
-      try { if (fs.readdirSync(userVersions).length === 0) fs.rmdirSync(userVersions); } catch {}
-      if (moved > 0) console.log(`  Migrated ${moved} agent version dir(s) to ~/.agents-system/versions/`);
-      if (skipped > 0) console.log(`  Kept ${skipped} legacy version dir(s) at ~/.agents/versions/ (already present in system root)`);
-    } catch { /* best-effort */ }
-  }
-}
-
-runMigrations();
 
 const shellName = path.basename(process.env.SHELL || '/bin/bash');
 
