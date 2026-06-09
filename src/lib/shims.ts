@@ -283,7 +283,13 @@ export COPILOT_HOME="$VERSION_DIR/home/${configDirName}"
 # This gives agents-cli full versioned isolation + resource sync for grok.
 export GROK_HOME="$VERSION_DIR/home/.grok"
 `
-          : '';
+          : agent === 'kimi'
+            ? `
+# Kimi Code CLI honors KIMI_CODE_HOME to relocate ~/.kimi-code (config.toml,
+# mcp.json, sessions, skills, hooks). Point it at the versioned home.
+export KIMI_CODE_HOME="$VERSION_DIR/home/${configDirName}"
+`
+            : '';
 
   const launchArgs = agent === 'codex' ? ' -c check_for_update_on_startup=false' : '';
 
@@ -423,6 +429,16 @@ if [ "$AGENT" = "grok" ]; then
   if [ -z "$BINARY" ] || [ ! -x "$BINARY" ]; then
     # Last resort: whatever is on PATH (user may have installed grok globally)
     BINARY=$(command -v grok 2>/dev/null || echo "")
+  fi
+# Kimi special case: binary lives in ~/.kimi-code/bin/, not node_modules.
+# We still use the agents-cli version dir purely for KIMI_CODE_HOME isolation.
+elif [ "$AGENT" = "kimi" ]; then
+  KIMI_BINARY="$HOME/.kimi-code/bin/kimi"
+  if [ -x "$KIMI_BINARY" ]; then
+    BINARY="$KIMI_BINARY"
+  else
+    # Last resort: whatever is on PATH
+    BINARY=$(command -v kimi 2>/dev/null || echo "")
   fi
 else
   BINARY="$VERSION_DIR/node_modules/.bin/$CLI_COMMAND"
@@ -595,7 +611,13 @@ export CODEX_HOME="$HOME/.agents/.history/versions/${agent}/${version}/home/${co
 # version MCP and session state are isolated.
 export COPILOT_HOME="$HOME/.agents/.history/versions/${agent}/${version}/home/${configDirName}"
 `
-        : '';
+        : agent === 'kimi'
+          ? `
+# Kimi Code CLI honors KIMI_CODE_HOME to relocate ~/.kimi-code (config.toml,
+# mcp.json, sessions, skills, hooks). Point direct aliases at the versioned home.
+export KIMI_CODE_HOME="$HOME/.agents/.history/versions/${agent}/${version}/home/${configDirName}"
+`
+          : '';
   const launchArgs = agent === 'codex' ? ' -c check_for_update_on_startup=false' : '';
 
   return `#!/bin/bash

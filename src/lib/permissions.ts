@@ -22,7 +22,7 @@ import type {
 } from './types.js';
 import { getPermissionsDir, getUserPermissionsDir, ensureAgentsDir } from './state.js';
 import { safeJoin } from './paths.js';
-import { AGENTS } from './agents.js';
+import { AGENTS, agentConfigDirName } from './agents.js';
 import { updateGeminiSettings } from './gemini-settings.js';
 
 const HOME = os.homedir();
@@ -1074,7 +1074,7 @@ export function applyPermissionsToVersion(
   versionHome: string,
   merge: boolean = true
 ): { success: boolean; error?: string } {
-  const configDir = path.join(versionHome, `.${agentId}`);
+  const configDir = path.join(versionHome, agentConfigDirName(agentId));
 
   try {
     fs.mkdirSync(configDir, { recursive: true });
