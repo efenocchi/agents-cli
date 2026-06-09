@@ -43,6 +43,7 @@
 
 import * as crypto from 'crypto';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import type { AgentId, MarketplaceSpec } from './types.js';
 import { supports } from './capabilities.js';
@@ -92,6 +93,11 @@ export interface LaunchSyncResult {
 /**
  * Run the launch-time project compile. Safe to call on every agent launch:
  * each step is idempotent and skips when its inputs are missing.
+ *
+ * After a successful run, touches the shim-side skip-fast sentinel at
+ * `~/.agents/.cache/launch-sync/<agent>@<version>@<projectslug>` so the next
+ * shim invocation can skip the node spawn entirely when no source dir is
+ * newer than the sentinel (shim schema v17+).
  */
 export function runLaunchSync(opts: LaunchSyncOptions): LaunchSyncResult {
   const result: LaunchSyncResult = {
@@ -117,7 +123,40 @@ export function runLaunchSync(opts: LaunchSyncOptions): LaunchSyncResult {
   // Step 3: scoped plugin marketplaces
   result.marketplaces = synthesizeScopedMarketplaces(opts.agent, opts.version, opts.cwd);
 
+  // Touch the shim's skip-fast sentinel. Best-effort — if this fails the
+  // shim just won't skip on the next launch, which is correct fallback.
+  touchLaunchSentinel(opts.agent, opts.version, opts.cwd);
+
   return result;
+}
+
+/**
+ * Path of the shim's skip-fast sentinel for this (agent, version, cwd) tuple.
+ * Must match the SHIM-SIDE format in src/lib/shims.ts (PROJECT_SLUG derivation):
+ *   slug = PWD with `/` → `_` and ` ` → `_`
+ *
+ * Cache leak note: this dir accumulates one zero-byte file per
+ * (agent, version, project) tuple ever launched. Disk impact is negligible
+ * (inodes only). A periodic GC belongs in `agents prune` — follow-up.
+ */
+function launchSentinelPath(agent: AgentId, version: string, cwd: string): string {
+  const slug = cwd.replace(/\//g, '_').replace(/ /g, '_');
+  // Prefer $HOME (respects test overrides + matches bash's $HOME expansion in
+  // the shim), fall back to os.homedir() so the lookup never resolves to '/'
+  // if HOME is somehow unset.
+  const home = process.env.HOME || os.homedir();
+  return path.join(home, '.agents', '.cache', 'launch-sync', `${agent}@${version}@${slug}`);
+}
+
+function touchLaunchSentinel(agent: AgentId, version: string, cwd: string): void {
+  try {
+    const sentinel = launchSentinelPath(agent, version, cwd);
+    fs.mkdirSync(path.dirname(sentinel), { recursive: true });
+    // Empty content — purely an mtime carrier for the shim's `[ -nt ]` compare.
+    fs.writeFileSync(sentinel, '');
+  } catch {
+    // best-effort
+  }
 }
 
 // ─── Step 2: workspace resource mirror ────────────────────────────────────────
