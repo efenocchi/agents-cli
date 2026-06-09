@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import type { SessionState } from './types.js';
 
-export const STATE_DIR = path.join(os.homedir(), '.agents', '.cache', 'state', 'sessions');
+export const STATE_DIR = path.join(os.homedir(), '.agents', '.cache', 'terminals', 'sessions');
 
 export function stateFilePath(pid: number): string {
   return path.join(STATE_DIR, `${pid}.json`);

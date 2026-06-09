@@ -6,7 +6,7 @@ One reliable way to know which session a coding-agent CLI is currently running.
 
 Each agent CLI (claude / codex / gemini / cursor / grok / opencode / antigravity) emits its session id differently — some via SessionStart hooks (stdin JSON), some via env vars, some only via session-file presence. swarmify and agents-cli both reinvented per-agent detection logic and both got it wrong in subtle ways (stale ids in the status bar; persisted-session fuzzy matching at restore time).
 
-This package gives every agent **one canonical state file** at `~/.agents/.cache/state/sessions/<pid>.json`, written by **one polyglot SessionStart hook**, read by **one descendant-pid lookup**.
+This package gives every agent **one canonical state file** at `~/.agents/.cache/terminals/sessions/<pid>.json`, written by **one polyglot SessionStart hook**, read by **one descendant-pid lookup**.
 
 ## Pieces
 
