@@ -10,6 +10,7 @@ import type { Command } from 'commander';
 import chalk from 'chalk';
 import type { ExecOptions, ExecMode, ExecEffort, FallbackEntry } from '../lib/exec.js';
 import type { AgentId } from '../lib/types.js';
+import type { ResolvedRunDefaults } from '../lib/run-defaults.js';
 import { setHelpSections } from '../lib/help.js';
 import type { RotateResult } from '../lib/rotate.js';
 import { AGENTS } from '../lib/agents.js';
@@ -153,9 +154,10 @@ export function registerRunCommand(program: Command): void {
         { profileExists, resolveProfileForRun },
         { readAndResolveBundleEnv, describeBundle },
         { getConfiguredRunStrategy, normalizeRunStrategy, resolveRunVersion, RUN_STRATEGIES },
-        { getGlobalDefault, getVersionHomePath, resolveVersionAlias },
+        { getGlobalDefault, getVersionHomePath, resolveVersion, resolveVersionAlias },
         { buildDiscoveredPlugin, loadPluginManifest, syncPluginToVersion },
         { parseWorkflowFrontmatter, resolveWorkflowRef },
+        { resolveRunDefaults },
       ] = await Promise.all([
         import('../lib/exec.js'),
         import('../lib/agents.js'),
@@ -165,6 +167,7 @@ export function registerRunCommand(program: Command): void {
         import('../lib/versions.js'),
         import('../lib/plugins.js'),
         import('../lib/workflows.js'),
+        import('../lib/run-defaults.js'),
       ]);
       const isValidAgent = (agent: string): agent is AgentId => ALL_AGENT_IDS.includes(agent as AgentId);
 
@@ -174,6 +177,7 @@ export function registerRunCommand(program: Command): void {
       let version: string | undefined = rawVersion || undefined;
       let profileEnv: Record<string, string> | undefined;
       let fromProfile = false;
+      let workflowModel: string | undefined;
       const cwd = options.cwd ?? process.cwd();
 
       if (isValidAgent(rawAgent)) {
@@ -202,6 +206,10 @@ export function registerRunCommand(program: Command): void {
         //   subagents/*.md     ← flat .md files copied to ~/.claude/agents/ for Agent tool discovery
         const workflowDir = resolveWorkflowRef(rawAgent, cwd)!;
         agent = 'claude';
+        const workflowFrontmatter = parseWorkflowFrontmatter(workflowDir);
+        if (typeof workflowFrontmatter?.model === 'string' && workflowFrontmatter.model.trim() !== '') {
+          workflowModel = workflowFrontmatter.model.trim();
+        }
 
         const resolvedVersion = resolveVersionAlias('claude', version);
         const versionHome = getVersionHomePath('claude', resolvedVersion ?? getGlobalDefault('claude') ?? '');
@@ -255,8 +263,7 @@ export function registerRunCommand(program: Command): void {
         // Auto-inject secrets bundles declared in the workflow's frontmatter `secrets:` field.
         // Union with any --secrets flags the user passed; dedupe. Skip when --no-auto-secrets is set.
         if (!options.noAutoSecrets) {
-          const fm = parseWorkflowFrontmatter(workflowDir);
-          const declared = fm?.secrets ?? [];
+          const declared = workflowFrontmatter?.secrets ?? [];
           if (declared.length > 0) {
             const existing = new Set(options.secrets);
             const added: string[] = [];
@@ -336,9 +343,19 @@ export function registerRunCommand(program: Command): void {
         }
       }
 
+      const defaultVersion = version ?? resolveVersion(agent, cwd);
+      const runDefaults: ResolvedRunDefaults = fromProfile
+        ? { sources: {} }
+        : resolveRunDefaults(agent, defaultVersion, cwd);
+
       // Accept the four canonical modes plus 'full' as a permanent silent
       // alias for 'skip' (rewritten downstream by normalizeMode in exec.ts).
       let mode = options.mode as ExecMode;
+      const modeSource = runCmd.getOptionValueSource('mode');
+      const modeFromRunDefault = modeSource === 'default' && !!runDefaults.mode;
+      if (modeFromRunDefault) {
+        mode = runDefaults.mode as ExecMode;
+      }
       if (!['plan', 'edit', 'auto', 'skip', 'full'].includes(mode)) {
         console.error(chalk.red(`Invalid mode: ${mode}. Use plan, edit, auto, or skip ('full' accepted as alias for skip).`));
         process.exit(1);
@@ -351,12 +368,11 @@ export function registerRunCommand(program: Command): void {
       // user did not ask for read-only, they asked for "just run it." An
       // explicit --mode plan still throws (see resolveMode), because silently
       // elevating an explicit read-only request to edit is unsafe.
-      const modeSource = runCmd.getOptionValueSource('mode');
       const modeIsDefault = modeSource === 'default';
       try {
         resolveMode(agent, normalizeMode(mode));
       } catch (err) {
-        if (modeIsDefault) {
+        if (modeIsDefault && !modeFromRunDefault) {
           mode = defaultModeFor(agent) as ExecMode;
           if (!options.quiet) {
             process.stderr.write(chalk.gray(`[agents] ${agent} has no '${options.mode}' mode; using '${mode}'\n`));
@@ -410,6 +426,12 @@ export function registerRunCommand(program: Command): void {
         ? { ...(profileEnv ?? {}), ...secretsEnv, ...(userEnv ?? {}) }
         : undefined;
 
+      const modelSource = runCmd.getOptionValueSource('model');
+      const model = options.model
+        ?? (!fromProfile && modelSource === undefined
+          ? (workflowModel ?? (options.fallback ? undefined : runDefaults.model))
+          : undefined);
+
       const execOptions: ExecOptions = {
         agent,
         version,
@@ -418,7 +440,7 @@ export function registerRunCommand(program: Command): void {
         mode,
         effort,
         cwd: options.cwd,
-        model: options.model,
+        model,
         addDirs: options.addDir,
         json: options.json,
         headless: options.headless ?? true,

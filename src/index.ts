@@ -81,6 +81,7 @@ import { registerDaemonCommands } from './commands/daemon.js';
 import { registerRoutinesCommands } from './commands/routines.js';
 import { registerRunCommand } from './commands/exec.js';
 import { registerModelsCommand } from './commands/models.js';
+import { registerDefaultsCommands } from './commands/defaults.js';
 import { registerPruneCommand } from './commands/prune.js';
 import { registerTrashCommands } from './commands/trash.js';
 import { registerDoctorCommand } from './commands/doctor.js';
@@ -170,6 +171,7 @@ Packages:
 
 Run and dispatch:
   run <agent|profile> [prompt]    Run an agent. Omit prompt for interactive mode.
+  defaults                        Configure run defaults by agent/version selector
   teams                           Coordinate multiple agents on shared work
   routines                        Run agents on a cron schedule (scheduler auto-starts)
   sessions                        Browse, search, and replay past runs (live-search in TTY; grouped by workspace)
@@ -626,6 +628,7 @@ registerPackagesCommands(program);
 registerDaemonCommands(program);
 registerRoutinesCommands(program);
 registerRunCommand(program);
+registerDefaultsCommands(program);
 registerModelsCommand(program);
 registerPruneCommand(program);
 registerTrashCommands(program);

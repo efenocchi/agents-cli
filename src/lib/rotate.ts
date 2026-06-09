@@ -6,13 +6,12 @@
  */
 
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
-import * as yaml from 'yaml';
 import type { AgentId, RunStrategy } from './types.js';
 import { getAccountInfo, type AccountInfo } from './agents.js';
-import { readMeta, writeMeta, getHelpersDir, getUserAgentsDir } from './state.js';
+import { readMeta, writeMeta, getHelpersDir } from './state.js';
 import { listInstalledVersions, getVersionHomePath, resolveVersion } from './versions.js';
+import { getProjectRunConfigs } from './run-config.js';
 import {
   getUsageInfoByIdentity,
   getUsageLookupKey,
@@ -61,21 +60,9 @@ export function normalizeRunStrategy(value: unknown): RunStrategy | null {
 
 /** Read project-local run strategy from the nearest agents.yaml, if present. */
 export function getProjectRunStrategy(agent: AgentId, startPath: string): RunStrategy | null {
-  let dir = path.resolve(startPath);
-  const userAgentsYaml = path.join(getUserAgentsDir(), 'agents.yaml');
-
-  while (dir !== path.dirname(dir)) {
-    const manifestPath = path.join(dir, 'agents.yaml');
-    if (manifestPath !== userAgentsYaml && fs.existsSync(manifestPath)) {
-      try {
-        const parsed = yaml.parse(fs.readFileSync(manifestPath, 'utf-8'));
-        const strategy = normalizeRunStrategy(parsed?.run?.[agent]?.strategy);
-        if (strategy) return strategy;
-      } catch {
-        // Ignore malformed project config and keep walking, matching version resolution.
-      }
-    }
-    dir = path.dirname(dir);
+  for (const runConfig of getProjectRunConfigs(startPath)) {
+    const strategy = normalizeRunStrategy(runConfig[agent]?.strategy);
+    if (strategy) return strategy;
   }
 
   return null;
