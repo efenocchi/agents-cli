@@ -9,6 +9,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as yaml from 'yaml';
+import type { AgentId } from './types.js';
+import { AGENTS, agentConfigDirName } from './agents.js';
 
 const HOME = process.env.HOME ?? os.homedir();
 const USER_DIR = path.join(HOME, '.agents');
@@ -615,12 +617,13 @@ function repairAgentConfigSymlinks(): void {
 
   let repaired = 0;
   for (const { agent, version } of defaults) {
-    const userTarget = fs.existsSync(path.join(HISTORY_DIR, 'versions', agent, version, 'home', `.${agent}`))
-      ? path.join(HISTORY_DIR, 'versions', agent, version, 'home', `.${agent}`)
-      : path.join(USER_DIR, 'versions', agent, version, 'home', `.${agent}`);
+    const configDirName = agent in AGENTS ? agentConfigDirName(agent as AgentId) : `.${agent}`;
+    const userTarget = fs.existsSync(path.join(HISTORY_DIR, 'versions', agent, version, 'home', configDirName))
+      ? path.join(HISTORY_DIR, 'versions', agent, version, 'home', configDirName)
+      : path.join(USER_DIR, 'versions', agent, version, 'home', configDirName);
     if (!fs.existsSync(userTarget)) continue;
 
-    const symlinkPath = path.join(HOME, `.${agent}`);
+    const symlinkPath = path.join(HOME, configDirName);
     let stat: fs.Stats | null = null;
     try { stat = fs.lstatSync(symlinkPath); } catch { /* missing */ }
     if (stat && stat.isSymbolicLink()) {

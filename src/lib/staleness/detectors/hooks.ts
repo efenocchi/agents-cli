@@ -3,9 +3,9 @@
  * whose contents match the central source. Mirrors versions.ts:391-421.
  */
 import * as fs from 'fs';
+import { agentConfigDirName } from '../../agents.js';
 import * as path from 'path';
 import type { AgentId } from '../../types.js';
-import { agentConfigDirName } from '../../agents.js';
 import { capableAgents } from '../../capabilities.js';
 import { resolveHookSource } from '../writers/sources.js';
 import type { ResourceDetector, DetectArgs } from './types.js';

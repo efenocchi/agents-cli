@@ -6,6 +6,7 @@
  */
 
 import * as fs from 'fs';
+import { agentConfigDirName } from '../agents.js';
 import * as path from 'path';
 import * as yaml from 'yaml';
 import type { AgentId, Layer, ResolvedItem, ResourceHandler } from './types.js';
@@ -16,7 +17,6 @@ import {
   getProjectAgentsDir,
   getEnabledExtraRepos,
 } from '../state.js';
-import { agentConfigDirName } from '../agents.js';
 
 /**
  * Layer directory provider for dependency injection in tests.

@@ -5,9 +5,9 @@
  * stays in the orchestrator since it depends on the broader available set.
  */
 import * as fs from 'fs';
+import { agentConfigDirName } from '../../agents.js';
 import * as path from 'path';
 import type { AgentId } from '../../types.js';
-import { agentConfigDirName } from '../../agents.js';
 import { capableAgents } from '../../capabilities.js';
 import { safeJoin } from '../../paths.js';
 import { registerHooksToSettings } from '../../hooks.js';

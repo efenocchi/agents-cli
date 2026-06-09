@@ -27,10 +27,10 @@
  */
 
 import * as fs from 'fs';
+import { agentConfigDirName } from './agents.js';
 import * as path from 'path';
 import type { AgentId, DiscoveredPlugin, PluginManifest, MarketplaceSpec, DiscoveredMarketplace } from './types.js';
 import { getPluginsDir, getEnabledExtraRepos, getProjectPluginsDir } from './state.js';
-import { agentConfigDirName } from './agents.js';
 
 /**
  * Canonical name for the user-repo marketplace (~/.agents/plugins/). Kept as an

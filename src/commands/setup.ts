@@ -17,7 +17,7 @@ import { DEFAULT_SYSTEM_REPO, systemRepoSlug } from '../lib/types.js';
 import { getAgentsDir, getVersionsDir, ensureAgentsDir } from '../lib/state.js';
 import { isGitRepo, cloneIntoExisting, pullRepo } from '../lib/git.js';
 import { isPromptCancelled, isInteractiveTerminal } from './utils.js';
-import { AGENTS, getUnmanagedAgentInstalls, countSessionFiles, agentLabel } from '../lib/agents.js';
+import { AGENTS, agentConfigDirName, getUnmanagedAgentInstalls, countSessionFiles, agentLabel } from '../lib/agents.js';
 import { setGlobalDefault } from '../lib/versions.js';
 import { ensureShimCurrent, switchHomeFileSymlinks, isShimsInPath, addShimsToPath, getPathSetupInstructions } from '../lib/shims.js';
 import { setHelpSections } from '../lib/help.js';
@@ -33,7 +33,7 @@ async function importAgent(agentId: AgentId, version: string): Promise<{ success
   const configDir = agent.configDir;
   const versionsDir = getVersionsDir();
   const versionHome = path.join(versionsDir, agentId, version, 'home');
-  const versionConfigDir = path.join(versionHome, `.${agentId}`);
+  const versionConfigDir = path.join(versionHome, agentConfigDirName(agentId));
 
   // Skip if version dir already exists (collision)
   if (fs.existsSync(versionConfigDir)) {

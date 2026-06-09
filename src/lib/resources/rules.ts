@@ -10,6 +10,7 @@
  */
 
 import * as fs from 'fs';
+import { agentConfigDirName } from '../agents.js';
 import * as path from 'path';
 
 import type { AgentId, Layer, ResolvedItem, ResourceHandler } from './types.js';
@@ -19,7 +20,6 @@ import {
   getProjectAgentsDir,
   getEnabledExtraRepos,
 } from '../state.js';
-import { agentConfigDirName } from '../agents.js';
 
 const SUBRULES_DIR = 'subrules';
 const SUBRULES_README = 'README.md';

@@ -27,7 +27,7 @@ import type { AgentId, VersionResources } from './types.js';
 import { getVersionsDir, getShimsDir, ensureAgentsDir, readMeta, writeMeta, getCommandsDir, getSkillsDir, getHooksDir, getResolvedRulesDir, getUserRulesDir, getPermissionsDir, getSubagentsDir, getVersionResources, recordVersionResources, ensureVersionResourcePatterns, getMcpDir, getProjectAgentsDir, getPromptcutsPath, getUserPromptcutsPath, getEnabledExtraRepos, getAgentsDir, getOptionalUserAgentsDir, getUserAgentsDir, getTrashVersionsDir, getActiveRulesPreset } from './state.js';
 import { defaultPatterns, expandPatterns } from './resource-patterns.js';
 import { resolveResource, listResources } from './resources.js';
-import { AGENTS, getAccountEmail, getMcpConfigPathForHome, parseMcpConfig, resolveAgentName, formatAgentError } from './agents.js';
+import { AGENTS, agentConfigDirName, getAccountEmail, getMcpConfigPathForHome, parseMcpConfig, resolveAgentName, formatAgentError } from './agents.js';
 import { getDefaultPermissionSet, applyPermissionsToVersion as applyPermsToVersion, discoverPermissionGroups, getTotalPermissionRuleCount, buildPermissionsFromGroups, CODEX_RULES_FILENAME, getActivePermissionPresetName, readPermissionPresetRecipe, PERMISSION_PRESET_ENV_VAR } from './permissions.js';
 import { installMcpServers, parseMcpServerConfig } from './mcp.js';
 import { markdownToToml } from './convert.js';
@@ -1274,7 +1274,7 @@ export function removeVersion(agent: AgentId, version: string): boolean {
   // Clean up dangling config symlink if it pointed to the removed version
   const symlinkVersion = getConfigSymlinkVersion(agent);
   if (symlinkVersion === version) {
-    const configPath = path.join(os.homedir(), `.${agent}`);
+    const configPath = path.join(os.homedir(), agentConfigDirName(agent));
     try {
       fs.unlinkSync(configPath);
     } catch {
@@ -1501,7 +1501,7 @@ export interface ResourceDiff {
 export function getResourceDiff(agent: AgentId, version: string): ResourceDiff {
   const agentConfig = AGENTS[agent];
   const versionHome = getVersionHomePath(agent, version);
-  const agentDir = path.join(versionHome, `.${agent}`);
+  const agentDir = path.join(versionHome, agentConfigDirName(agent));
 
   const diff: ResourceDiff = {
     commands: { added: [], dangling: [] },
@@ -1654,7 +1654,7 @@ export function getResourceDiff(agent: AgentId, version: string): ResourceDiff {
 export function syncResourcesToVersion(agent: AgentId, version: string, selection?: ResourceSelection, options: { projectDir?: string; cwd?: string; force?: boolean } = {}): SyncResult {
   const agentConfig = AGENTS[agent];
   const versionHome = getVersionHomePath(agent, version);
-  const agentDir = path.join(versionHome, `.${agent}`);
+  const agentDir = path.join(versionHome, agentConfigDirName(agent));
   fs.mkdirSync(agentDir, { recursive: true });
   // Capture whether the caller passed a selection. The pattern-expansion
   // path below reassigns `selection`, but for manifest write semantics we

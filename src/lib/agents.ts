@@ -744,15 +744,19 @@ export function ensureSkillsDir(agentId: AgentId): void {
  * The agent's config-dir name relative to $HOME — e.g. '.claude',
  * '.gemini/antigravity-cli', '.config/amp', '.kimi-code'.
  *
- * This is the path segment to join onto a (version) home root when locating an
- * agent's commands/skills/plugins. Do NOT hardcode `.${agentId}`: it is wrong
- * for every agent whose config dir is nested or lives under ~/.config —
- * antigravity (~/.gemini/antigravity-cli), amp (~/.config/amp),
- * goose (~/.config/goose), kimi (~/.kimi-code). Mirrors the shim `configDirName`
- * derivation in shims.ts.
+ * Path segment to join onto a (version) home root when locating an agent's
+ * commands/skills/plugins. Do NOT hardcode `.${agentId}`: it is wrong for
+ * every agent whose config dir is nested or under ~/.config — antigravity
+ * (~/.gemini/antigravity-cli), amp (~/.config/amp), goose (~/.config/goose),
+ * kimi (~/.kimi-code). Mirrors the shim configDirName derivation in shims.ts.
+ *
+ * Relativized against the module-level HOME constant (the same value used to
+ * build every `configDir`), NOT a fresh `os.homedir()` — so the result stays a
+ * clean relative name even when HOME is overridden after module load (tests,
+ * sandboxes). Using `os.homedir()` here would yield `../../real/home/.claude`.
  */
 export function agentConfigDirName(agentId: AgentId): string {
-  return path.relative(os.homedir(), AGENTS[agentId].configDir);
+  return path.relative(HOME, AGENTS[agentId].configDir);
 }
 
 /** Account identity and billing information extracted from an agent's auth config. */
