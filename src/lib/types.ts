@@ -12,6 +12,22 @@ export type AgentId = 'claude' | 'codex' | 'gemini' | 'cursor' | 'opencode' | 'o
 /** How `agents run <agent>` chooses an installed version when none is pinned. */
 export type RunStrategy = 'pinned' | 'available' | 'balanced';
 
+/** Per-agent run strategy config. */
+export interface AgentRunConfig {
+  strategy?: RunStrategy;
+}
+
+/** Default launch options applied by `agents run` when flags are omitted. */
+export interface RunDefaults {
+  mode?: Mode;
+  model?: string;
+}
+
+/** `run:` section in agents.yaml. Agent keys keep strategy; `defaults` stores selector rules. */
+export type RunConfig = Partial<Record<AgentId, AgentRunConfig>> & {
+  defaults?: Record<string, RunDefaults>;
+};
+
 /** Preview features that users can opt into via `agents beta`. */
 export type BetaFeatureName = 'drive' | 'factory';
 
@@ -210,7 +226,7 @@ export interface InstalledHook {
 /** Package manifest (agents.yaml) found inside a cloned config repo or package. */
 export interface Manifest {
   agents?: Partial<Record<AgentId, string>>;
-  run?: Partial<Record<AgentId, { strategy?: RunStrategy }>>;
+  run?: RunConfig;
   beta?: {
     enabled?: BetaFeatureName[];
   };
@@ -520,7 +536,7 @@ export interface ExtraRepoConfig {
 /** Top-level structure of ~/.agents/.system/agents.yaml -- the CLI's persistent state. */
 export interface Meta {
   agents?: Partial<Record<AgentId, string>>;
-  run?: Partial<Record<AgentId, { strategy?: RunStrategy }>>;
+  run?: RunConfig;
   beta?: {
     enabled?: BetaFeatureName[];
   };

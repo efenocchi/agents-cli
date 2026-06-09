@@ -66,6 +66,7 @@ import { isGitRepo, getGitSyncStatus } from '../lib/git.js';
 import { getCentralRulesFileName } from '../lib/rules/rules.js';
 import { composeRulesFromState, type ComposedSubrule } from '../lib/rules/compose.js';
 import { getConfiguredRunStrategy } from '../lib/rotate.js';
+import { resolveRunDefaults } from '../lib/run-defaults.js';
 import { listProfiles, profileSummary, type ProfileSummary } from '../lib/profiles.js';
 import { loadManifest, isStale } from '../lib/staleness/index.js';
 import { confirm } from '@inquirer/prompts';
@@ -413,6 +414,10 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
         // Otherwise it reflects install time (misleading "just now" for fresh installs).
         const activeStr = vInfo && hasEmail ? formatLastActive(vInfo.lastActive) : '';
         const hasActive = activeStr.length > 0;
+        const runDefaults = resolveRunDefaults(agentId, version);
+        const runDefaultBits: string[] = [];
+        if (runDefaults.mode) runDefaultBits.push(`mode:${runDefaults.mode}`);
+        if (runDefaults.model) runDefaultBits.push(`model:${runDefaults.model}`);
 
         if (!hasEmail && !hasUsage) {
           // Installed but never signed in
@@ -432,6 +437,9 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
             parts.push(statusStr + statusPad);
           }
           if (hasActive) parts.push(activeStr);
+        }
+        if (runDefaultBits.length > 0) {
+          parts.push(chalk.gray(`run ${runDefaultBits.join(' ')}`));
         }
 
         console.log(parts.join('  '));
