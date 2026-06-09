@@ -25,7 +25,9 @@ import {
   handleStatus,
   handleStop,
   handleTasks,
+  toTaskStatusSummary,
   type AgentStatusDetail,
+  type AgentStatusSummary,
   type TaskInfo,
 } from '../lib/teams/api.js';
 import {
@@ -465,6 +467,58 @@ async function resolveTeammateSessions(
   return map;
 }
 
+// Default compact renderer — one block per teammate, optimized for the
+// orchestrator scanning "what state, what did you touch, what did you say
+// last." Caller passes the projected AgentStatusSummary; for the full
+// verbose layout use printAgentDetail above.
+function printAgentSummary(s: AgentStatusSummary): void {
+  const label = statusColor(s.status)(s.status.toUpperCase());
+  const handle = s.name ?? shortId(s.agent_id);
+  const ident = s.name ? chalk.gray(`(${shortId(s.agent_id)})`) : '';
+  const duration = s.duration ? `${chalk.gray(' · ')}${chalk.white(s.duration)}` : '';
+  const errBadge = s.has_errors ? chalk.red(' !') : '';
+  const tools = chalk.gray(` · ${s.tool_count} tools`);
+  console.log(
+    `  ${chalk.cyan(handle.padEnd(14))} ${ident.padEnd(11)} ${label}${duration}${tools}${errBadge}`
+  );
+
+  // Files: counts + basenames. Read is count only.
+  const fileLines: string[] = [];
+  const renderCat = (label: string, cat: { count: number; names: string[] }) => {
+    if (cat.count === 0) return;
+    const more = cat.count > cat.names.length ? ` +${cat.count - cat.names.length}` : '';
+    const names = cat.names.length ? ` ${cat.names.join(', ')}${more}` : '';
+    fileLines.push(`${label} ${cat.count}${names}`);
+  };
+  renderCat('modified', s.files.modified);
+  renderCat('created',  s.files.created);
+  renderCat('deleted',  s.files.deleted);
+  if (s.files.read.count > 0) fileLines.push(`read ${s.files.read.count}`);
+  if (fileLines.length) {
+    console.log(`    ${chalk.gray('files   ')} ${fileLines.join(chalk.gray(' · '))}`);
+  }
+
+  // Last 3 bash commands.
+  const recentBash = s.bash_commands.slice(-3);
+  if (recentBash.length) {
+    console.log(`    ${chalk.gray('bash    ')}`);
+    for (const cmd of recentBash) {
+      console.log(`      ${chalk.gray('$')} ${truncate(cmd, 96)}`);
+    }
+  }
+
+  // Last messages — first non-empty line of each, truncated.
+  if (s.last_messages.length) {
+    console.log(`    ${chalk.gray('messages')}`);
+    for (const msg of s.last_messages) {
+      const firstLine = msg.split(/\r?\n/).find((l) => l.trim()) || '';
+      if (firstLine) console.log(`      ${chalk.gray('>')} ${truncate(firstLine, 96)}`);
+    }
+  }
+
+  if (s.pr_url) console.log(`    ${chalk.gray('PR      ')} ${chalk.cyan(s.pr_url)}`);
+}
+
 // Render a team's status in the same format the `status` subcommand uses, so
 // the interactive picker's Enter action drops the user into a familiar view.
 async function printTeamStatus(team: string, result: import('../lib/teams/api.js').TaskStatusResult): Promise<void> {
@@ -494,6 +548,43 @@ async function printTeamStatus(team: string, result: import('../lib/teams/api.js
   }
   console.log();
   console.log(chalk.gray(`cursor: ${result.cursor}`));
+}
+
+// Compact default renderer — no session-file dive, no per-teammate
+// 15-line preview. One block per teammate, suitable for the orchestrator
+// scanning what each agent did. Use `printTeamStatus` (above) for the
+// verbose/legacy layout.
+function printTeamSummary(
+  team: string,
+  result: import('../lib/teams/api.js').TaskStatusSummaryResult
+): void {
+  const { summary, agents } = result;
+  console.log(
+    chalk.bold(`Team ${chalk.cyan(team)}  `) +
+      chalk.gray(
+        summary.pending > 0
+          ? `(${summary.pending} pending, ${summary.running} working, ${summary.completed} done, ${summary.failed} failed, ${summary.stopped} stopped)`
+          : `(${summary.running} working, ${summary.completed} done, ${summary.failed} failed, ${summary.stopped} stopped)`
+      )
+  );
+  if (agents.length === 0) {
+    console.log(chalk.gray('  (no teammates yet — add one with `agents teams add`)'));
+  } else {
+    const width = Math.min(process.stdout.columns || 80, 80);
+    const divider = chalk.gray('┈'.repeat(width));
+    for (let i = 0; i < agents.length; i++) {
+      console.log();
+      if (i > 0) {
+        console.log(divider);
+        console.log();
+      }
+      printAgentSummary(agents[i]);
+    }
+  }
+  console.log();
+  console.log(chalk.gray(`cursor: ${result.cursor}`));
+  console.log(chalk.gray('Full detail: agents teams status ' + team + ' --verbose'));
+  console.log(chalk.gray('Raw log:     agents teams logs --team ' + team + ' --teammate <name>'));
 }
 
 // Classify a team into a single bucket for --status filtering.
@@ -1118,13 +1209,14 @@ export function registerTeamsCommands(program: Command): void {
   teams
     .command('status [team]')
     .aliases(['s', 'st', 'check'])
-    .description("Check in on a team: who's working, what files they touched, recent commands, last output. Pass --since for efficient delta polling.")
+    .description("Check in on a team: status, files touched, recent commands, last messages. Pass --verbose for the full per-teammate dump; --since for delta polling.")
     .option('-f, --filter <state>', 'Show only teammates in this state: running, completed, failed, stopped, or all (default: all)', 'all')
     .option('-s, --since <iso>', 'Cursor from a previous status call; only show updates after this timestamp (enables efficient polling)')
     .option('--agent-id <id>', 'Show only this one teammate (by UUID or UUID prefix)')
+    .option('-v, --verbose', 'Emit the full per-teammate detail (prompt, all file paths, all messages). Default is a compact summary.')
     .option('--json', 'Output machine-readable JSON')
     .action(async (team: string | undefined, opts: {
-      filter: string; since?: string; agentId?: string; json?: boolean;
+      filter: string; since?: string; agentId?: string; json?: boolean; verbose?: boolean;
     }) => {
       const filter = opts.filter;
       const mgr = mkManager();
@@ -1141,9 +1233,16 @@ export function registerTeamsCommands(program: Command): void {
         const agents = opts.agentId
           ? result.agents.filter((a) => a.agent_id.startsWith(opts.agentId!))
           : result.agents;
+        const filtered = { ...result, agents };
 
         if (isJsonMode(opts)) {
-          console.log(JSON.stringify({ ...result, agents }, null, 2));
+          // JSON output also respects --verbose. Default = compact summary
+          // shape; --verbose = full AgentStatusDetail. Same toggle covers
+          // both text and JSON so MCP-style consumers can opt into detail.
+          const payload = opts.verbose
+            ? filtered
+            : toTaskStatusSummary(filtered);
+          console.log(JSON.stringify(payload, null, 2));
           return;
         }
 
@@ -1153,7 +1252,11 @@ export function registerTeamsCommands(program: Command): void {
           return;
         }
 
-        await printTeamStatus(team, { ...result, agents });
+        if (opts.verbose) {
+          await printTeamStatus(team, filtered);
+        } else {
+          printTeamSummary(team, toTaskStatusSummary(filtered));
+        }
       } catch (err) {
         die(`Could not check on team ${team}: ${(err as Error).message}`);
       }
@@ -1491,28 +1594,34 @@ export function registerTeamsCommands(program: Command): void {
   teams
     .command('logs [teammate]')
     .alias('log')
-    .description("Read a teammate's raw log output. Accepts name, UUID, or UUID prefix.")
+    .description("Read a teammate's raw log output. Accepts positional name, --teammate <name>, UUID, or UUID prefix.")
     .option('-n, --tail <n>', 'Show only the last N lines instead of the full log')
     .option('--team <team>', 'Disambiguate when the same name appears in multiple teams')
-    .action(async (ref: string | undefined, opts: { tail?: string; team?: string }) => {
+    .option('--teammate <name>', 'Teammate name (alias for the positional arg; useful for scripts)')
+    .action(async (ref: string | undefined, opts: { tail?: string; team?: string; teammate?: string }) => {
       const base = await getAgentsDir();
 
-      // No teammate → picker in TTY, hard fail outside.
+      // Resolve teammate identity. Precedence:
+      //   1. positional `[teammate]` arg (back-compat, most common)
+      //   2. --teammate <name> flag (script-friendly alias)
+      //   3. interactive picker (TTY only)
+      const teammateRef = ref ?? opts.teammate;
+
       let agentId: string;
-      if (!ref) {
+      if (!teammateRef) {
         const mgr = mkManager();
         const picked = await pickTeammateOr(mgr, 'agents teams logs');
         if (!picked) return;
         agentId = picked.agentId;
       } else {
-        const resolved = await resolveTeammateAcrossTeams(base, ref, opts.team);
+        const resolved = await resolveTeammateAcrossTeams(base, teammateRef, opts.team);
         if (resolved.kind === 'none') {
-          die(`No notes on record for teammate '${ref}'`, 2);
+          die(`No notes on record for teammate '${teammateRef}'`, 2);
         }
         if (resolved.kind === 'ambiguous') {
           const hints = resolved.candidates.map((c) => `${c.team}/${c.display}`).join(', ');
           die(
-            `'${ref}' matches multiple teammates: ${hints}.\n` +
+            `'${teammateRef}' matches multiple teammates: ${hints}.\n` +
               `  Narrow it with --team <team>, or pass a UUID prefix.`,
             2
           );
@@ -1531,7 +1640,7 @@ export function registerTeamsCommands(program: Command): void {
         const lines = content.split('\n');
         process.stdout.write(lines.slice(-n).join('\n'));
       } catch {
-        die(`No notes on record for teammate '${ref ?? agentId}' (looked in ${logPath})`, 2);
+        die(`No notes on record for teammate '${teammateRef ?? agentId}' (looked in ${logPath})`, 2);
       }
     });
 

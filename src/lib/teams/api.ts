@@ -124,6 +124,131 @@ export interface TaskStatusResult {
   cursor: string;  // ISO timestamp - max across all agents
 }
 
+/**
+ * Compact per-teammate snapshot for the default `teams status` view.
+ *
+ * The detail shape (`AgentStatusDetail`) carries the full prompt (often many
+ * KB), every absolute path the agent has touched, and uncapped message
+ * bodies. That's the right shape for programmatic consumers, but it makes
+ * `teams status` unreadable for orchestrators who only need: what state are
+ * you in, what did you just do, what files have you touched.
+ *
+ * Use {@link toAgentStatusSummary} to derive this from a detail record.
+ */
+export interface AgentStatusSummary {
+  agent_id: string;
+  name: string | null;
+  agent_type: string;
+  status: string;
+  duration: string | null;
+  tool_count: number;
+  has_errors: boolean;
+  pr_url: string | null;
+  files: {
+    /** Count of files modified since the cursor (delta), plus basenames. */
+    modified: { count: number; names: string[] };
+    created:  { count: number; names: string[] };
+    deleted:  { count: number; names: string[] };
+    /** Read is noisy (per-Read events fire constantly); only emit a count. */
+    read:     { count: number };
+  };
+  /** Already capped at 15 × 120 chars by the detail builder. */
+  bash_commands: string[];
+  /** Last 3 messages, each body trimmed to ~400 chars. */
+  last_messages: string[];
+  /** ISO timestamp — feed back via --since for delta polling. */
+  cursor: string;
+}
+
+/** Compact aggregated result; mirrors {@link TaskStatusResult} but agents[] is the summary shape. */
+export interface TaskStatusSummaryResult {
+  task_name: string;
+  agents: AgentStatusSummary[];
+  summary: { pending: number; running: number; completed: number; failed: number; stopped: number };
+  cursor: string;
+}
+
+/** Max files to name per category in the summary. Counts are always exact. */
+const SUMMARY_MAX_FILE_NAMES = 6;
+/** Max messages in the summary. */
+const SUMMARY_MAX_MESSAGES = 3;
+/** Max chars per message body in the summary. */
+const SUMMARY_MESSAGE_MAX_CHARS = 400;
+
+/**
+ * Reduce a file path to just its basename for compact rendering. Keeps the
+ * orchestrator oriented ("you touched types.ts") without dumping the full
+ * absolute path every time. The full paths are still in `AgentStatusDetail`
+ * for the verbose path.
+ */
+function basenameOf(p: string): string {
+  const ix = p.lastIndexOf('/');
+  return ix < 0 ? p : p.slice(ix + 1);
+}
+
+/**
+ * Trim long assistant messages to a fixed budget. We collapse leading
+ * whitespace so the budget covers actual content, not indent.
+ */
+function trimMessage(msg: string, max = SUMMARY_MESSAGE_MAX_CHARS): string {
+  const s = msg.replace(/^\s+/, '');
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1) + '…';
+}
+
+/** Pull at most `max` basenames out of a path list, preserving order. */
+function compactFileList(paths: string[], max = SUMMARY_MAX_FILE_NAMES): { count: number; names: string[] } {
+  const seen = new Set<string>();
+  const names: string[] = [];
+  for (const p of paths) {
+    const base = basenameOf(p);
+    if (seen.has(base)) continue;
+    seen.add(base);
+    names.push(base);
+    if (names.length >= max) break;
+  }
+  return { count: paths.length, names };
+}
+
+/**
+ * Project a full AgentStatusDetail down to a compact AgentStatusSummary.
+ * Drops `prompt` entirely (caller knows what they queued), folds file lists
+ * to basenames + counts, caps `last_messages` to 3 × {@link SUMMARY_MESSAGE_MAX_CHARS}.
+ */
+export function toAgentStatusSummary(detail: AgentStatusDetail): AgentStatusSummary {
+  return {
+    agent_id: detail.agent_id,
+    name: detail.name ?? null,
+    agent_type: detail.agent_type,
+    status: detail.status,
+    duration: detail.duration,
+    tool_count: detail.tool_count,
+    has_errors: detail.has_errors,
+    pr_url: detail.pr_url ?? null,
+    files: {
+      modified: compactFileList(detail.files_modified),
+      created:  compactFileList(detail.files_created),
+      deleted:  compactFileList(detail.files_deleted),
+      read:     { count: detail.files_read.length },
+    },
+    bash_commands: detail.bash_commands,
+    last_messages: detail.last_messages
+      .slice(-SUMMARY_MAX_MESSAGES)
+      .map((m) => trimMessage(m)),
+    cursor: detail.cursor,
+  };
+}
+
+/** Project a full TaskStatusResult down to the compact summary shape. */
+export function toTaskStatusSummary(result: TaskStatusResult): TaskStatusSummaryResult {
+  return {
+    task_name: result.task_name,
+    agents: result.agents.map(toAgentStatusSummary),
+    summary: result.summary,
+    cursor: result.cursor,
+  };
+}
+
 /** Result of stopping one or more teammates. */
 export interface StopResult {
   task_name: string;
