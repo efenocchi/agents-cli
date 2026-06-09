@@ -59,18 +59,23 @@ describe('containsBroadGrants', () => {
 });
 
 describe('convertToKimiFormat', () => {
-  it('translates Claude `:*` bash patterns into Kimi trailing-`*` globs', () => {
+  it('translates Claude `:*` bash patterns into Kimi globs, with a slash-crossing variant', () => {
     // The core bug: copying `Bash(git status:*)` verbatim never matches in
     // Kimi's engine (it globs the raw command string), so every call prompts.
+    // The second `*​/**` form is required because Kimi's `*` does not cross `/`,
+    // so a bare `cmd*` misses any path argument (`git push origin feat/x`).
     const { permission } = convertToKimiFormat({
       name: 'core',
-      allow: ['Bash(git status:*)', 'Bash(mq:*)', 'Bash(env)'],
+      allow: ['Bash(git push:*)', 'Bash(mq:*)', 'Bash(env)'],
       deny: [],
     });
 
     expect(permission.rules).toEqual([
-      { decision: 'allow', pattern: 'Bash(git status*)' },
+      { decision: 'allow', pattern: 'Bash(git push*)' },
+      { decision: 'allow', pattern: 'Bash(git push*/**)' },
       { decision: 'allow', pattern: 'Bash(mq*)' },
+      { decision: 'allow', pattern: 'Bash(mq*/**)' },
+      // Exact command (no `:*`) takes no path args — single rule, no slash variant.
       { decision: 'allow', pattern: 'Bash(env)' },
     ]);
   });
@@ -98,6 +103,7 @@ describe('convertToKimiFormat', () => {
 
     expect(permission.rules).toEqual([
       { decision: 'deny', pattern: 'Bash(rm -rf*)' },
+      { decision: 'deny', pattern: 'Bash(rm -rf*/**)' },
     ]);
   });
 
@@ -115,7 +121,9 @@ describe('convertToKimiFormat', () => {
     const parsed = TOML.parse(raw) as { permission: { rules: Array<{ decision: string; pattern: string }> } };
     expect(parsed.permission.rules).toEqual([
       { decision: 'allow', pattern: 'Bash(ls*)' },
+      { decision: 'allow', pattern: 'Bash(ls*/**)' },
       { decision: 'deny', pattern: 'Bash(rm -rf*)' },
+      { decision: 'deny', pattern: 'Bash(rm -rf*/**)' },
     ]);
     // The pre-fix bug would have left the un-matchable Claude `:*` form on disk.
     expect(raw).not.toContain(':*');

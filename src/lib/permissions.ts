@@ -624,40 +624,53 @@ function parseCanonicalPreserveCase(perm: string): { tool: string; pattern: stri
 }
 
 /**
- * Strip Claude's `:*` subcommand-wildcard suffix into Kimi's bare-`*` glob.
- * Kimi matches the trailing `*` against the raw command string with zero-or-more
- * semantics, so `git status*` covers both `git status` and `git status -s` in a
- * single rule (its own docs use `Bash(rm -rf*)`). This is why Kimi uses no space
- * before `*`, unlike Grok/Antigravity's ` *` form (`normalizeBashPattern`).
- * "git status:*" -> "git status*", "mq:*" -> "mq*", "*"/"**" -> "*".
+ * Translate a canonical Bash arg-glob (`cmd:*`) into the Kimi pattern(s) that
+ * actually match that command's invocations.
+ *
+ * Kimi matches Bash arg-globs with picomatch, where `*` does NOT cross `/` and a
+ * `**` only globstars when it is its own path segment (`*​/**`, `**​/`). A plain
+ * `cmd*` therefore matches `git status -s` but NOT `git push origin feat/x` or
+ * `cat dir/file` — any argument containing a slash falls through to a prompt
+ * (verified interactively against kimi 0.12.1). We emit TWO patterns so the
+ * command auto-approves whether its args contain a slash or not:
+ *   - `cmd*`     — no-slash args (and the bare command; `*` is zero-or-more).
+ *   - `cmd*​/**` — args with a path: `*` consumes up to the first `/`, then the
+ *                 bounded globstar crosses the remaining slashes.
+ * "git push:*" -> ["git push*", "git push*​/**"].
  */
-function kimiBashPattern(pattern: string): string {
-  if (pattern === '*' || pattern === '**') return '*';
-  if (pattern.endsWith(':*')) return pattern.slice(0, -2) + '*';
-  return pattern;
+function kimiBashPatterns(pattern: string): string[] {
+  if (pattern === '*' || pattern === '**') return ['*'];
+  if (pattern.endsWith(':*')) {
+    const prefix = pattern.slice(0, -2);
+    return [`${prefix}*`, `${prefix}*/**`];
+  }
+  // Exact command (no `:*`, e.g. `env`, `pwd`, `true`) — no path args expected.
+  return [pattern];
 }
 
-function canonicalToKimiRule(perm: string, decision: 'allow' | 'deny'): KimiRule | null {
+function canonicalToKimiRules(perm: string, decision: 'allow' | 'deny'): KimiRule[] {
   if (BLANKET_BASH_FORMS.has(perm)) {
-    return { decision, pattern: 'Bash' };
+    return [{ decision, pattern: 'Bash' }];
   }
   const { tool, pattern } = parseCanonicalPreserveCase(perm);
   // Bare tool name (no parens) — name-only match. Covers `Read`, `Grep`, and
   // MCP tool ids, which Kimi can only match by name anyway.
   if (pattern === null) {
-    return { decision, pattern: tool };
+    return [{ decision, pattern: tool }];
   }
   if (tool.toLowerCase() === 'bash') {
-    const p = kimiBashPattern(pattern);
-    return { decision, pattern: p === '*' ? 'Bash' : `Bash(${p})` };
+    return kimiBashPatterns(pattern).map((p) => ({
+      decision,
+      pattern: p === '*' ? 'Bash' : `Bash(${p})`,
+    }));
   }
   // Non-Bash built-ins (Read/Write/Edit/Grep/Glob/WebFetch...) share Kimi's
   // capitalized tool vocabulary, so pass the tool+pattern through. A `**`/`*`
   // glob means "any" — collapse to a name-only rule.
   if (pattern === '*' || pattern === '**') {
-    return { decision, pattern: tool };
+    return [{ decision, pattern: tool }];
   }
-  return { decision, pattern: `${tool}(${pattern})` };
+  return [{ decision, pattern: `${tool}(${pattern})` }];
 }
 
 /**
@@ -669,17 +682,19 @@ function canonicalToKimiRule(perm: string, decision: 'allow' | 'deny'): KimiRule
  * Tool names are capitalized and the Bash arg-glob uses a trailing `*` (no
  * Claude `:*` separator). Without this conversion the canonical strings match
  * nothing in Kimi's engine and every tool call falls through to a prompt.
+ *
+ * Each `:*` Bash rule expands to TWO patterns (`cmd*` and `cmd*​/**`) so the
+ * command auto-approves whether or not its arguments contain a slash — see
+ * `kimiBashPatterns` for why Kimi's picomatch matcher needs both.
  */
 export function convertToKimiFormat(set: PermissionSet): { permission: { rules: KimiRule[] } } {
   const rules: KimiRule[] = [];
   for (const perm of set.allow) {
-    const rule = canonicalToKimiRule(perm, 'allow');
-    if (rule) rules.push(rule);
+    rules.push(...canonicalToKimiRules(perm, 'allow'));
   }
   if (set.deny) {
     for (const perm of set.deny) {
-      const rule = canonicalToKimiRule(perm, 'deny');
-      if (rule) rules.push(rule);
+      rules.push(...canonicalToKimiRules(perm, 'deny'));
     }
   }
   return { permission: { rules } };
