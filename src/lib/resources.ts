@@ -141,6 +141,8 @@ export interface ResourceEntry {
   name: string;
   path: string;
   scope: 'user' | 'project';
+  /** One-line description pulled from frontmatter; not all resource kinds have one. */
+  description?: string;
 }
 
 /** A skill resource entry with optional rule count. */
@@ -197,7 +199,7 @@ export function getAgentResources(
   const commands: ResourceEntry[] = [];
   for (const cmd of listInstalledCommandsWithScope(agentId, cwd, { home })) {
     if (shouldInclude(cmd.scope)) {
-      commands.push({ name: cmd.name, path: cmd.path, scope: cmd.scope });
+      commands.push({ name: cmd.name, path: cmd.path, scope: cmd.scope, description: cmd.description });
     }
   }
 
@@ -211,6 +213,7 @@ export function getAgentResources(
         path: skill.path,
         scope: skill.scope,
         ruleCount: skill.ruleCount,
+        description: skill.metadata.description || undefined,
       });
     }
   }
