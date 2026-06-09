@@ -7,7 +7,7 @@
 #   - grok: GROK_SESSION_ID and GROK_WORKSPACE_ROOT env vars
 #   - gemini/antigravity: TBD — add branches below as upstream payloads land
 #
-# Writes ~/.agents/.cache/state/sessions/<PPID>.json with the canonical
+# Writes ~/.agents/.cache/terminals/sessions/<PPID>.json with the canonical
 # SessionState schema from src/types.ts. Atomic via mktemp + mv.
 #
 # Invocation:
@@ -82,7 +82,7 @@ fi
 
 [ -z "$CWD" ] && CWD="$PWD"
 
-STATE_DIR="$HOME/.agents/.cache/state/sessions"
+STATE_DIR="$HOME/.agents/.cache/terminals/sessions"
 mkdir -p "$STATE_DIR"
 
 TID="${AGENT_TERMINAL_ID:-}"
