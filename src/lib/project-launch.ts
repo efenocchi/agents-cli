@@ -385,10 +385,12 @@ function installScope(
     try {
       copyPluginToMarketplace(plugin, agent, versionHome, scope.marketplaceName);
       installed.push(plugin.name);
-    } catch {
+    } catch (err) {
       // Individual plugin copy failure — keep going on the others.
+      process.stderr.write(`launch-sync: copy '${plugin.name}' → ${scope.marketplaceName} failed: ${(err as Error).message}\n`);
     }
   }
+  process.stderr.write(`launch-sync: scope=${scope.marketplaceName} pluginsDir=${scope.pluginsDir} discovered=${plugins.length} installed=${installed.length} autoEnableExec=${scope.autoEnableExecSurfaces}\n`);
   if (installed.length === 0) return [];
 
   syncMarketplaceManifest(agent, versionHome, scope.marketplaceName);
