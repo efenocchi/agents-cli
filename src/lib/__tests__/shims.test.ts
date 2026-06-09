@@ -121,6 +121,12 @@ describe('generateShimScript — config-dir env vars', () => {
     expect(script).not.toContain('export CLAUDE_CONFIG_DIR=');
   });
 
+  it('exports KIMI_CODE_HOME for kimi so config/sessions/skills are versioned', () => {
+    const script = generateShimScript('kimi');
+    expect(script).toContain('export KIMI_CODE_HOME=');
+    expect(script).toContain('"$VERSION_DIR/home/.kimi-code"');
+  });
+
   it('does not export a managed config-dir var for other agents', () => {
     const script = generateShimScript('opencode');
     expect(script).not.toContain('export CLAUDE_CONFIG_DIR=');

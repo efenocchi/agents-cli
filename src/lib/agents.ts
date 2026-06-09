@@ -469,13 +469,18 @@ export const AGENTS: Record<AgentId, AgentConfig> = {
       rulesImports: true,
     },
   },
+  // Kimi Code CLI (`kimi`) — Moonshot AI coding agent.
+  // Install: `curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash`
+  //    or: `npm install -g @moonshot-ai/kimi-code`
+  // Config: `~/.kimi-code/config.toml`, `~/.kimi-code/mcp.json`,
+  //         `~/.kimi-code/skills/`, `~/.kimi-code/hooks/`
   kimi: {
     id: 'kimi',
     name: 'Kimi',
     color: 'magentaBright',
-    cliCommand: 'kimi-code',
-    npmPackage: '',
-    installScript: '',
+    cliCommand: 'kimi',
+    npmPackage: '@moonshot-ai/kimi-code',
+    installScript: 'curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash',
     configDir: path.join(HOME, '.kimi-code'),
     commandsDir: '',
     commandsSubdir: '',
@@ -488,14 +493,14 @@ export const AGENTS: Record<AgentId, AgentConfig> = {
     capabilities: {
       hooks: true,
       mcp: true,
-      allowlist: false,
-      skills: false,
+      allowlist: true,
+      skills: true,
       commands: false,
-      plugins: false,
+      plugins: true,
       subagents: false,
       rules: { file: 'AGENTS.md' },
       workflows: false,
-      modes: ['plan', 'edit', 'skip'],
+      modes: ['plan', 'edit', 'auto', 'skip'],
       rulesImports: false,
     },
   },
