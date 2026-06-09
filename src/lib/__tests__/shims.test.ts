@@ -87,8 +87,8 @@ describe('addShimsToPath', () => {
 });
 
 describe('SHIM_SCHEMA_VERSION', () => {
-  it('is 16 (launch shims call sync --launch on hot path, never foreground)', () => {
-    expect(SHIM_SCHEMA_VERSION).toBe(16);
+  it('is 17 (launch sync wrapped in a bash skip-fast sentinel gate)', () => {
+    expect(SHIM_SCHEMA_VERSION).toBe(17);
   });
 });
 
