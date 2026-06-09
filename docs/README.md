@@ -43,6 +43,7 @@ How agents-cli is laid out on disk and how it decides what to load.
 | [Workflows](workflows.md) | `WORKFLOW.md` multi-agent pipelines, auto-secrets, allowed-agents allow-list. |
 | [Subagents](subagents.md) | Focused agent definitions that parent agents can spawn via `Task()`. |
 | [Hooks](hooks.md) | Shell scripts on agent lifecycle events. Predicate matchers (`tool_name`, `cwd_includes`, `git_dirty`, …). |
+| [Entrypoints & Loops](07-entrypoints-and-loops.md) | Plugin packaging model, unified `run` target grammar, `loop:` block design. |
 
 ## Automation
 
