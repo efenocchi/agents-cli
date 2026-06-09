@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import type { SessionState } from './types.js';
 
-export const STATE_DIR = path.join(os.homedir(), '.agents', '.cache', 'state', 'sessions');
+export const STATE_DIR = path.join(os.homedir(), '.agents', '.cache', 'terminals', 'sessions');
 
 export function stateFilePath(pid: number): string {
   return path.join(STATE_DIR, `${pid}.json`);
@@ -40,14 +40,14 @@ export function parseState(raw: string): SessionState | null {
   const o = obj as Record<string, unknown>;
   if (
     typeof o.session_id !== 'string' ||
-    typeof o.agent !== 'string' ||
     typeof o.cwd !== 'string' ||
     typeof o.pid !== 'number' ||
     typeof o.ts !== 'number'
   ) {
     return null;
   }
-  // method is informational — older legacy hooks didn't write it. Default rather than reject.
+  // Legacy 04-capture hook omits agent + method. Default rather than reject.
+  if (typeof o.agent !== 'string') o.agent = 'unknown';
   if (typeof o.method !== 'string') o.method = 'hook-stdin';
   return o as unknown as SessionState;
 }

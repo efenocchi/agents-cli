@@ -10,30 +10,40 @@ const execAsync = promisify(exec);
 const PID_TREE_MAX_DEPTH = 5;
 const PID_TREE_MAX_NODES = 100;
 
+// macOS `pgrep -P` silently misses children for some pids; `ps -eo` is reliable.
+async function buildChildIndex(): Promise<Map<number, number[]>> {
+  const index = new Map<number, number[]>();
+  try {
+    const { stdout } = await execAsync('ps -eo pid,ppid', { timeout: 2000 });
+    for (const line of stdout.split('\n').slice(1)) {
+      const [pidStr, ppidStr] = line.trim().split(/\s+/);
+      const pid = Number(pidStr);
+      const ppid = Number(ppidStr);
+      if (!Number.isFinite(pid) || !Number.isFinite(ppid)) continue;
+      const kids = index.get(ppid);
+      if (kids) kids.push(pid);
+      else index.set(ppid, [pid]);
+    }
+  } catch {
+    /* empty index — caller treats as no descendants */
+  }
+  return index;
+}
+
 export async function descendantPids(rootPid: number): Promise<number[]> {
+  const index = await buildChildIndex();
   const visited = new Set<number>([rootPid]);
   const out: number[] = [];
   const queue: { pid: number; depth: number }[] = [{ pid: rootPid, depth: 0 }];
   while (queue.length > 0 && visited.size < PID_TREE_MAX_NODES) {
     const { pid, depth } = queue.shift()!;
     if (depth >= PID_TREE_MAX_DEPTH) continue;
-    let children: number[] = [];
-    try {
-      const { stdout } = await execAsync(`pgrep -P ${pid}`, { timeout: 1000 });
-      children = stdout
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean)
-        .map(Number)
-        .filter((n) => Number.isFinite(n) && n > 0);
-    } catch {
-      children = [];
-    }
-    for (const c of children) {
+    for (const c of index.get(pid) ?? []) {
       if (visited.has(c)) continue;
       visited.add(c);
       out.push(c);
       queue.push({ pid: c, depth: depth + 1 });
+      if (visited.size >= PID_TREE_MAX_NODES) break;
     }
   }
   return out;
