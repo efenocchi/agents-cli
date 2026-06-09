@@ -608,6 +608,83 @@ function canonicalToGrokRule(perm: string, action: 'allow' | 'deny'): GrokRule |
   return { action, tool, pattern };
 }
 
+export type KimiRule = { decision: 'allow' | 'deny'; pattern: string };
+
+/**
+ * Parse a canonical permission string preserving the tool's original casing.
+ * `parseCanonicalPattern` lowercases the tool name, which is fine for Grok
+ * (lowercase tool vocabulary) but wrong for Kimi, whose tool names are
+ * capitalized (`Bash`, `Read`, `Grep`). Bare tool names (no parens, e.g.
+ * `Read` or an MCP id like `mcp__server__tool`) return `pattern: null`.
+ */
+function parseCanonicalPreserveCase(perm: string): { tool: string; pattern: string | null } {
+  const m = perm.match(/^([\w-]+)\((.*)\)$/);
+  if (m) return { tool: m[1], pattern: m[2] };
+  return { tool: perm, pattern: null };
+}
+
+/**
+ * Strip Claude's `:*` subcommand-wildcard suffix into Kimi's bare-`*` glob.
+ * Kimi matches the trailing `*` against the raw command string with zero-or-more
+ * semantics, so `git status*` covers both `git status` and `git status -s` in a
+ * single rule (its own docs use `Bash(rm -rf*)`). This is why Kimi uses no space
+ * before `*`, unlike Grok/Antigravity's ` *` form (`normalizeBashPattern`).
+ * "git status:*" -> "git status*", "mq:*" -> "mq*", "*"/"**" -> "*".
+ */
+function kimiBashPattern(pattern: string): string {
+  if (pattern === '*' || pattern === '**') return '*';
+  if (pattern.endsWith(':*')) return pattern.slice(0, -2) + '*';
+  return pattern;
+}
+
+function canonicalToKimiRule(perm: string, decision: 'allow' | 'deny'): KimiRule | null {
+  if (BLANKET_BASH_FORMS.has(perm)) {
+    return { decision, pattern: 'Bash' };
+  }
+  const { tool, pattern } = parseCanonicalPreserveCase(perm);
+  // Bare tool name (no parens) — name-only match. Covers `Read`, `Grep`, and
+  // MCP tool ids, which Kimi can only match by name anyway.
+  if (pattern === null) {
+    return { decision, pattern: tool };
+  }
+  if (tool.toLowerCase() === 'bash') {
+    const p = kimiBashPattern(pattern);
+    return { decision, pattern: p === '*' ? 'Bash' : `Bash(${p})` };
+  }
+  // Non-Bash built-ins (Read/Write/Edit/Grep/Glob/WebFetch...) share Kimi's
+  // capitalized tool vocabulary, so pass the tool+pattern through. A `**`/`*`
+  // glob means "any" — collapse to a name-only rule.
+  if (pattern === '*' || pattern === '**') {
+    return { decision, pattern: tool };
+  }
+  return { decision, pattern: `${tool}(${pattern})` };
+}
+
+/**
+ * Convert a canonical permission set to Kimi Code's `[permission].rules` format.
+ * Kimi (`~/.kimi-code/config.toml`) reads rules of the form
+ *   [[permission.rules]]
+ *   decision = "allow"
+ *   pattern  = "Bash(git status*)"
+ * Tool names are capitalized and the Bash arg-glob uses a trailing `*` (no
+ * Claude `:*` separator). Without this conversion the canonical strings match
+ * nothing in Kimi's engine and every tool call falls through to a prompt.
+ */
+export function convertToKimiFormat(set: PermissionSet): { permission: { rules: KimiRule[] } } {
+  const rules: KimiRule[] = [];
+  for (const perm of set.allow) {
+    const rule = canonicalToKimiRule(perm, 'allow');
+    if (rule) rules.push(rule);
+  }
+  if (set.deny) {
+    for (const perm of set.deny) {
+      const rule = canonicalToKimiRule(perm, 'deny');
+      if (rule) rules.push(rule);
+    }
+  }
+  return { permission: { rules } };
+}
+
 /**
  * Convert canonical permission set to OpenCode format.
  * OpenCode uses: { permission: { bash: { "git *": "allow", "rm *": "deny" } } }
@@ -1255,13 +1332,7 @@ export function applyPermissionsToVersion(
         config = TOML.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
       }
 
-      const newRules: Array<{ decision: string; pattern: string }> = [];
-      for (const allow of set.allow) {
-        newRules.push({ decision: 'allow', pattern: allow });
-      }
-      for (const deny of set.deny || []) {
-        newRules.push({ decision: 'deny', pattern: deny });
-      }
+      const newRules: Array<{ decision: string; pattern: string }> = convertToKimiFormat(set).permission.rules;
 
       if (merge) {
         const existingPermission = (typeof config.permission === 'object' && config.permission !== null && !Array.isArray(config.permission))
