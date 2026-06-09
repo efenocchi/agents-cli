@@ -397,7 +397,7 @@ fi
 bold "Publishing $PHNX_PKG@$TARGET..."
 if $PHNX_TARGET_PUBLISHED; then
   yellow "$PHNX_PKG@$TARGET is already on the registry, skipping publish"
-elif ! npm publish --access=public; then
+elif ! npm publish --access=public --provenance=false; then
   red "publish failed for $PHNX_PKG"
   red "the version commit and tag remain locally; rerun: $0 $TARGET --apply"
   exit 1
