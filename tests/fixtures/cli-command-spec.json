@@ -1,0 +1,299 @@
+{
+  "$schema": "Doc-anchored expected behavior for each CLI's custom slash commands.",
+  "$generated": "2026-06-08",
+  "$method": "Each entry sourced from official vendor docs. Source URLs in `docs.url`. Do not edit without re-checking the source.",
+  "$invariant": "This file is the source of truth, NOT the agents-cli registry. Test asserts agents-cli writes match THIS spec.",
+
+  "claude": {
+    "supported": true,
+    "docs": {
+      "url": "https://code.claude.com/docs/en/slash-commands",
+      "quote_path_legacy": "Personal commands: `~/.claude/commands/` - Available across all your projects (legacy; prefer `~/.claude/skills/`)",
+      "quote_path_skills": "~/.claude/skills/<skill-name>/SKILL.md",
+      "quote_legacy_works": "Your existing `.claude/commands/` files keep working."
+    },
+    "formats": [
+      {
+        "kind": "markdown-flat",
+        "path_template": "{HOME}/.claude/commands/{name}.md",
+        "frontmatter": { "required": [], "recommended": ["description"], "allowed": ["name","description","argument-hint","allowed-tools","model","disable-model-invocation","context"] },
+        "name_from": "filename",
+        "status": "legacy-supported"
+      },
+      {
+        "kind": "skill-dir",
+        "path_template": "{HOME}/.claude/skills/{name}/SKILL.md",
+        "frontmatter": { "required": [], "recommended": ["description"], "allowed": ["name","description","argument-hint","allowed-tools","model","disable-model-invocation","context"] },
+        "name_from": "dirname",
+        "status": "current-recommended"
+      }
+    ]
+  },
+
+  "codex": {
+    "supported": true,
+    "version_split": "0.117.0",
+    "docs": {
+      "url_pre": "https://developers.openai.com/codex/custom-prompts",
+      "url_post": "https://developers.openai.com/codex/skills",
+      "quote_deprecation": "Custom prompts are deprecated. Use skills for reusable instructions that Codex can invoke explicitly or implicitly.",
+      "quote_paths_post": "$CWD/.agents/skills, $CWD/../.agents/skills, $REPO_ROOT/.agents/skills, $HOME/.agents/skills, /etc/codex/skills",
+      "quote_user_path_post": "$HOME/.agents/skills",
+      "quote_invocation": "Explicit: /skills command or type $ to mention a skill (e.g., $skill-name). Implicit: Codex automatically selects skills matching the task description."
+    },
+    "formats": [
+      {
+        "applies_when": "version < 0.117.0",
+        "kind": "markdown-flat",
+        "path_template": "{HOME}/.codex/prompts/{name}.md",
+        "frontmatter": { "required": [], "allowed": ["description","argument-hint"] },
+        "name_from": "filename",
+        "invocation": "/prompts:{name}",
+        "status": "deprecated"
+      },
+      {
+        "applies_when": "version >= 0.117.0",
+        "kind": "skill-dir",
+        "path_template": "{HOME}/.agents/skills/{name}/SKILL.md",
+        "_critical_note": "$HOME/.agents/skills/ — NOT ~/.codex/skills/. Codex reads the agents-cli canonical dir directly.",
+        "frontmatter": { "required": ["name","description"], "allowed": ["name","description"] },
+        "name_from": "dirname",
+        "invocation": "${name}",
+        "status": "current"
+      }
+    ],
+    "registry_divergence": "agents-cli registry has commandsSubdir='prompts' and skillsDir=~/.codex/skills/. For codex >= 0.117 the skill target should be ~/.agents/skills/ per official docs. Writing to ~/.codex/skills/ is invisible to the CLI."
+  },
+
+  "gemini": {
+    "supported": true,
+    "docs": {
+      "url": "https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/custom-commands.md",
+      "quote_path": "User commands (global): Located in `~/.gemini/commands/`",
+      "quote_format": "Your command definition files must be written in the TOML format and use the `.toml` file extension.",
+      "quote_schema_required": "prompt (String): The prompt that will be sent to the Gemini model when the command is executed.",
+      "quote_schema_optional": "description (String): A brief, one-line description of what the command does.",
+      "quote_naming": "A file at ~/.gemini/commands/test.toml becomes the command /test.",
+      "quote_namespace": "Subdirectories are used to create namespaced commands, with the path separator (`/` or `\\`) being converted to a colon (`:`)."
+    },
+    "formats": [
+      {
+        "kind": "toml-flat",
+        "path_template": "{HOME}/.gemini/commands/{name}.toml",
+        "schema": { "required": ["prompt"], "optional": ["description"] },
+        "name_from": "filename",
+        "namespace_via": "subdirectories-become-colons"
+      }
+    ]
+  },
+
+  "cursor": {
+    "supported": true,
+    "docs": {
+      "url_changelog_1_6": "https://cursor.com/changelog/1-6",
+      "url_changelog_2_4": "https://cursor.com/changelog/2-4",
+      "url_skills": "https://cursor.com/docs/skills",
+      "url_forum_cli_status": "https://forum.cursor.com/t/do-custom-dot-slash-commands-work-in-cursor-agent-cli/135554",
+      "quote_commands_ide_only": "Currently the commands only exist in Cursor IDE but with time it would be great to add them also to Cursor Agent CLI.",
+      "quote_skills_cli": "Cursor now supports Agent Skills in the editor and CLI.",
+      "quote_paths": "Define skills in SKILL.md files; user-level ~/.cursor/skills/ and ~/.agents/skills/"
+    },
+    "formats": [
+      {
+        "kind": "skill-dir",
+        "path_template": "{HOME}/.cursor/skills/{name}/SKILL.md",
+        "_also_reads": "{HOME}/.agents/skills/{name}/SKILL.md",
+        "frontmatter": { "required": ["name","description"], "optional": ["paths","disable-model-invocation"] },
+        "name_from": "dirname",
+        "status": "current"
+      }
+    ],
+    "unsupported_formats": [
+      {
+        "kind": "markdown-flat-commands-dir",
+        "path_template": "{HOME}/.cursor/commands/{name}.md",
+        "reason": "IDE-only per official Cursor staff response — does not work in cursor-agent CLI."
+      }
+    ],
+    "registry_divergence": "agents-cli registry says commandsSubdir='commands' for cursor; per docs this only works in the IDE, not the CLI. CLI needs skills format."
+  },
+
+  "opencode": {
+    "supported": true,
+    "docs": {
+      "url_commands": "https://opencode.ai/docs/commands/",
+      "url_skills": "https://opencode.ai/docs/skills/",
+      "quote_user_path": "User-level (global): ~/.config/opencode/commands/",
+      "quote_project_path": "Project-level: .opencode/commands/",
+      "quote_naming": "The markdown file name becomes the command name. For example, test.md lets you run: /test",
+      "quote_skill_roots": "Six skill discovery roots including ~/.agents/skills/ and ~/.claude/skills/"
+    },
+    "formats": [
+      {
+        "kind": "markdown-flat",
+        "path_template": "{HOME}/.config/opencode/commands/{name}.md",
+        "_critical_note": "XDG path under .config/, NOT ~/.opencode/commands/",
+        "frontmatter": { "required": [], "optional": ["description","agent","model"] },
+        "name_from": "filename"
+      },
+      {
+        "kind": "skill-dir",
+        "path_template": "{HOME}/.config/opencode/skills/{name}/SKILL.md",
+        "_also_reads": ["{HOME}/.agents/skills/{name}/SKILL.md","{HOME}/.claude/skills/{name}/SKILL.md"],
+        "frontmatter": { "required": ["name","description"], "optional": ["license","compatibility","metadata"] },
+        "name_from": "dirname"
+      }
+    ],
+    "registry_divergence": "agents-cli registry says ~/.opencode/commands/; docs say ~/.config/opencode/commands/. Wrong base path."
+  },
+
+  "copilot": {
+    "supported": false,
+    "docs": {
+      "url_reference": "https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference",
+      "url_open_issue": "https://github.com/github/copilot-cli/issues/1113",
+      "quote_unsupported": "GitHub Copilot CLI lacks support for user-defined slash commands. Users cannot create reusable, invokable prompts without building a VS Code extension."
+    },
+    "formats": [],
+    "registry_divergence": "agents-cli registry has commandsCap=on for copilot. Per official docs and open issue #1113, Copilot CLI does NOT support custom slash commands."
+  },
+
+  "amp": {
+    "supported": true,
+    "docs": {
+      "url_news": "https://ampcode.com/news/custom-slash-commands",
+      "url_news_migration": "https://ampcode.com/news/slashing-custom-commands",
+      "quote_path_project": "creating .agents/commands/pr-review.md will create the /pr-review slash command",
+      "quote_path_global": "global: ~/.config/amp/commands/",
+      "quote_executable": "if a text file in .agents/commands is executable and has a #! on its first line... it will also get turned into a slash command",
+      "quote_migration": "These custom commands are being deprecated in favor of skills, which are now user-invokable."
+    },
+    "formats": [
+      {
+        "kind": "markdown-flat",
+        "path_template": "{HOME}/.config/amp/commands/{name}.md",
+        "frontmatter": { "required": [], "optional": [] },
+        "name_from": "filename"
+      },
+      {
+        "kind": "executable",
+        "path_template": "{HOME}/.config/amp/commands/{name}",
+        "_critical_note": "Must start with #! shebang and be chmod +x",
+        "name_from": "filename"
+      }
+    ]
+  },
+
+  "kiro": {
+    "supported": true,
+    "docs": {
+      "url_skills": "https://kiro.dev/docs/cli/skills/",
+      "url_slash": "https://kiro.dev/docs/cli/reference/slash-commands/",
+      "quote_path": "~/.kiro/skills/<skill-name>/",
+      "quote_skill_as_slash": "Skills defined in .kiro/skills/ and ~/.kiro/skills/ are automatically available as slash commands.",
+      "quote_name_constraint": "name: Lowercase letters, numbers, and hyphens only; max 64 characters.",
+      "quote_desc_constraint": "description: Max 1024 characters"
+    },
+    "formats": [
+      {
+        "kind": "skill-dir",
+        "path_template": "{HOME}/.kiro/skills/{name}/SKILL.md",
+        "frontmatter": { "required": ["name","description"] },
+        "name_from": "dirname",
+        "name_constraint": "^[a-z0-9-]{1,64}$",
+        "description_max_chars": 1024
+      }
+    ],
+    "registry_divergence": "agents-cli registry has commandsSubdir='commands' for kiro; per docs Kiro uses skills/ only — no commands/ directory."
+  },
+
+  "roo": {
+    "supported": true,
+    "docs": {
+      "url": "https://docs.roocode.com/features/slash-commands",
+      "quote_path": "Commands are markdown files stored in .roo/commands/ directories",
+      "quote_priority": "project > global > built-in"
+    },
+    "formats": [
+      {
+        "kind": "markdown-flat",
+        "path_template": "{HOME}/.roo/commands/{name}.md",
+        "frontmatter": { "required": [], "optional": ["description","argument-hint","mode"] },
+        "name_from": "filename-lowercase-dashes"
+      }
+    ]
+  },
+
+  "antigravity": {
+    "supported": true,
+    "docs": {
+      "url": "https://antigravity.google/docs/cli-features",
+      "quote_paths": "Agent Skills are available globally (~/.gemini/antigravity-cli/skills/) and per-workspace (.agents/skills/)",
+      "_confidence": "MODERATE — official docs page returned empty HTML in fetch; quote sourced from search-result summary citing docs."
+    },
+    "formats": [
+      {
+        "kind": "skill-dir",
+        "path_template": "{HOME}/.gemini/antigravity-cli/skills/{name}/SKILL.md",
+        "_also_reads": "{REPO}/.agents/skills/{name}/SKILL.md",
+        "frontmatter": { "required": ["name","description"] },
+        "name_from": "dirname"
+      }
+    ],
+    "registry_divergence": "agents-cli registry has commandsSubdir='commands'; per docs Antigravity uses skills/ format only."
+  },
+
+  "grok": {
+    "supported": true,
+    "docs": {
+      "url_codersera": "https://codersera.com/blog/xai-grok-build-skills-connectors-guide-2026/",
+      "url_aimadetools": "https://www.aimadetools.com/blog/grok-build-skills-plugins-guide/",
+      "url_xai": "https://x.ai/news/grok-build-cli",
+      "quote_compat": "Grok is fully compatible with Claude Code with zero configuration needed.",
+      "quote_format": "Most Skills written for Claude Code — a SKILL.md with YAML frontmatter and a markdown body — load into Grok with no edits.",
+      "_confidence": "MODERATE — xai docs at x.ai/docs do not have a public skills page; quotes are from secondary sources citing official docs."
+    },
+    "formats": [
+      {
+        "kind": "skill-dir",
+        "path_template": "{HOME}/.grok/skills/{name}/SKILL.md",
+        "_also_reads": ["{REPO}/.agents/skills/{name}/SKILL.md","{REPO}/.cursor/skills/{name}/SKILL.md"],
+        "frontmatter": { "required": ["name","description"], "optional": ["disable-model-invocation"] },
+        "name_from": "dirname"
+      }
+    ],
+    "registry_divergence": "agents-cli writes an `agents_command:` marker key to the skill frontmatter. This key is NOT documented by xAI Grok — Grok uses the standard Anthropic skills format. The marker is a no-op (harmless) but the test should assert that name + description are present, and SHOULD NOT require agents_command:."
+  },
+
+  "goose": {
+    "supported": true,
+    "docs": {
+      "url": "https://goose-docs.ai/docs/guides/config-files/",
+      "quote": "You can optionally set up custom slash commands to run recipes that you create. List the command (without the leading /) along with the path to the recipe."
+    },
+    "formats": [
+      {
+        "kind": "yaml-recipe-with-config-registration",
+        "recipe_path_template": "{HOME}/.config/goose/recipes/{name}.yaml",
+        "config_path": "{HOME}/.config/goose/config.yaml",
+        "config_schema": {
+          "slash_commands": [
+            { "command": "<name-no-slash>", "recipe_path": "<absolute-path-to-recipe-yaml>" }
+          ]
+        },
+        "name_from": "config-entry"
+      }
+    ],
+    "registry_divergence": "agents-cli has both commands AND skills caps OFF for goose. Per docs, Goose DOES support custom slash commands via YAML recipes + config.yaml registration. agents-cli has no writer for this format."
+  },
+
+  "openclaw": {
+    "supported": true,
+    "docs": {
+      "url": "(not researched in this pass)",
+      "note": "Registry says runtime gateway resolver (no file-based commands). Skills only via ~/.openclaw/skills/. Skipped for this round — re-research if needed."
+    },
+    "formats": [],
+    "_skipped": true
+  }
+}
