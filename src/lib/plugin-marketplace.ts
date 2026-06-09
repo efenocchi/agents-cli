@@ -30,6 +30,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { AgentId, DiscoveredPlugin, PluginManifest, MarketplaceSpec, DiscoveredMarketplace } from './types.js';
 import { getPluginsDir, getEnabledExtraRepos, getProjectPluginsDir } from './state.js';
+import { agentConfigDirName } from './agents.js';
 
 /**
  * Canonical name for the user-repo marketplace (~/.agents/plugins/). Kept as an
@@ -151,7 +152,7 @@ function dirExists(p: string): boolean {
 // ─── Per-version paths ────────────────────────────────────────────────────────
 
 function pluginsRootForVersion(agent: AgentId, versionHome: string): string {
-  return path.join(versionHome, `.${agent}`, 'plugins');
+  return path.join(versionHome, agentConfigDirName(agent), 'plugins');
 }
 
 export function marketplaceRoot(specOrName: MarketplaceSpec | string, agent: AgentId, versionHome: string): string {
@@ -171,7 +172,7 @@ export function knownMarketplacesPath(agent: AgentId, versionHome: string): stri
 }
 
 function settingsPath(agent: AgentId, versionHome: string): string {
-  return path.join(versionHome, `.${agent}`, 'settings.json');
+  return path.join(versionHome, agentConfigDirName(agent), 'settings.json');
 }
 
 // ─── Copy plugin source into a marketplace ────────────────────────────────────

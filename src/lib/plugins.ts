@@ -15,7 +15,7 @@ import { execFileSync } from 'child_process';
 import type { AgentId, DiscoveredPlugin, PluginManifest, MarketplaceSpec } from './types.js';
 import { getPluginsDir, getTrashPluginsDir, getExtraPluginsDir, getProjectPluginsDir } from './state.js';
 import { listInstalledVersions, getVersionHomePath } from './versions.js';
-import { AGENTS } from './agents.js';
+import { AGENTS, agentConfigDirName } from './agents.js';
 import { capableAgents, isCapable } from './capabilities.js';
 import { shouldInstallCommandAsSkill, installCommandSkillToVersion } from './command-skills.js';
 import {
@@ -351,7 +351,7 @@ export function expandPluginVars(
   versionHome: string,
   userConfig?: Record<string, string>
 ): string {
-  const dataDir = path.join(versionHome, `.${agentId}`, 'plugin-data', pluginName);
+  const dataDir = path.join(versionHome, agentConfigDirName(agentId), 'plugin-data', pluginName);
   let result = str
     .replace(/\$\{CLAUDE_PLUGIN_ROOT\}/g, pluginRoot)
     .replace(/\$\{CLAUDE_PLUGIN_DATA\}/g, dataDir);
@@ -531,7 +531,7 @@ export function syncPluginToVersion(
   //     (Codex >= 0.117.0). Skill name is prefixed with plugin name to avoid
   //     collision with standalone command skills.
   if (options.version && shouldInstallCommandAsSkill(agent, options.version) && plugin.commands.length > 0) {
-    const agentDir = path.join(versionHome, `.${AGENTS[agent].id}`);
+    const agentDir = path.join(versionHome, agentConfigDirName(agent));
     const skillSourceDirs = [path.join(agentDir, 'skills')];
     for (const cmd of plugin.commands) {
       const srcPath = path.join(plugin.root, 'commands', `${cmd}.md`);
@@ -622,7 +622,7 @@ function migrateLegacyFlatLayout(
   versionHome: string
 ): void {
   const prefix = `${plugin.name}--`;
-  const agentRoot = path.join(versionHome, `.${agent}`);
+  const agentRoot = path.join(versionHome, agentConfigDirName(agent));
 
   // 1. skills
   const skillsDir = path.join(agentRoot, 'skills');
@@ -827,7 +827,7 @@ function cleanLegacyFlatLayout(
   result: { skills: string[]; commands: string[]; agentDefs: string[]; bin: string[]; hooks: string[]; permissions: number; mcp: number }
 ): void {
   const prefix = `${pluginName}--`;
-  const agentRoot = path.join(versionHome, `.${agent}`);
+  const agentRoot = path.join(versionHome, agentConfigDirName(agent));
 
   const skillsDir = path.join(agentRoot, 'skills');
   if (fs.existsSync(skillsDir)) {
@@ -998,7 +998,7 @@ export function cleanOrphanedPluginSkills(
   }
 
   // 2. Sweep legacy dual-dash skills directories from older agents-cli versions.
-  const skillsDir = path.join(versionHome, `.${agent}`, 'skills');
+  const skillsDir = path.join(versionHome, agentConfigDirName(agent), 'skills');
   if (fs.existsSync(skillsDir)) {
     for (const entry of fs.readdirSync(skillsDir, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
@@ -1045,7 +1045,7 @@ export function diffVersionPlugins(agent: AgentId, version: string): VersionPlug
   }
 
   // Also surface legacy dual-dash skill dirs as orphans during migration period.
-  const skillsDir = path.join(versionHome, `.${agent}`, 'skills');
+  const skillsDir = path.join(versionHome, agentConfigDirName(agent), 'skills');
   if (fs.existsSync(skillsDir)) {
     for (const entry of fs.readdirSync(skillsDir, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
@@ -1081,7 +1081,7 @@ export function removePluginSkillFromVersion(
   skillName: string
 ): { success: boolean; error?: string } {
   const versionHome = getVersionHomePath(agent, version);
-  const skillPath = path.join(versionHome, `.${agent}`, 'skills', skillName);
+  const skillPath = path.join(versionHome, agentConfigDirName(agent), 'skills', skillName);
 
   if (!fs.existsSync(skillPath)) {
     return { success: true };
