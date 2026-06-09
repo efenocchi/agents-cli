@@ -35,6 +35,7 @@ describe('agents run defaults', () => {
       `fs.writeFileSync(${JSON.stringify(argvPath)}, JSON.stringify(process.argv.slice(2)));`,
     ].join('\n');
     writeExecutable(path.join(managedBinDir, 'claude'), captureArgvScript);
+    writeExecutable(path.join(binDir, 'claude'), captureArgvScript);
     fs.writeFileSync(
       path.join(home, '.agents', 'agents.yaml'),
       [
