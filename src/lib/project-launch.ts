@@ -311,6 +311,12 @@ function collectPluginScopes(cwd: string): PluginScope[] {
 function synthesizeScopedMarketplaces(agent: AgentId, version: string, cwd: string): Record<string, string[]> {
   const result: Record<string, string[]> = {};
 
+  const scopes = collectPluginScopes(cwd);
+  process.stderr.write(`launch-sync:enter agent=${agent} version=${version} cwd=${cwd} supports=${supports(agent, 'plugins', version).ok} scopes=${scopes.length}\n`);
+  for (const s of scopes) {
+    process.stderr.write(`launch-sync:scope name=${s.marketplaceName} dir=${s.pluginsDir} exists=${fs.existsSync(s.pluginsDir)}\n`);
+  }
+
   if (!supports(agent, 'plugins', version).ok) return result;
 
   let versionHome: string;
