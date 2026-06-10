@@ -10,6 +10,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { SessionMeta, SessionArtifact } from './types.js';
 import { parseSession } from './parse.js';
+import { toComparablePath } from '../platform/index.js';
 
 /** Tool names that produce file artifacts (writes, edits, patches). */
 const WRITE_TOOLS = new Set([
@@ -97,8 +98,13 @@ export function resolveArtifact(
   if (byBase.length === 1) return byBase[0];
   if (byBase.length > 1) return byBase[0];
 
-  // Path suffix match (e.g. "src/foo.ts")
-  const bySuffix = artifacts.filter(a => a.path.endsWith('/' + name) || a.path === name);
+  // Path suffix match (e.g. "src/foo.ts"). Normalize so Windows `\` paths match
+  // a forward-slash query too; on POSIX this is identical to the old comparison.
+  const target = toComparablePath(name);
+  const bySuffix = artifacts.filter(a => {
+    const ap = toComparablePath(a.path);
+    return ap.endsWith('/' + target) || ap === target;
+  });
   if (bySuffix.length >= 1) return bySuffix[0];
 
   return null;

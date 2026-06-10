@@ -16,6 +16,7 @@ import * as crypto from 'crypto';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { getPtyDir as getPtyDirRoot } from './state.js';
+import { isAlive } from './platform/index.js';
 
 /**
  * Capture a stable identifier for a process at the moment it was started.
@@ -197,12 +198,12 @@ export function isPtyServerRunning(): boolean {
   try {
     const pid = parseInt(fs.readFileSync(pidPath, 'utf-8').trim(), 10);
     if (isNaN(pid)) return false;
-    process.kill(pid, 0);
-    return true;
+    if (isAlive(pid)) return true;
   } catch {
-    try { fs.unlinkSync(pidPath); } catch {}
-    return false;
+    // read failed — fall through and treat the pid file as stale
   }
+  try { fs.unlinkSync(pidPath); } catch {}
+  return false;
 }
 
 // --- Logging ---

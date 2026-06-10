@@ -1,0 +1,47 @@
+import { describe, it, expect } from 'vitest';
+import * as os from 'os';
+import { looksLikePath, toComparablePath, homeDir } from './paths.js';
+
+describe('looksLikePath', () => {
+  // POSIX markers must classify identically on every platform — this is the
+  // pre-existing behavior the migration must not regress.
+  for (const platform of ['darwin', 'linux', 'win32'] as const) {
+    it(`recognizes POSIX path markers on ${platform}`, () => {
+      for (const q of ['.', './x', '../x', '/abs/path', '~', '~/x']) {
+        expect(looksLikePath(q, platform)).toBe(true);
+      }
+    });
+    it(`treats plain words as search terms on ${platform}`, () => {
+      for (const q of ['claude', 'fix auth', 'RUSH-123', '']) {
+        expect(looksLikePath(q, platform)).toBe(false);
+      }
+    });
+  }
+
+  it('recognizes Windows drive-letter and UNC paths ONLY on win32', () => {
+    for (const q of ['C:\\repo', 'c:/repo', 'D:\\a\\b', '\\\\server\\share', '.\\rel', '..\\rel']) {
+      expect(looksLikePath(q, 'win32')).toBe(true);
+      // The crux of #234's no-regression guarantee: the same string is a search
+      // term on macOS/Linux, never silently reinterpreted as a path filter.
+      expect(looksLikePath(q, 'darwin')).toBe(false);
+      expect(looksLikePath(q, 'linux')).toBe(false);
+    }
+  });
+});
+
+describe('toComparablePath', () => {
+  it('is identity on POSIX (no behavior change)', () => {
+    expect(toComparablePath('/Users/Me/Repo', 'darwin')).toBe('/Users/Me/Repo');
+    expect(toComparablePath('src/Foo.ts', 'linux')).toBe('src/Foo.ts');
+  });
+  it('folds separators and lowercases on win32 (case-insensitive FS)', () => {
+    expect(toComparablePath('C:\\Users\\Me\\Repo', 'win32')).toBe('c:/users/me/repo');
+    expect(toComparablePath('src\\Foo.ts', 'win32')).toBe('src/foo.ts');
+  });
+});
+
+describe('homeDir', () => {
+  it('matches os.homedir()', () => {
+    expect(homeDir()).toBe(os.homedir());
+  });
+});

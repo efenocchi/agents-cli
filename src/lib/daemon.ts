@@ -12,6 +12,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { getDaemonDir as getDaemonDirRoot } from './state.js';
+import { isAlive } from './platform/index.js';
 import { listJobs as listAllJobs } from './routines.js';
 import { JobScheduler } from './scheduler.js';
 import { executeJobDetached, monitorRunningJobs } from './runner.js';
@@ -118,13 +119,9 @@ export function removeDaemonPid(): void {
 export function isDaemonRunning(): boolean {
   const pid = readDaemonPid();
   if (!pid) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    removeDaemonPid();
-    return false;
-  }
+  if (isAlive(pid)) return true;
+  removeDaemonPid();
+  return false;
 }
 
 /** Redact values that look like tokens or credentials in a log message. */

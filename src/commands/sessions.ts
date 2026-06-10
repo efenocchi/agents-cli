@@ -18,6 +18,7 @@ import type { AgentId } from '../lib/types.js';
 import type { SessionAgentId, SessionMeta, ViewMode } from '../lib/session/types.js';
 import { SESSION_AGENTS } from '../lib/session/types.js';
 import { discoverArtifacts, readArtifact, resolveArtifact } from '../lib/session/artifacts.js';
+import { looksLikePath, toComparablePath, homeDir } from '../lib/platform/index.js';
 import { getActiveSessions, type ActiveSession } from '../lib/session/active.js';
 import { discoverSessions, countSessionsInScope, resolveSessionById, searchContentIndex, parseTimeFilter, type DiscoverOptions, type ScanProgress } from '../lib/session/discover.js';
 import { filterTeamSessions } from '../lib/session/team-filter.js';
@@ -127,16 +128,6 @@ const PICKER_RECENT_COUNT = 15;
 const PICKER_POOL_LIMIT = 200;
 
 /**
- * Detect whether a positional argument looks like a filesystem path.
- * Naked paths (., ./, ../, /, ~) filter sessions by project directory.
- * Everything else is treated as a search query string.
- */
-function isPathLike(query: string): boolean {
-  return query === '.' || query.startsWith('./') || query.startsWith('../')
-    || query.startsWith('/') || query.startsWith('~');
-}
-
-/**
  * Resolve a path-like query to an absolute directory path.
  */
 function resolvePathFilter(query: string): string {
@@ -224,8 +215,13 @@ function contextColor(context: ActiveSession['context']): (s: string) => string 
 
 function shortCwd(cwd?: string): string {
   if (!cwd) return '-';
-  const home = os.homedir();
-  return cwd.startsWith(home) ? '~' + cwd.slice(home.length) : cwd;
+  const home = homeDir();
+  // Compare in normalized form so the `~` shorthand also lands on Windows
+  // (case-insensitive, backslash paths); on POSIX this is byte-identical to the
+  // previous `cwd.startsWith(home)`. The displayed tail keeps original casing.
+  return toComparablePath(cwd).startsWith(toComparablePath(home))
+    ? '~' + cwd.slice(home.length)
+    : cwd;
 }
 
 function formatStartedAt(startedAtMs?: number): string {
@@ -426,7 +422,7 @@ async function sessionsAction(query: string | undefined, options: SessionsOption
   // Path-like queries filter by project directory instead of text search.
   let pathFilter: string | undefined;
   let searchQuery: string | undefined;
-  if (query && isPathLike(query)) {
+  if (query && looksLikePath(query)) {
     const resolved = resolvePathFilter(query);
     if (!fs.existsSync(resolved)) {
       console.log(chalk.yellow(`Path not found: ${resolved}`));
