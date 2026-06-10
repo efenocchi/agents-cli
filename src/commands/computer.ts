@@ -18,23 +18,25 @@ import {
   writeComputerPolicy,
   writeComputerPeers,
 } from '../lib/computer-rpc.js';
+import { registerActionCommands, withClient, unwrap, pickTarget, type AppInfo } from './computer-actions.js';
 
 // Help groups — mirror `agents browser` so the mental model carries over.
 const COMPUTER_HELP_GROUPS = [
-  { title: 'Installation', names: ['install-helper'] },
+  { title: 'Installation', names: ['setup'] },
   { title: 'Daemon lifecycle', names: ['start', 'stop', 'reload', 'status'] },
-  { title: 'Capture evidence', names: ['screenshot'] },
+  { title: 'Observe', names: ['apps', 'describe', 'screenshot'] },
+  { title: 'Interact', names: ['click', 'right-click', 'type', 'type-text', 'key', 'drag', 'scroll', 'ax-action', 'focus'] },
 ] as const;
 
 export function registerComputerCommand(program: Command): void {
   const computer = program
-    .command('computers')
+    .command('computer')
     .description('Drive macOS apps via Accessibility — list, screenshot, click, type (macOS only)')
     // The whole subsystem is macOS Accessibility / TCC. Fail fast with a clear
     // message on other platforms instead of a downstream ENOENT / launchctl error.
     .hook('preAction', () => {
       if (process.platform !== 'darwin') {
-        console.error('agents computers: macOS only — it drives apps via the macOS Accessibility API.');
+        console.error('agents computer: macOS only — it drives apps via the macOS Accessibility API.');
         process.exit(1);
       }
     });
@@ -44,18 +46,14 @@ export function registerComputerCommand(program: Command): void {
 }
 
 export function registerComputerSubcommands(program: Command): void {
-  registerInstallHelperCommand(program);
+  registerSetupCommand(program);
   registerStartCommand(program);
   registerStopCommand(program);
   registerReloadCommand(program);
   registerStatusCommand(program);
   registerScreenshotCommand(program);
+  registerActionCommands(program);
   registerCommandGroups(program, COMPUTER_HELP_GROUPS);
-}
-
-function reportMissingHelper(): never {
-  console.error('helper not built. Run: ./packages/computer-helper/scripts/build.sh debug');
-  process.exit(1);
 }
 
 function registerStatusCommand(program: Command): void {
@@ -82,7 +80,7 @@ function registerStatusCommand(program: Command): void {
 
       if (!installed) {
         console.log('');
-        console.log('Run:  agents computer install-helper');
+        console.log('Run:  agents computer setup');
         return;
       }
       if (!socketUp) {
@@ -116,58 +114,64 @@ function registerStatusCommand(program: Command): void {
 function registerScreenshotCommand(program: Command): void {
   program
     .command('screenshot')
-    .description('Capture a JPEG of the frontmost window of a bundle id (default: frontmost app)')
-    .option('--bundle <id>', 'Bundle id to capture (default: bundle id of frontmost app)')
+    .description('Capture a window (default: largest), enumerate windows (--list), or the whole display (--display)')
+    .option('--bundle <id>', 'Bundle id to capture (default: frontmost allow-listed app)')
+    .option('--pid <n>', 'Target pid directly (overrides --bundle)', (v) => parseInt(v, 10))
+    .option('--list', 'List the app\'s windows (id/title/layer/bounds) instead of capturing — reveals modals/popups')
+    .option('--window-id <n>', 'Capture a specific window by id (from --list)', (v) => parseInt(v, 10))
+    .option('--display', 'Capture the whole display the app is on (composites stacked modals)')
     .option('--out <path>', 'Output JPEG path', './computer-screenshot.jpg')
     .option('--quality <n>', 'JPEG quality 1-100', (v) => parseInt(v, 10), 85)
-    .action(async (opts: { bundle?: string; out: string; quality: number }) => {
-      const transport = describeTransport();
-      if (transport.kind === 'none') reportMissingHelper();
-
+    .option('--json', 'Emit JSON (metadata for captures; window list for --list)')
+    .action(async (opts: {
+      bundle?: string;
+      pid?: number;
+      list?: boolean;
+      windowId?: number;
+      display?: boolean;
+      out: string;
+      quality: number;
+      json?: boolean;
+    }) => {
       const quality = Math.max(1, Math.min(100, opts.quality || 85));
 
-      const client = openComputerClient();
-      try {
-        // Step 1: list_apps to get the candidate set.
-        const apps = await client.call('list_apps');
-        if (apps.error) {
-          console.error(`error: ${apps.error.code}: ${apps.error.message}`);
-          process.exit(1);
-        }
-        const list = (apps.result?.apps as Array<{
-          pid: number;
-          name: string;
-          bundle_id: string;
-          active: boolean;
-          excluded: boolean;
-        }>) || [];
-
-        let target: typeof list[number] | undefined;
-        if (opts.bundle) {
-          target = list.find((a) => a.bundle_id === opts.bundle);
-          if (!target) {
-            console.error(`bundle not in allow list (or not running): ${opts.bundle}`);
-            console.error(`add Computer(${opts.bundle}) to a permissions group, then \`agents computer reload\``);
+      await withClient(async (client) => {
+        // Resolve the target pid (explicit --pid, else --bundle, else frontmost).
+        let pid = opts.pid;
+        if (pid == null) {
+          const list = (unwrap(await client.call('list_apps')).apps as AppInfo[]) || [];
+          const picked = pickTarget(list, { bundle: opts.bundle });
+          if (!picked.ok) {
+            console.error(picked.error);
             process.exit(1);
           }
-        } else {
-          target = list.find((a) => a.active);
-          if (!target) {
-            console.error('no active app found in allow list');
-            console.error('add Computer(<bundle-id>) to a permissions group, then `agents computer reload`');
-            process.exit(1);
-          }
+          pid = picked.app.pid;
         }
 
-        // Step 2: screenshot.
-        const shot = await client.call('screenshot', { pid: target.pid, quality });
-        if (shot.error) {
-          console.error(`error: ${shot.error.code}: ${shot.error.message}`);
-          process.exit(1);
+        // --list: enumerate windows, no image.
+        if (opts.list) {
+          const res = unwrap(await client.call('screenshot', { pid, list: true }));
+          const windows = (res.windows as Array<Record<string, unknown>>) || [];
+          if (opts.json) {
+            console.log(JSON.stringify(res, null, 2));
+          } else if (windows.length === 0) {
+            console.log('(no windows)');
+          } else {
+            for (const w of windows) {
+              const b = (w.bounds as number[]) || [];
+              console.log(`${String(w.window_id).padStart(8)}  layer ${w.layer}  [${b.join(',')}]  ${w.title || '(untitled)'}`);
+            }
+          }
+          return;
         }
-        const b64 = shot.result?.image_data as string | undefined;
-        const width = shot.result?.width as number | undefined;
-        const height = shot.result?.height as number | undefined;
+
+        // Capture: window (default / --window-id) or full display.
+        const params: Record<string, unknown> = { pid, quality };
+        if (opts.display) params.display = true;
+        else if (opts.windowId != null) params.window_id = opts.windowId;
+
+        const res = unwrap(await client.call('screenshot', params));
+        const b64 = res.image_data as string | undefined;
         if (!b64) {
           console.error('helper returned no image_data');
           process.exit(1);
@@ -175,14 +179,21 @@ function registerScreenshotCommand(program: Command): void {
         const buf = Buffer.from(b64, 'base64');
         const outPath = path.resolve(opts.out);
         fs.writeFileSync(outPath, buf);
-        console.log(`saved: ${outPath} (${width ?? '?'}x${height ?? '?'}, ${buf.byteLength} bytes)`);
-      } finally {
-        await client.close();
-      }
+
+        if (opts.json) {
+          // Drop the heavy base64 from the metadata echo; report where it went.
+          const meta = { ...res, image_data: `<saved to ${outPath}>` };
+          console.log(JSON.stringify(meta, null, 2));
+        } else {
+          const origin = (res.origin as number[]) || [];
+          const originStr = origin.length === 2 ? `, origin [${origin.join(',')}], scale ${res.scale ?? '?'}` : '';
+          console.log(`saved: ${outPath} (${res.width ?? '?'}x${res.height ?? '?'}, ${buf.byteLength} bytes${originStr})`);
+        }
+      });
     });
 }
 
-// install-helper:
+// setup (alias: install-helper):
 //   1. resolve dist .app
 //   2. copy to /Applications/Computer Helper.app
 //   3. codesign --verify the destination
@@ -200,9 +211,10 @@ const HELPER_APP_NAME = 'Computer Helper.app';
 const HELPER_APP_DEST = `/Applications/${HELPER_APP_NAME}`;
 const HELPER_LABEL = HELPER_BUNDLE_ID;
 
-function registerInstallHelperCommand(program: Command): void {
+function registerSetupCommand(program: Command): void {
   program
-    .command('install-helper')
+    .command('setup')
+    .alias('install-helper')
     .description('Install ComputerHelper.app to /Applications/ (does NOT activate the daemon — run `start` to enable)')
     .action(async () => {
       const srcApp = resolveHelperApp();
@@ -302,12 +314,12 @@ function registerStartCommand(program: Command): void {
 
       if (!fs.existsSync(plistPath)) {
         console.error(`plist not found at ${plistPath}`);
-        console.error('run: agents computer install-helper');
+        console.error('run: agents computer setup');
         process.exit(1);
       }
       if (!fs.existsSync(HELPER_APP_DEST)) {
         console.error(`helper app not found at ${HELPER_APP_DEST}`);
-        console.error('run: agents computer install-helper');
+        console.error('run: agents computer setup');
         process.exit(1);
       }
 
