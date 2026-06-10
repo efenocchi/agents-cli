@@ -53,6 +53,7 @@ export function captureProcessStartTime(pid: number): string | null {
 
 // --- Constants ---
 
+const IS_WINDOWS = process.platform === 'win32';
 const SENTINEL = '__AGENTS_PTY_DONE__';
 const SOCKET_NAME = 'pty.sock';
 const PID_FILE = 'pty.pid';
@@ -97,13 +98,54 @@ const PTY_ENV_ALLOWLIST = [
   'NO_COLOR', 'FORCE_COLOR',
 ];
 
+/**
+ * Windows allowlist. cmd.exe / PowerShell refuse to start (or misbehave) without
+ * SystemRoot, ComSpec, PATHEXT and the USERPROFILE/APPDATA family, so a Unix-style
+ * allowlist would spawn a broken shell. PATH/TERM/color/NODE vars are shared with
+ * the Unix list; the rest are Windows-specific.
+ */
+const PTY_ENV_ALLOWLIST_WIN = [
+  'SystemRoot', 'SystemDrive', 'windir', 'ComSpec', 'PATH', 'PATHEXT',
+  'TEMP', 'TMP', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'HOME',
+  'APPDATA', 'LOCALAPPDATA', 'PROGRAMFILES', 'PROGRAMDATA',
+  'USERNAME', 'USERDOMAIN', 'COMPUTERNAME', 'OS',
+  'PROCESSOR_ARCHITECTURE', 'NUMBER_OF_PROCESSORS',
+  'TERM', 'COLORTERM', 'NO_COLOR', 'FORCE_COLOR',
+  'NODE_PATH', 'BUN_INSTALL',
+];
+
 function buildPtyEnv(): Record<string, string> {
   const env: Record<string, string> = {};
-  for (const key of PTY_ENV_ALLOWLIST) {
+  const allowlist = IS_WINDOWS ? PTY_ENV_ALLOWLIST_WIN : PTY_ENV_ALLOWLIST;
+  for (const key of allowlist) {
     const v = process.env[key];
     if (v !== undefined) env[key] = v;
   }
   return env;
+}
+
+/**
+ * Wrap a user command so a `__SENTINEL__:<exit>` line is printed after it
+ * finishes — that line drives completion detection in the exec/read flow.
+ * The separator and exit-code variable are shell-family specific:
+ *   POSIX sh/zsh/bash : `cmd; echo "S:$?"`
+ *   PowerShell        : `cmd; echo "S:$LASTEXITCODE"`
+ *   cmd.exe           : `cmd & echo S:%errorlevel%`  (`&` always runs the echo)
+ * Only the completion marker matters; the numeric exit code is informational
+ * (the authoritative code comes from node-pty's onExit).
+ */
+export function buildSentinelCommand(shell: string, command: string): string {
+  // Split on both separators: a Windows shell path (`C:\…\cmd.exe`) must be
+  // recognized even when this code runs under POSIX path.basename, which does
+  // not treat `\` as a separator.
+  const name = (shell.split(/[\\/]/).pop() || shell).toLowerCase();
+  if (name === 'cmd.exe' || name === 'cmd') {
+    return `${command} & echo ${SENTINEL}:%errorlevel%`;
+  }
+  if (name === 'powershell.exe' || name === 'powershell' || name === 'pwsh.exe' || name === 'pwsh') {
+    return `${command}; echo "${SENTINEL}:$LASTEXITCODE"`;
+  }
+  return `${command}; echo "${SENTINEL}:$?"`;
 }
 
 /** Get the PTY helper directory, creating it if needed. */
@@ -113,9 +155,28 @@ function getPtyDir(): string {
   return dir;
 }
 
-/** Get the unix socket path for the PTY server. */
+/**
+ * Resolve the IPC endpoint for a given platform + PTY scratch dir. Pure so both
+ * branches are testable without stubbing process.platform.
+ *
+ * Unix: an AF_UNIX socket file inside the scratch dir.
+ * Windows: a named pipe (`\\.\pipe\…`). Named pipes are NOT filesystem objects,
+ * so the name is derived from a hash of the (per-user) scratch dir to keep it
+ * stable across invocations and isolated per user — and callers must never probe
+ * it with fs.existsSync (it always reports false). Both forms are accepted by
+ * net.createServer/createConnection.
+ */
+export function derivePtyEndpoint(platform: NodeJS.Platform, ptyDir: string): string {
+  if (platform === 'win32') {
+    const hash = crypto.createHash('sha1').update(ptyDir).digest('hex').slice(0, 16);
+    return `\\\\.\\pipe\\agents-pty-${hash}`;
+  }
+  return path.join(ptyDir, SOCKET_NAME);
+}
+
+/** Get the IPC endpoint the PTY server listens on / clients connect to. */
 export function getSocketPath(): string {
-  return path.join(getPtyDir(), SOCKET_NAME);
+  return derivePtyEndpoint(process.platform, getPtyDir());
 }
 
 /** Get the path to the PTY server PID file. */
@@ -244,8 +305,10 @@ export async function runPtyServer(): Promise<void> {
   // We own the PID slot; ensure it's released on any exit path, not just SIGTERM/SIGINT.
   process.on('exit', () => { try { fs.unlinkSync(pidPath); } catch {} });
 
-  // Remove stale socket from a prior crashed server. Safe now that we hold the PID slot.
-  if (fs.existsSync(socketPath)) {
+  // Remove stale socket from a prior crashed server. Safe now that we hold the PID
+  // slot. Windows named pipes are not filesystem inodes — they vanish with their
+  // owning process, so there's nothing to unlink (and existsSync always reports false).
+  if (!IS_WINDOWS && fs.existsSync(socketPath)) {
     try { fs.unlinkSync(socketPath); } catch {}
   }
 
@@ -309,8 +372,10 @@ export async function runPtyServer(): Promise<void> {
       case 'start': {
         const rows = req.params?.rows || 24;
         const cols = req.params?.cols || 120;
-        const shell = req.params?.shell || process.env.SHELL || 'zsh';
-        const cwd = req.params?.cwd || process.env.HOME || '/';
+        const shell = req.params?.shell
+          || (IS_WINDOWS ? (process.env.ComSpec || 'powershell.exe') : (process.env.SHELL || 'zsh'));
+        const cwd = req.params?.cwd
+          || (IS_WINDOWS ? (process.env.USERPROFILE || process.env.HOME || process.cwd()) : (process.env.HOME || '/'));
         const id = generateId();
 
         let ptyProcess: any;
@@ -390,7 +455,9 @@ export async function runPtyServer(): Promise<void> {
         session.activeCommand = command;
         session.pendingOutput = '';
 
-        session.pty.write(`${command}; echo "${SENTINEL}:$?"\n`);
+        // Windows conpty submits on CR; POSIX line discipline expects LF.
+        const submit = IS_WINDOWS ? '\r' : '\n';
+        session.pty.write(`${buildSentinelCommand(session.shell, command)}${submit}`);
         session.lastActivity = Date.now();
 
         return { ok: true, submitted: true };
@@ -581,14 +648,20 @@ export async function runPtyServer(): Promise<void> {
   // any local user with execute on the parent dir could connect to the socket
   // during the listen()-to-chmod() window. macOS BSD AF_UNIX semantics make
   // socket mode advisory only, so the parent dir is the real boundary.
+  //
+  // On Windows the transport is a named pipe, not a filesystem inode: chmod/umask
+  // are no-ops (and umask throws in some Node builds), and pipe ACLs default to
+  // the creating user. So we skip the Unix hardening entirely there.
   const agentsDir = getPtyDirRoot();
   fs.mkdirSync(agentsDir, { recursive: true });
-  fs.chmodSync(agentsDir, 0o700);
+  if (!IS_WINDOWS) {
+    fs.chmodSync(agentsDir, 0o700);
 
-  // umask covers any inherited group/other bits while listen() is creating
-  // the socket inode — it only matters for the unobservable instant before
-  // we can chmod the inode itself.
-  process.umask(0o077);
+    // umask covers any inherited group/other bits while listen() is creating
+    // the socket inode — it only matters for the unobservable instant before
+    // we can chmod the inode itself.
+    process.umask(0o077);
+  }
 
   await new Promise<void>((resolve) => {
     server.listen(socketPath, () => resolve());
@@ -596,8 +669,10 @@ export async function runPtyServer(): Promise<void> {
 
   // Surface chmod failures: a 0o600 socket is a load-bearing security
   // assumption, not a nice-to-have. If we can't lock it down, refuse to
-  // start so the caller learns immediately.
-  fs.chmodSync(socketPath, 0o600);
+  // start so the caller learns immediately. (No-op on Windows named pipes.)
+  if (!IS_WINDOWS) {
+    fs.chmodSync(socketPath, 0o600);
+  }
 
   log('INFO', `PTY server started (PID: ${process.pid}, socket: ${socketPath})`);
 
@@ -610,7 +685,8 @@ export async function runPtyServer(): Promise<void> {
     sessions.clear();
     clearInterval(cleanupInterval);
     server.close();
-    try { fs.unlinkSync(socketPath); } catch {}
+    // Named pipes are reclaimed by the OS on close; only Unix sockets leave a file.
+    if (!IS_WINDOWS) { try { fs.unlinkSync(socketPath); } catch {} }
     try { fs.unlinkSync(getPtyPidPath()); } catch {}
     process.exit(0);
   }

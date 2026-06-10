@@ -14,6 +14,7 @@ import { getSocketPath, getPtyPidPath, getPtyLogPath, isPtyServerRunning } from 
 
 const CONNECT_TIMEOUT_MS = 5000;
 const RESPONSE_TIMEOUT_MS = 30000;
+const IS_WINDOWS = process.platform === 'win32';
 
 /** JSON response envelope from the PTY server. */
 export interface PtyResponse {
@@ -55,11 +56,13 @@ async function ensureServer(): Promise<void> {
   child.unref();
   fs.closeSync(logFd);
 
-  // Wait for socket to appear
+  // Wait for the server to become reachable. On Unix the socket file appearing is
+  // a cheap readiness signal; on Windows the named pipe is not a filesystem object
+  // (fs.existsSync always returns false), so we just attempt the ping directly.
   const socketPath = getSocketPath();
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
-    if (fs.existsSync(socketPath)) {
+    if (IS_WINDOWS || fs.existsSync(socketPath)) {
       // Verify we can connect
       try {
         await sendRequest({ action: 'ping' });
@@ -85,9 +88,11 @@ function getServerSpawnArgs(): { bin: string; args: string[] } {
     }
   } catch {}
 
-  // Fallback: use the globally installed agents command
+  // Fallback: use the globally installed agents command. `which` is Unix-only;
+  // Windows uses `where`, which can return multiple lines — take the first.
   try {
-    const agentsBin = execSync('which agents', { encoding: 'utf-8' }).trim();
+    const lookup = IS_WINDOWS ? 'where agents' : 'which agents';
+    const agentsBin = execSync(lookup, { encoding: 'utf-8' }).split(/\r?\n/)[0].trim();
     if (agentsBin) {
       return { bin: agentsBin, args: ['pty', '_server'] };
     }
@@ -103,7 +108,10 @@ function sendRequest(req: any): Promise<PtyResponse> {
   return new Promise((resolve, reject) => {
     const socketPath = getSocketPath();
 
-    if (!fs.existsSync(socketPath)) {
+    // On Unix a missing socket file means the server isn't up — fail fast with a
+    // clear message. On Windows the named pipe isn't a filesystem object, so we
+    // skip the probe and let createConnection surface ENOENT/connection errors.
+    if (!IS_WINDOWS && !fs.existsSync(socketPath)) {
       reject(new Error('PTY server socket not found. Is the server running?'));
       return;
     }
