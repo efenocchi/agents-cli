@@ -28,8 +28,16 @@ const COMPUTER_HELP_GROUPS = [
 
 export function registerComputerCommand(program: Command): void {
   const computer = program
-    .command('computer')
-    .description('Drive macOS apps via Accessibility — list, screenshot, click, type');
+    .command('computers')
+    .description('Drive macOS apps via Accessibility — list, screenshot, click, type (macOS only)')
+    // The whole subsystem is macOS Accessibility / TCC. Fail fast with a clear
+    // message on other platforms instead of a downstream ENOENT / launchctl error.
+    .hook('preAction', () => {
+      if (process.platform !== 'darwin') {
+        console.error('agents computers: macOS only — it drives apps via the macOS Accessibility API.');
+        process.exit(1);
+      }
+    });
 
   registerComputerSubcommands(computer);
   registerCommandGroups(computer, COMPUTER_HELP_GROUPS);

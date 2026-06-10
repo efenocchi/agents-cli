@@ -4,7 +4,7 @@ Drive native macOS apps from AI agents via the Accessibility API.
 
 ## Overview
 
-`agents computer` controls macOS applications through the Accessibility
+`agents computers` controls macOS applications through the Accessibility
 (`AXUIElement`) and Screen Recording frameworks. It requires a separate helper
 app (`Computer Helper.app`) installed in `/Applications/` with two macOS TCC
 grants: Accessibility and Screen Recording.
@@ -25,7 +25,7 @@ macOS APIs (`launchctl`, `AXUIElement`, `CoreGraphics`).
 ```
 agent process
      │
-     │  agents computer <subcommand>
+     │  agents computers <subcommand>
      ▼
   CLI (computer.ts)
      │
@@ -62,7 +62,7 @@ different process.
 ### 1. Install the helper
 
 ```bash
-agents computer install-helper
+agents computers install-helper
 ```
 
 This copies `Computer Helper.app` to `/Applications/Computer Helper.app`,
@@ -106,7 +106,7 @@ defaults read /Applications/SomeApp.app/Contents/Info CFBundleIdentifier
 ### 4. Start the daemon when you need it
 
 ```bash
-agents computer start
+agents computers start
 ```
 
 The daemon is not always-on. Start it when you need it, stop it when done.
@@ -115,19 +115,19 @@ an always-on background listener that can drive any app is a large attack
 surface.
 
 ```bash
-agents computer stop   # when finished
+agents computers stop   # when finished
 ```
 
 ## Command Reference
 
 | Command | Description |
 |---------|-------------|
-| `agents computer install-helper` | Copy helper to /Applications/, write LaunchAgent plist |
-| `agents computer start` | Load the LaunchAgent and start the daemon |
-| `agents computer stop` | Unload the LaunchAgent, remove the socket |
-| `agents computer reload` | Reload the allow-list policy from ~/.agents/permissions/groups/ (SIGHUP the daemon) |
-| `agents computer status` | Report install state, daemon state, TCC trust, policy, and peer list |
-| `agents computer screenshot` | Capture a JPEG of the frontmost window of an allowed app |
+| `agents computers install-helper` | Copy helper to /Applications/, write LaunchAgent plist |
+| `agents computers start` | Load the LaunchAgent and start the daemon |
+| `agents computers stop` | Unload the LaunchAgent, remove the socket |
+| `agents computers reload` | Reload the allow-list policy from ~/.agents/permissions/groups/ (SIGHUP the daemon) |
+| `agents computers status` | Report install state, daemon state, TCC trust, policy, and peer list |
+| `agents computers screenshot` | Capture a JPEG of the frontmost window of an allowed app |
 
 `screenshot` flags:
 
@@ -154,27 +154,27 @@ agents computer stop   # when finished
 
 ```bash
 # Install
-agents computer install-helper
+agents computers install-helper
 
 # Grant permissions in System Settings (manual step)
 # Then:
-agents computer start
-agents computer status
+agents computers start
+agents computers status
 # trust: granted means you are ready
 ```
 
 ### 2. Screenshot the active app
 
 ```bash
-agents computer start
+agents computers start
 
 # Bring the app you want to the foreground, then:
-agents computer screenshot --out /tmp/app-snapshot.jpg
+agents computers screenshot --out /tmp/app-snapshot.jpg
 
 # Or target a specific app by bundle ID:
-agents computer screenshot --bundle com.apple.mail --out /tmp/mail.jpg
+agents computers screenshot --bundle com.apple.mail --out /tmp/mail.jpg
 
-agents computer stop
+agents computers stop
 ```
 
 ### 3. Add a new app to the allow list, then reload
@@ -186,31 +186,31 @@ cat >> ~/.agents/permissions/groups/computer.yaml << 'EOF'
 EOF
 
 # Reload without restarting the daemon
-agents computer reload
+agents computers reload
 # Output: policy: 4 apps allowed (com.apple.mail, com.apple.notes, ...)
 
 # Now screenshot Calendar
-agents computer screenshot --bundle com.apple.calendar --out /tmp/calendar.jpg
+agents computers screenshot --bundle com.apple.calendar --out /tmp/calendar.jpg
 ```
 
 ### 4. Automate a native macOS app from an agent
 
 The computer helper exposes JSON-RPC methods (`list_apps`, `screenshot`,
 `trust_status`) over the socket. Agents calling these directly should use
-`agents computer start` to bring the daemon up, then target the socket at
+`agents computers start` to bring the daemon up, then target the socket at
 `~/.agents/.cache/helpers/computer.sock`. The CLI is the intended interface;
 see `src/lib/computer-rpc.ts` for the raw wire format if you need to call the
 socket from another process.
 
 ```bash
-agents computer start
-agents computer status          # confirm trust: granted
+agents computers start
+agents computers status          # confirm trust: granted
 
 # Screenshot Finder and feed the image to your agent
-agents computer screenshot --bundle com.apple.finder --out /tmp/finder.jpg
+agents computers screenshot --bundle com.apple.finder --out /tmp/finder.jpg
 
 # When automation is complete:
-agents computer stop
+agents computers stop
 ```
 
 ## Demo

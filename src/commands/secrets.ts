@@ -1099,15 +1099,14 @@ Examples:
       }
 
       if (opts.copy) {
-        const { spawn } = await import('child_process');
-        const proc = spawn('pbcopy', [], { stdio: ['pipe', 'inherit', 'inherit'] });
-        proc.stdin.write(password);
-        proc.stdin.end();
-        await new Promise<void>((resolve, reject) => {
-          proc.on('close', (code) => code === 0 ? resolve() : reject(new Error('pbcopy failed')));
-          proc.on('error', reject);
-        });
-        console.log(chalk.green(`Password copied to clipboard (${length} chars)`));
+        try {
+          await copyToClipboard(password);
+          console.log(chalk.green(`Password copied to clipboard (${length} chars)`));
+        } catch (err) {
+          console.error(chalk.red(`Clipboard copy failed: ${(err as Error).message}`));
+          console.error(chalk.gray('Re-run without --copy to print the password instead.'));
+          process.exitCode = 1;
+        }
       } else {
         console.log(password);
       }
@@ -1115,4 +1114,44 @@ Examples:
 
   registerSecretsSyncCommands(cmd);
   registerSecretsMigrateAclCommand(cmd);
+}
+
+/**
+ * Copy text to the system clipboard, cross-platform.
+ * macOS: `pbcopy`. Windows: `clip`. Linux: tries `wl-copy` (Wayland), then
+ * `xclip`, then `xsel` (X11). Throws with an install hint if none are present.
+ */
+async function copyToClipboard(text: string): Promise<void> {
+  const { spawn } = await import('child_process');
+  const candidates: Array<[string, string[]]> =
+    process.platform === 'darwin'
+      ? [['pbcopy', []]]
+      : process.platform === 'win32'
+        ? [['clip', []]]
+        : [
+            ['wl-copy', []],
+            ['xclip', ['-selection', 'clipboard']],
+            ['xsel', ['--clipboard', '--input']],
+          ];
+
+  let lastErr: Error | null = null;
+  for (const [cmd, args] of candidates) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const proc = spawn(cmd, args, { stdio: ['pipe', 'ignore', 'ignore'] });
+        proc.on('error', reject);
+        proc.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`${cmd} exited ${code}`))));
+        proc.stdin.write(text);
+        proc.stdin.end();
+      });
+      return;
+    } catch (err) {
+      lastErr = err as Error;
+    }
+  }
+  const hint =
+    process.platform === 'linux'
+      ? ' Install one: wl-clipboard (Wayland) or xclip / xsel (X11).'
+      : '';
+  throw new Error(`no clipboard tool available (${lastErr?.message ?? 'none found'}).${hint}`);
 }

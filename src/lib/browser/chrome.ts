@@ -149,6 +149,9 @@ export function findBrowserPath(browserType: BrowserType, customBinary?: string)
     }
   }
 
+  if (browserType === 'comet' && platform !== 'darwin') {
+    throw new Error('Browser "comet" is macOS-only (Comet is a macOS Chromium fork). Use chrome, chromium, brave, or edge on this platform.');
+  }
   throw new Error(`Browser "${browserType}" not found. Install it first.`);
 }
 
