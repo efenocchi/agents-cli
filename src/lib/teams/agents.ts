@@ -332,7 +332,8 @@ export function checkCliAvailable(agentType: AgentType): [boolean, string | null
   }
 
   try {
-    const whichPath = execFileSync('which', [executable], { encoding: 'utf-8' }).trim();
+    const whichCmd = process.platform === 'win32' ? 'where' : 'which';
+    const whichPath = execFileSync(whichCmd, [executable], { encoding: 'utf-8' }).trim().split(/\r?\n/)[0].trim();
     return [true, whichPath];
   } catch {
     return [false, `CLI tool '${executable}' not found in PATH. Install it first.`];

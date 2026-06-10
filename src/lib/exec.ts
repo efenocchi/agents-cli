@@ -12,7 +12,7 @@ import type { AgentId, Mode } from './types.js';
 import { ALL_MODES } from './types.js';
 import { AGENTS } from './agents.js';
 import { parseTimeout } from './routines.js';
-import { getVersionHomePath, isVersionInstalled, resolveVersion } from './versions.js';
+import { getBinaryPath, getVersionHomePath, isVersionInstalled, resolveVersion } from './versions.js';
 import { resolveModel, buildReasoningFlags } from './models.js';
 import { emitStart, maybeRotate, createTimer, redactPrompt, redactArgs } from './events.js';
 import { sanitizeProcessEnv } from './secrets/bundles.js';
@@ -430,10 +430,25 @@ export function buildExecCommand(options: ExecOptions): string[] {
   // Resolve to the absolute path of the shim so spawn doesn't depend on PATH —
   // on Linux installs where the shims dir isn't on PATH, spawning the bare
   // versioned name fails with ENOENT even though `agents view` shows the agent.
+  //
+  // On Windows, shims are bash scripts and cannot be executed by spawn() directly.
+  // buildExecEnv() already sets the isolation env vars (CLAUDE_CONFIG_DIR, CODEX_HOME,
+  // etc.) that the bash shim would set, so we can skip the shim entirely and resolve
+  // straight to the real binary via getBinaryPath.
   if (options.version && cmd.length > 0) {
-    const versionedName = `${cmd[0]}@${options.version}`;
-    const absPath = path.join(getShimsDir(), versionedName);
-    cmd[0] = fs.existsSync(absPath) ? absPath : versionedName;
+    if (process.platform === 'win32') {
+      const binaryPath = getBinaryPath(options.agent, options.version);
+      const binaryPathCmd = binaryPath + '.cmd';
+      if (fs.existsSync(binaryPathCmd)) {
+        cmd[0] = binaryPathCmd;
+      } else if (fs.existsSync(binaryPath)) {
+        cmd[0] = binaryPath;
+      }
+    } else {
+      const versionedName = `${cmd[0]}@${options.version}`;
+      const absPath = path.join(getShimsDir(), versionedName);
+      cmd[0] = fs.existsSync(absPath) ? absPath : versionedName;
+    }
   }
 
   // Add reasoning effort flags (before mode flags for codex -c positioning)
@@ -579,11 +594,16 @@ async function spawnAgent(options: ExecOptions): Promise<SpawnResult> {
       ? ['inherit', 'inherit', 'inherit']
       : ['inherit', piped ? 'pipe' : 'inherit', 'pipe'];
 
+    // On Windows, .cmd batch wrappers (npm-installed CLIs) require shell:true
+    // whether addressed by name or absolute path.
+    const useShell = process.platform === 'win32' && (
+      !path.isAbsolute(executable) || executable.endsWith('.cmd')
+    );
     const child = spawn(executable, args, {
       cwd: options.cwd || process.cwd(),
       stdio,
       env: buildExecEnv(options),
-      shell: false,
+      shell: useShell,
     });
 
     // Mark startup time (time from function call to process spawn)
