@@ -181,14 +181,17 @@ export async function runPtyServer(): Promise<void> {
   let XtermTerminal: any;
 
   try {
-    nodePty = await import('node-pty');
+    // The Homebridge multiarch fork of node-pty: API-identical (same 1.x N-API
+    // codebase) but ships prebuilt binaries for Linux glibc + musl, x64 + arm64
+    // (plus macOS/Windows), so no compiler is needed on Linux/Alpine/arm64.
+    nodePty = await import('@homebridge/node-pty-prebuilt-multiarch');
     // Handle ESM default export
     if (nodePty.default?.spawn) nodePty = nodePty.default;
 
     // Ensure spawn-helper is executable (bun install doesn't set +x on prebuilds)
     try {
       const __dirname = path.dirname(fileURLToPath(import.meta.url));
-      const ptyBase = path.resolve(__dirname, '..', '..', 'node_modules', 'node-pty');
+      const ptyBase = path.resolve(__dirname, '..', '..', 'node_modules', '@homebridge', 'node-pty-prebuilt-multiarch');
       const helpers = [
         path.join(ptyBase, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper'),
         path.join(ptyBase, 'build', 'Release', 'spawn-helper'),
@@ -200,8 +203,8 @@ export async function runPtyServer(): Promise<void> {
       }
     } catch {}
   } catch (err) {
-    console.error('node-pty is required for PTY support.');
-    console.error('Install: cd ' + '~/agents-cli && bun add node-pty');
+    console.error('node-pty (@homebridge/node-pty-prebuilt-multiarch) is required for PTY support.');
+    console.error('Install: bun add @homebridge/node-pty-prebuilt-multiarch');
     process.exit(1);
   }
 

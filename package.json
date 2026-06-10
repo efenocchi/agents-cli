@@ -73,7 +73,11 @@
     "node": ">=22.5.0",
     "npm": ">=9"
   },
+  "trustedDependencies": [
+    "@homebridge/node-pty-prebuilt-multiarch"
+  ],
   "dependencies": {
+    "@homebridge/node-pty-prebuilt-multiarch": "0.13.1",
     "@inquirer/prompts": "8.5.2",
     "@types/proper-lockfile": "4.1.4",
     "@xterm/headless": "6.0.0",
@@ -84,7 +88,6 @@
     "diff": "9.0.0",
     "marked": "15.0.12",
     "marked-terminal": "7.3.0",
-    "node-pty": "1.1.0",
     "ora": "9.4.0",
     "proper-lockfile": "4.1.2",
     "simple-git": "3.36.0",

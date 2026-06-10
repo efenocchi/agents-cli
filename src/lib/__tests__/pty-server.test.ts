@@ -29,14 +29,15 @@ process.env.HOME = TEST_HOME;
 
 const { runPtyServer, captureProcessStartTime, getSocketPath } = await import('../pty-server.js');
 
-// node-pty ships prebuilds only for darwin and win32 — on linux it must be
-// compiled from source via node-gyp, which requires postinstall scripts. CI
-// runs `bun install --ignore-scripts` as a supply-chain guard, so the import
-// throws on linux runners. Skip the server-boot tests when the native module
-// isn't loadable; the helper-level test below still runs.
+// The multiarch fork BAKES Linux prebuilds (glibc + musl, all Node ABIs incl.
+// 22/24) into its npm tarball, so the native binary is present on Linux even
+// under CI's `bun install --ignore-scripts` — these server-boot tests run on
+// Linux runners (unlike mainline node-pty, which only ships darwin/win32 and
+// must compile on Linux). macOS/Windows fetch their prebuild via the trusted
+// postinstall. If the module still isn't loadable, skip rather than fail.
 let nodePtyLoadable = true;
 try {
-  await import('node-pty');
+  await import('@homebridge/node-pty-prebuilt-multiarch');
 } catch {
   nodePtyLoadable = false;
 }
