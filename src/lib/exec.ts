@@ -547,6 +547,50 @@ export async function execAgent(options: ExecOptions): Promise<number> {
   return exitCode;
 }
 
+/**
+ * Transparent passthrough exec for generated shims — the node-side delegate that
+ * Windows `.cmd` shims call. Resolves the active version (explicit pin, else
+ * project/default) and execs the real binary with the user's RAW args and the
+ * per-version env isolation, WITHOUT injecting mode/model/reasoning flags. This
+ * mirrors what the POSIX bash shim does inline (`exec $BINARY $launchArgs "$@"`),
+ * keeping version resolution in one place instead of reimplementing it in batch.
+ */
+export async function execShimPassthrough(
+  agent: AgentId,
+  rawArgs: string[],
+  cwd: string,
+  pinnedVersion?: string,
+): Promise<number> {
+  const version = pinnedVersion ?? resolveVersion(agent, cwd) ?? undefined;
+  if (!version || !isVersionInstalled(agent, version)) {
+    process.stderr.write(`agents: no installed default for ${agent}. Set one with: agents use ${agent} <version>\n`);
+    return 127;
+  }
+
+  let binary = getBinaryPath(agent, version);
+  if (process.platform === 'win32') {
+    // npm ships <cmd>.cmd alongside the bare script on Windows; that's the runnable form.
+    const cmdPath = binary + '.cmd';
+    if (fs.existsSync(cmdPath)) binary = cmdPath;
+  }
+
+  // The only flag the bash shim injects (codex); everything else is transparent.
+  const launchArgs = agent === 'codex' ? ['-c', 'check_for_update_on_startup=false'] : [];
+  // mode/effort are required by ExecOptions but unused by buildExecEnv (which only
+  // derives the per-version config-dir env); pass the agent's default to satisfy the type.
+  const env = buildExecEnv({ agent, version, cwd, mode: defaultModeFor(agent), effort: 'auto' });
+  const useShell = process.platform === 'win32' && (!path.isAbsolute(binary) || binary.endsWith('.cmd'));
+
+  return new Promise((resolve) => {
+    const child = spawn(binary, [...launchArgs, ...rawArgs], { cwd, stdio: 'inherit', env, shell: useShell });
+    child.on('exit', (code, signal) => resolve(code ?? (signal ? 1 : 0)));
+    child.on('error', (err) => {
+      process.stderr.write(`agents: failed to launch ${agent}: ${err.message}\n`);
+      resolve(127);
+    });
+  });
+}
+
 /** Exit code and captured stderr from a spawned agent process. */
 interface SpawnResult {
   exitCode: number;

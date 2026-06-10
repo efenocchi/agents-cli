@@ -119,6 +119,22 @@ import {
   listAgentsWithInstalledVersions,
   removeLegacyUserShim,
 } from './lib/shims.js';
+import type { AgentId } from './lib/types.js';
+
+// Transparent shim delegate: the generated Windows `.cmd` shims invoke
+// `agents __shim <agent>[@version] <raw args>`. Intercept here, before commander
+// parses anything, so the agent's own flags (`--help`, `--version`, etc.) pass
+// through completely untouched and we skip registering the full command tree.
+if (process.argv[2] === '__shim') {
+  const spec = process.argv[3] || '';
+  const rawArgs = process.argv.slice(4);
+  const atIndex = spec.indexOf('@');
+  const agent = atIndex === -1 ? spec : spec.slice(0, atIndex);
+  const pinned = atIndex === -1 ? undefined : spec.slice(atIndex + 1);
+  const { execShimPassthrough } = await import('./lib/exec.js');
+  const code = await execShimPassthrough(agent as AgentId, rawArgs, process.cwd(), pinned || undefined);
+  process.exit(code);
+}
 
 const program = new Command();
 
