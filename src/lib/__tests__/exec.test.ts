@@ -536,6 +536,23 @@ describe('buildExecCommand', () => {
         delete process.env.COPILOT_HOME;
       }
     });
+
+    it('injects KIMI_CODE_HOME for pinned Kimi versions', () => {
+      const env = buildExecEnv(opts({ agent: 'kimi', version: '0.11.0' }));
+      expect(env.KIMI_CODE_HOME).toBe(
+        `${process.env.HOME}/.agents/.history/versions/kimi/0.11.0/home/.kimi-code`
+      );
+    });
+
+    it('strips KIMI_CODE_HOME for non-Kimi agents', () => {
+      process.env.KIMI_CODE_HOME = '/tmp/leaked-kimi-home';
+      try {
+        const env = buildExecEnv(opts({ agent: 'claude', version: '2.1.98' }));
+        expect(env.KIMI_CODE_HOME).toBeUndefined();
+      } finally {
+        delete process.env.KIMI_CODE_HOME;
+      }
+    });
   });
 
   // --- Version pinning ---

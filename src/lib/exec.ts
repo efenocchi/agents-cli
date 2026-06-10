@@ -162,6 +162,7 @@ export function buildExecEnv(options: ExecOptions): NodeJS.ProcessEnv {
     }
     delete result.CODEX_HOME;
     delete result.COPILOT_HOME;
+    delete result.KIMI_CODE_HOME;
   } else if (options.agent === 'codex') {
     const cwd = options.cwd || process.cwd();
     const resolvedVersion = options.version ?? resolveVersion('codex', cwd);
@@ -173,6 +174,7 @@ export function buildExecEnv(options: ExecOptions): NodeJS.ProcessEnv {
     }
     delete result.CLAUDE_CONFIG_DIR;
     delete result.COPILOT_HOME;
+    delete result.KIMI_CODE_HOME;
   } else if (options.agent === 'copilot') {
     // Copilot honors COPILOT_HOME (relocates ~/.copilot, including settings,
     // mcp-config.json, sessions, logs). Pin it at the per-version home so
@@ -187,10 +189,26 @@ export function buildExecEnv(options: ExecOptions): NodeJS.ProcessEnv {
     }
     delete result.CLAUDE_CONFIG_DIR;
     delete result.CODEX_HOME;
+    delete result.KIMI_CODE_HOME;
+  } else if (options.agent === 'kimi') {
+    // Kimi honors KIMI_CODE_HOME (relocates ~/.kimi-code, including config,
+    // skills, hooks, sessions). Pin it at the per-version home.
+    const cwd = options.cwd || process.cwd();
+    const resolvedVersion = options.version ?? resolveVersion('kimi', cwd);
+    const version = options.version
+      ? resolvedVersion
+      : (resolvedVersion && isVersionInstalled('kimi', resolvedVersion) ? resolvedVersion : null);
+    if (version) {
+      result.KIMI_CODE_HOME = path.join(getVersionHomePath('kimi', version), '.kimi-code');
+    }
+    delete result.CLAUDE_CONFIG_DIR;
+    delete result.CODEX_HOME;
+    delete result.COPILOT_HOME;
   } else {
     delete result.CLAUDE_CONFIG_DIR;
     delete result.CODEX_HOME;
     delete result.COPILOT_HOME;
+    delete result.KIMI_CODE_HOME;
   }
 
   return {
