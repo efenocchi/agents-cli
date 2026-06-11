@@ -1,14 +1,18 @@
 /**
- * `agents inspect <agent>[@version]` — single-agent, single-version detail view.
+ * `agents inspect <target>` — detail view for one agent+version or one DotAgents repo.
  *
- * Summary mode shows the per-version header (paths, shim, capabilities, resource
- * counts, sessions). Drill-down flags (`--skills`, `--hooks`, `--mcp`, ...) list
- * one resource kind; passing a positional query to the same flag fuzzy-searches
- * for a single resource and prints its detail. Resource names render as OSC-8
- * hyperlinks to the marker file (SKILL.md / WORKFLOW.md / AGENT.md / the file
- * itself) so users can click straight to the source.
+ * Agent targets (`claude`, `claude@2.1.170`) show the per-version header (paths,
+ * shim, capabilities, resource counts, sessions). Repo targets (`user`, `system`,
+ * `project`, a registered extra-repo alias, or a filesystem path to a repo with a
+ * `.agents/` dir or to a DotAgents root itself) show the repo root, git state, and
+ * per-kind resource counts. Drill-down flags (`--skills`, `--hooks`, `--mcp`, ...)
+ * list one resource kind for either target form; passing a positional query to the
+ * same flag fuzzy-searches for a single resource and prints its detail. Resource
+ * names render as OSC-8 hyperlinks to the marker file (SKILL.md / WORKFLOW.md /
+ * AGENT.md / the file itself) so users can click straight to the source.
  */
 
+import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -18,7 +22,13 @@ import * as yaml from 'yaml';
 import type { AgentId, CapabilityName } from '../lib/types.js';
 import { AGENTS, getCliState } from '../lib/agents.js';
 import { supports } from '../lib/capabilities.js';
-import { readMeta } from '../lib/state.js';
+import {
+  readMeta,
+  getUserAgentsDir,
+  getSystemAgentsDir,
+  getProjectAgentsDir,
+  getEnabledExtraRepos,
+} from '../lib/state.js';
 import { getVersionHomePath } from '../lib/versions.js';
 import { getShimsDir, getVersionedAliasPath } from '../lib/shims.js';
 import {
@@ -79,8 +89,8 @@ interface InspectOptions {
 
 export function registerInspectCommand(program: Command): void {
   const cmd = program
-    .command('inspect <agent>')
-    .description('Inspect one installed agent at one version — paths, capabilities, resources, drill into any kind.')
+    .command('inspect <target>')
+    .description('Inspect one installed agent at one version, or a DotAgents repo (user|system|project|alias|path) — paths, capabilities, resources, drill into any kind.')
     .option('--brief', 'header + capabilities only; skip resources/sessions')
     .option('--json', 'machine-readable JSON output');
 
@@ -96,6 +106,21 @@ export function registerInspectCommand(program: Command): void {
 // ─── Main dispatcher ─────────────────────────────────────────────────────────
 
 export async function inspectAction(target: string, options: InspectOptions): Promise<void> {
+  const agentKey = target.split('@')[0].toLowerCase();
+  if (!(agentKey in AGENTS)) {
+    const repo = resolveRepoTarget(target);
+    if (repo) {
+      await inspectRepo(repo, options);
+      return;
+    }
+    const extras = getEnabledExtraRepos();
+    console.error(chalk.red(`Unknown target: ${target}`));
+    console.error(chalk.gray(`Agents: ${Object.keys(AGENTS).join(', ')}`));
+    const aliases = extras.length > 0 ? `, ${extras.map(e => e.alias).join(', ')}` : '';
+    console.error(chalk.gray(`Repos:  user, system, project${aliases} — or a path to a repo with a .agents/ dir`));
+    process.exit(1);
+  }
+
   const { agent, version } = parseTarget(target);
   const versionHome = getVersionHomePath(agent, version);
 
@@ -123,13 +148,7 @@ export async function inspectAction(target: string, options: InspectOptions): Pr
 
 function parseTarget(target: string): { agent: AgentId; version: string } {
   const [rawAgent, rawVersion] = target.split('@');
-  const agentKey = (rawAgent || '').toLowerCase();
-  if (!(agentKey in AGENTS)) {
-    console.error(chalk.red(`Unknown agent: ${rawAgent}`));
-    console.error(chalk.gray(`Known agents: ${Object.keys(AGENTS).join(', ')}`));
-    process.exit(1);
-  }
-  const agent = agentKey as AgentId;
+  const agent = (rawAgent || '').toLowerCase() as AgentId;
 
   let version = rawVersion;
   if (!version || version === 'default') {
@@ -157,6 +176,173 @@ function pickDrillKind(options: InspectOptions): { kind: DrillableKind; query: b
     process.exit(1);
   }
   return active[0];
+}
+
+// ─── Repo targets ────────────────────────────────────────────────────────────
+
+export interface RepoTarget {
+  /** Display label: 'user' | 'system' | 'project', an extra-repo alias, or a path-derived name. */
+  label: string;
+  /** Absolute path to the DotAgents root (the dir holding commands/, skills/, ...). */
+  root: string;
+}
+
+/** Files at a DotAgents root that mark it as one, beyond the per-kind dirs. */
+const REPO_MARKER_FILES = ['agents.yaml', 'hooks.yaml'];
+
+/**
+ * Resolve a non-agent target as a DotAgents repo: the built-in layer names,
+ * a registered extra-repo alias, or a filesystem path. Paths accept either a
+ * DotAgents root itself or a repo whose `.agents/` dir should be inspected.
+ * Returns null when the target is none of these.
+ */
+export function resolveRepoTarget(target: string, cwd?: string): RepoTarget | null {
+  if (target === 'user') return { label: 'user', root: getUserAgentsDir() };
+  if (target === 'system') return { label: 'system', root: getSystemAgentsDir() };
+  if (target === 'project') {
+    const dir = getProjectAgentsDir(cwd);
+    if (!dir) {
+      console.error(chalk.red('No project .agents/ directory found from the current directory.'));
+      process.exit(1);
+    }
+    return { label: 'project', root: dir };
+  }
+
+  for (const extra of getEnabledExtraRepos()) {
+    if (extra.alias === target) return { label: extra.alias, root: extra.dir };
+  }
+
+  const expanded = target.startsWith('~/') ? path.join(os.homedir(), target.slice(2)) : target;
+  const abs = path.resolve(cwd ?? process.cwd(), expanded);
+  const stat = safeStat(abs);
+  if (!stat || !stat.isDirectory()) return null;
+
+  // A dir that is itself a DotAgents root wins over its nested .agents/ —
+  // extra repos like ~/.agents-extras keep resources at the top level and use
+  // .agents/ only for worktrees.
+  if (isDotAgentsRoot(abs)) {
+    const label = path.basename(abs) === '.agents' ? path.basename(path.dirname(abs)) : path.basename(abs);
+    return { label, root: abs };
+  }
+  if (path.basename(abs) !== '.agents') {
+    const nested = path.join(abs, '.agents');
+    if (safeStat(nested)?.isDirectory()) {
+      return { label: path.basename(abs), root: nested };
+    }
+  }
+  return null;
+}
+
+function isDotAgentsRoot(dir: string): boolean {
+  for (const marker of REPO_MARKER_FILES) {
+    if (fs.existsSync(path.join(dir, marker))) return true;
+  }
+  for (const kind of DRILLABLE_KINDS) {
+    if (safeStat(path.join(dir, kind))?.isDirectory()) return true;
+  }
+  return false;
+}
+
+async function inspectRepo(repo: RepoTarget, options: InspectOptions): Promise<void> {
+  const drill = pickDrillKind(options);
+  const jsonHead = { repo: repo.label, root: repo.root };
+
+  if (drill) {
+    const items = collectRepoKind(repo, drill.kind);
+    if (drill.query === true || drill.query === undefined) {
+      renderItemList(repo.label, jsonHead, drill.kind, items, options);
+    } else {
+      renderItemDetail(repo.label, jsonHead, drill.kind, String(drill.query), items, options);
+    }
+    return;
+  }
+
+  renderRepoSummary(repo, options);
+}
+
+/** List one resource kind from a single repo root — no layering, no overrides. */
+export function collectRepoKind(repo: RepoTarget, kind: DrillableKind): ResourceItem[] {
+  const dir = path.join(repo.root, kind);
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch { return []; }
+
+  const items: ResourceItem[] = [];
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue;
+    const p = path.join(dir, entry.name);
+    items.push({
+      name: entry.name.replace(/\.(md|yaml|yml|toml|json)$/, ''),
+      source: repo.label,
+      path: p,
+      linkTarget: linkTarget(p),
+      description: readDescription(p),
+    });
+  }
+  return items.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function renderRepoSummary(repo: RepoTarget, options: InspectOptions): void {
+  const git = repoGitInfo(repo.root);
+  const manifests = REPO_MARKER_FILES.filter(m => fs.existsSync(path.join(repo.root, m)));
+
+  const counts = {} as Record<DrillableKind, { total: number; bySource: Record<string, number> }>;
+  if (!options.brief) {
+    for (const kind of DRILLABLE_KINDS) {
+      const items = collectRepoKind(repo, kind);
+      counts[kind] = { total: items.length, bySource: { [repo.label]: items.length } };
+    }
+  }
+
+  if (options.json) {
+    console.log(JSON.stringify({
+      repo: repo.label,
+      root: repo.root,
+      git,
+      manifests,
+      resources: options.brief ? null : Object.fromEntries(
+        DRILLABLE_KINDS.map(kind => [kind, counts[kind].total]),
+      ),
+    }, null, 2));
+    return;
+  }
+
+  console.log('\n' + chalk.bold(repo.label) + '  ' + chalk.gray('[dotagents repo]') + '\n');
+
+  const rows: Array<[string, string]> = [['root', termLink(repo.root, repo.root)]];
+  if (git) {
+    const dirty = git.dirty > 0 ? ` ${chalk.gray('·')} ${chalk.yellow(`${git.dirty} dirty`)}` : '';
+    const url = git.url ? ` ${chalk.gray('·')} ${chalk.gray(git.url)}` : '';
+    rows.push(['git', `${git.branch}${dirty}${url}`]);
+  }
+  if (manifests.length > 0) rows.push(['manifests', manifests.join(', ')]);
+  for (const [k, v] of rows) console.log(`  ${k.padEnd(10)} ${v}`);
+
+  if (!options.brief) {
+    console.log('\n' + chalk.bold('Resources'));
+    for (const kind of DRILLABLE_KINDS) {
+      console.log(`  ${kind.padEnd(10)} ${String(counts[kind].total).padStart(4)}`);
+    }
+  }
+
+  console.log('');
+  console.log(chalk.gray(`Drill in:   agents inspect ${repo.label} --skills <query>`));
+  console.log('');
+}
+
+function repoGitInfo(root: string): { branch: string; dirty: number; url: string | null } | null {
+  const git = (args: string): string | null => {
+    try {
+      return execSync(`git -C ${JSON.stringify(root)} ${args}`, { stdio: ['ignore', 'pipe', 'ignore'] })
+        .toString().trim();
+    } catch { return null; }
+  };
+  const branch = git('rev-parse --abbrev-ref HEAD');
+  if (branch === null) return null;
+  const status = git('status --porcelain');
+  const dirty = status ? status.split('\n').filter(Boolean).length : 0;
+  return { branch, dirty, url: git('remote get-url origin') };
 }
 
 // ─── Summary mode ────────────────────────────────────────────────────────────
@@ -246,11 +432,13 @@ async function renderSummary(agent: AgentId, version: string, versionHome: strin
 
 async function renderList(agent: AgentId, version: string, versionHome: string, kind: DrillableKind, options: InspectOptions): Promise<void> {
   const items = collectKind(agent, versionHome, kind);
+  renderItemList(`${agent}@${version}`, { agent, version }, kind, items, options);
+}
 
+function renderItemList(header: string, jsonHead: Record<string, unknown>, kind: DrillableKind, items: ResourceItem[], options: InspectOptions): void {
   if (options.json) {
     console.log(JSON.stringify({
-      agent,
-      version,
+      ...jsonHead,
       kind,
       count: items.length,
       items: items.map(i => ({ name: i.name, source: i.source, path: i.path, description: i.description })),
@@ -258,7 +446,7 @@ async function renderList(agent: AgentId, version: string, versionHome: string, 
     return;
   }
 
-  console.log('\n' + chalk.bold(`${agent}@${version}`) + '  ' + chalk.gray(`${kind} (${items.length})`) + '\n');
+  console.log('\n' + chalk.bold(header) + '  ' + chalk.gray(`${kind} (${items.length})`) + '\n');
 
   if (items.length === 0) {
     console.log(chalk.gray(`  (none installed)`));
@@ -280,12 +468,16 @@ async function renderList(agent: AgentId, version: string, versionHome: string, 
 
 async function renderDetail(agent: AgentId, version: string, versionHome: string, kind: DrillableKind, query: string, options: InspectOptions): Promise<void> {
   const items = collectKind(agent, versionHome, kind);
+  renderItemDetail(`${agent}@${version}`, { agent, version }, kind, query, items, options);
+}
+
+function renderItemDetail(header: string, jsonHead: Record<string, unknown>, kind: DrillableKind, query: string, items: ResourceItem[], options: InspectOptions): void {
   const matches = findMatches(items, query);
 
   if (matches.length === 0) {
     const suggestions = suggestClosest(items, query, 3);
     if (options.json) {
-      console.log(JSON.stringify({ agent, version, kind, query, match: null, suggestions: suggestions.map(s => s.name) }, null, 2));
+      console.log(JSON.stringify({ ...jsonHead, kind, query, match: null, suggestions: suggestions.map(s => s.name) }, null, 2));
     } else {
       console.error(chalk.red(`No ${kind} matching '${query}'.`));
       if (suggestions.length > 0) {
@@ -301,8 +493,7 @@ async function renderDetail(agent: AgentId, version: string, versionHome: string
   if (options.json) {
     const detail = buildDetail(best.item, kind);
     console.log(JSON.stringify({
-      agent,
-      version,
+      ...jsonHead,
       kind,
       query,
       match: { ...detail, matchKind: best.matchKind },
@@ -311,7 +502,7 @@ async function renderDetail(agent: AgentId, version: string, versionHome: string
     return;
   }
 
-  console.log('\n' + chalk.bold(`${agent}@${version}`) + '  ' + chalk.gray(`${kind} matching "${query}"`) + '\n');
+  console.log('\n' + chalk.bold(header) + '  ' + chalk.gray(`${kind} matching "${query}"`) + '\n');
   const matchTag = best.matchKind === 'exact' ? 'exact' : best.matchKind === 'substring' ? 'substring' : `~${best.distance}`;
   console.log(`  ${chalk.green('✓')}  ${termLink(chalk.bold.cyan(best.item.name), best.item.linkTarget)}  ${chalk.gray(`[${matchTag}, ${best.item.source}]`)}`);
   if (best.item.description) {

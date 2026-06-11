@@ -170,7 +170,7 @@ Agent versions:
   prune cleanup [target]          Remove orphan resources and older duplicate version installs
   trash                           Inspect and restore soft-deleted version directories
   view [agent[@version]]          List versions, or inspect one in detail
-  inspect <agent>[@version]       Deep details for one agent+version — paths, capabilities, resources, drill into any kind
+  inspect <target>                Deep details for one agent+version, or a DotAgents repo (user|system|project|alias|path)
 
 Agent configuration (synced across versions):
   rules                           Instructions given to agents (CLAUDE.md, etc.)

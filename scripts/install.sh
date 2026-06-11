@@ -72,7 +72,7 @@ echo
 if ! $SKIP_BUILD; then
   BUILD_ARGS=()
   $SKIP_TESTS && BUILD_ARGS+=(--skip-tests)
-  ./scripts/build.sh "${BUILD_ARGS[@]}"
+  ./scripts/build.sh ${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"}
   echo
 fi
 

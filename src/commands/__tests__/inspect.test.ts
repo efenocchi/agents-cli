@@ -97,10 +97,10 @@ afterEach(() => {
 });
 
 describe('agents inspect', () => {
-  it('exits non-zero on unknown agent', () => {
+  it('exits non-zero on a target that is neither an agent nor a repo', () => {
     const r = run(fixtureHome, ['inspect', 'bogus']);
     expect(r.status).toBe(1);
-    expect(r.stderr + r.stdout).toMatch(/Unknown agent/);
+    expect(r.stderr + r.stdout).toMatch(/Unknown target/);
   });
 
   it('summary --json carries paths, capabilities, and resource counts', () => {
