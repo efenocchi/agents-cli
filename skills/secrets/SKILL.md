@@ -90,6 +90,33 @@ agents secrets add prod STRIPE_KEY --type api-key --expires 2027-12-31 --note "L
 
 The `list` command shows secrets expiring in the next 30 days. Expired secrets show in red.
 
+## "I have multiple accounts on one website"
+
+For browser logins, name the bundle after the domain — `x.com`, `linkedin.com`, `reddit.com` — and group keys by account handle. One bundle per site, any number of accounts inside. Every account carries a `--note` saying when to use it:
+
+```bash
+agents secrets create x.com --description "X/Twitter accounts. Read key notes to pick the right one."
+
+agents secrets add x.com ZEFFMUKS_USERNAME --value zeffmuks \
+  --note "Personal account. Casual engagement, memes."
+agents secrets add x.com ZEFFMUKS_PASSWORD --type password \
+  --note "Password for @zeffmuks"
+
+agents secrets add x.com SOCIAL_GETRUSH_USERNAME --value social@getrush.ai \
+  --note "Official Rush brand account. Product marketing, announcements, replies as Rush."
+agents secrets add x.com SOCIAL_GETRUSH_PASSWORD --type password \
+  --note "Password for social@getrush.ai"
+```
+
+Key naming: uppercase the handle, replace non-alphanumerics with `_`, suffix with `_USERNAME` / `_PASSWORD` (plus `_TOTP_SECRET` if the account has 2FA).
+
+To pick an account, run `agents secrets view x.com` — notes print in the clear while values stay masked. Reveal only the pair you need:
+
+```bash
+agents secrets view x.com                  # read notes, choose the account
+agents secrets export x.com --plaintext | grep '^SOCIAL_GETRUSH_'
+```
+
 ## "I have a .env file I want to import"
 
 ```bash

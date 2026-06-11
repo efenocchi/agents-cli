@@ -234,6 +234,32 @@ agents secrets exec prod -- ./scripts/deploy.sh
 eval "$(agents secrets export prod --plaintext)"
 ```
 
+### 7. Website logins with multiple accounts
+
+Name the bundle after the domain and group keys by account handle — one bundle per site, any number of accounts inside. Per-key `--note` records when to use each account; `view` prints notes in the clear while values stay masked, so an agent can pick the right account without revealing anything:
+
+```bash
+agents secrets create x.com --description "X/Twitter accounts. Read key notes to pick the right one."
+
+agents secrets add x.com ZEFFMUKS_USERNAME --value zeffmuks \
+  --note "Personal account. Casual engagement, memes."
+agents secrets add x.com ZEFFMUKS_PASSWORD --type password \
+  --note "Password for @zeffmuks"
+agents secrets add x.com SOCIAL_GETRUSH_USERNAME --value social@getrush.ai \
+  --note "Official Rush brand account. Marketing, announcements."
+agents secrets add x.com SOCIAL_GETRUSH_PASSWORD --type password \
+  --note "Password for social@getrush.ai"
+
+# Pick an account by reading notes, then reveal just that account's pair
+agents secrets view x.com
+agents secrets export x.com --plaintext | grep '^SOCIAL_GETRUSH_'
+
+# Or bind the bundle to a browser profile so it injects at browser start
+agents browser profiles create x --browser chrome --secrets x.com
+```
+
+Key naming: uppercase the handle, replace non-alphanumerics with `_`, suffix `_USERNAME` / `_PASSWORD` (plus `_TOTP_SECRET` for 2FA accounts).
+
 ## Demo
 
 <video autoplay loop muted playsinline width="100%" src="../assets/videos/secrets.mp4"></video>
