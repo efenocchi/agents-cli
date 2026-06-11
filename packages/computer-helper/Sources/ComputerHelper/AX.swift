@@ -80,17 +80,14 @@ enum AX {
         // a click at those screen coords. Used for canvas apps, games, and any
         // element the AX tree doesn't expose — the accessibility equivalent of
         // browser_click's coordinate mode.
+        let clickCount = Params.intOpt(params, "count") ?? 1
+        let background = Params.bool(params, "background")
         if Params.stringOpt(params, "element_id") == nil {
             if let x = Params.intOpt(params, "x"), let y = Params.intOpt(params, "y") {
                 let pt = CGPoint(x: x, y: y)
                 CursorSprite.shared.flash(at: pt)
-                guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: pt, mouseButton: .left),
-                      let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: pt, mouseButton: .left) else {
-                    throw RPCError(code: "action_failed", message: "could not create click event")
-                }
-                down.postToPid(pid_t(pid))
-                up.postToPid(pid_t(pid))
-                return ["ok": true, "action": "CGEvent", "at": [x, y]]
+                let method = try EventSynth.click(at: pt, pid: pid, button: "left", clickCount: clickCount, background: background)
+                return ["ok": true, "action": method, "at": [x, y]]
             }
             throw RPCError.invalid("pass either element_id or x,y")
         }
@@ -154,13 +151,8 @@ enum AX {
             throw RPCError(code: "action_failed", message: "element has no frame and no AXPress action")
         }
         CursorSprite.shared.flash(at: center)
-        guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: center, mouseButton: .left),
-              let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: center, mouseButton: .left) else {
-            throw RPCError(code: "action_failed", message: "could not create click event")
-        }
-        down.postToPid(pid_t(pid))
-        up.postToPid(pid_t(pid))
-        return ["ok": true, "action": "CGEvent", "at": [Int(center.x), Int(center.y)]]
+        let method = try EventSynth.click(at: center, pid: pid, button: "left", clickCount: clickCount, background: background)
+        return ["ok": true, "action": method, "at": [Int(center.x), Int(center.y)]]
     }
 
     // MARK: - type / setValue
@@ -206,6 +198,84 @@ enum AX {
         if err != .success {
             throw RPCError(code: "action_failed", message: "AXSetAttributeValue=\(err.rawValue)")
         }
+        // Many fields (Photoshop's transform W/H, form inputs) only push the
+        // written value into the document model on Return/blur — AXValue alone
+        // updates the display but is never committed. Opt-in commit closes that
+        // gap: prefer the AX-native AXConfirm action, else synthesize Return.
+        var committed = false
+        if Params.bool(params, "commit") {
+            committed = commitField(el: el, pid: pid)
+        }
+        return ["ok": true, "committed": committed]
+    }
+
+    // Push a just-written field value into the app's model. AXConfirm is the
+    // documented AX commit; when unsupported, a Return keystroke to the pid is
+    // the universal fallback (the field is focused after setValue).
+    private static func commitField(el: AXUIElement, pid: Int) -> Bool {
+        let actions = copyActionNames(el)
+        if actions.contains("AXConfirm") {
+            if AXUIElementPerformAction(el, "AXConfirm" as CFString) == .success {
+                return true
+            }
+        }
+        if let down = CGEvent(keyboardEventSource: EventSynth.source, virtualKey: 0x24, keyDown: true),
+           let up = CGEvent(keyboardEventSource: EventSynth.source, virtualKey: 0x24, keyDown: false) {
+            down.postToPid(pid_t(pid))
+            up.postToPid(pid_t(pid))
+            return true
+        }
+        return false
+    }
+
+    // MARK: - arbitrary AX action
+
+    // Perform any AX action the element advertises (AXPress, AXConfirm,
+    // AXCancel, AXRaise, AXIncrement, AXShowMenu, ...). The previous surface
+    // hardcoded a fixed set; this lets callers drive actions the tree exposes
+    // without us enumerating every one.
+    static func axAction(params: [String: Any], cache: ElementCache) throws -> [String: Any] {
+        try ensureTrusted()
+        let pid = try Params.int(params, "pid")
+        try ensurePidAllowed(pid)
+        let elementId = try Params.string(params, "element_id")
+        let action = try Params.string(params, "action")
+
+        guard let el = cache.get(pid: pid, id: elementId) else {
+            throw RPCError.stale()
+        }
+        let available = copyActionNames(el)
+        guard available.contains(action) else {
+            throw RPCError.unsupported("element does not support \(action); available: \(available.joined(separator: ", "))")
+        }
+        let err = AXUIElementPerformAction(el, action as CFString)
+        if err != .success {
+            throw RPCError(code: "action_failed", message: "AXPerformAction(\(action))=\(err.rawValue)")
+        }
+        return ["ok": true, "action": action]
+    }
+
+    // MARK: - focus
+
+    // Set keyboard focus to an element (kAXFocusedAttribute = true) so a
+    // subsequent key/type lands in the right field without a synthesized click.
+    static func setFocus(params: [String: Any], cache: ElementCache) throws -> [String: Any] {
+        try ensureTrusted()
+        let pid = try Params.int(params, "pid")
+        try ensurePidAllowed(pid)
+        let elementId = try Params.string(params, "element_id")
+        guard let el = cache.get(pid: pid, id: elementId) else {
+            throw RPCError.stale()
+        }
+        var settable = DarwinBoolean(false)
+        AXUIElementIsAttributeSettable(el, kAXFocusedAttribute as CFString, &settable)
+        if !settable.boolValue {
+            throw RPCError.unsupported("AXFocused not settable on element \(elementId)")
+        }
+        let err = AXUIElementSetAttributeValue(el, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        if err != .success {
+            throw RPCError(code: "action_failed", message: "AXSetFocused=\(err.rawValue)")
+        }
         return ["ok": true]
     }
 
@@ -215,12 +285,7 @@ enum AX {
         // Focus the input by clicking at (x,y) first.
         let pt = CGPoint(x: x, y: y)
         CursorSprite.shared.flash(at: pt)
-        guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: pt, mouseButton: .left),
-              let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: pt, mouseButton: .left) else {
-            throw RPCError(code: "action_failed", message: "could not create focus click")
-        }
-        down.postToPid(pid_t(pid))
-        up.postToPid(pid_t(pid))
+        _ = try EventSynth.click(at: pt, pid: pid, button: "left", clickCount: 1, background: false)
         Thread.sleep(forTimeInterval: 0.05)
 
         // Put text on the pasteboard and paste. NSPasteboard.general is
@@ -360,10 +425,17 @@ enum AX {
             warpedTo = [x, y]
         }
 
-        guard let ev = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: Int32(dy), wheel2: Int32(dx), wheel3: 0) else {
+        guard let ev = CGEvent(scrollWheelEvent2Source: EventSynth.source, units: .pixel, wheelCount: 2, wheel1: Int32(dy), wheel2: Int32(dx), wheel3: 0) else {
             throw RPCError(code: "action_failed", message: "could not create scroll event")
         }
-        ev.postToPid(pid_t(pid))
+        // When the caller warped the cursor to a target, deliver through the HID
+        // tap so the event lands on the view under that point (matching click
+        // semantics); otherwise keep the focus-safe pid route.
+        if warpedTo != nil {
+            ev.post(tap: .cghidEventTap)
+        } else {
+            ev.postToPid(pid_t(pid))
+        }
         var result: [String: Any] = ["ok": true, "method": "CGEvent"]
         if let at = warpedTo { result["at"] = at }
         return result

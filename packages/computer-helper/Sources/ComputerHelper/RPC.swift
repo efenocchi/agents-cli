@@ -97,6 +97,12 @@ final class Dispatcher {
             return try AX.setValue(params: params, cache: cache)
         case "key":
             return try Events.sendKey(params: params)
+        case "type_text":
+            return try Events.typeText(params: params)
+        case "ax_action":
+            return try AX.axAction(params: params, cache: cache)
+        case "set_focus":
+            return try AX.setFocus(params: params, cache: cache)
         case "scroll":
             return try AX.scroll(params: params, cache: cache)
         case "screenshot":

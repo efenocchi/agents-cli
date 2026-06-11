@@ -33,6 +33,42 @@ enum Events {
         return ["ok": true]
     }
 
+    // Type an arbitrary unicode string into the focused field. Unlike sendKey
+    // (one chord, US-ANSI keycodes only), this emits the literal characters via
+    // CGEventKeyboardSetUnicodeString — punctuation, digits, mixed case, and
+    // non-ASCII all work without a keycode table. Posts to the pid; the caller
+    // is responsible for focusing the target first (click / set_focus).
+    static func typeText(params: [String: Any]) throws -> [String: Any] {
+        let pid = try Params.int(params, "pid")
+        let text = try Params.string(params, "text")
+        guard NSRunningApplication(processIdentifier: pid_t(pid)) != nil else {
+            throw RPCError.appMissing(pid)
+        }
+        try ensurePidAllowed(pid)
+
+        for scalar in text.unicodeScalars {
+            var utf16 = Array(String(scalar).utf16)
+            guard let down = CGEvent(keyboardEventSource: EventSynth.source, virtualKey: 0, keyDown: true),
+                  let up = CGEvent(keyboardEventSource: EventSynth.source, virtualKey: 0, keyDown: false) else {
+                throw RPCError(code: "action_failed", message: "could not create key event")
+            }
+            down.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
+            up.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
+            down.postToPid(pid_t(pid))
+            up.postToPid(pid_t(pid))
+            Thread.sleep(forTimeInterval: 0.004)
+        }
+
+        if Params.bool(params, "commit") {
+            if let down = CGEvent(keyboardEventSource: EventSynth.source, virtualKey: 0x24, keyDown: true),
+               let up = CGEvent(keyboardEventSource: EventSynth.source, virtualKey: 0x24, keyDown: false) {
+                down.postToPid(pid_t(pid))
+                up.postToPid(pid_t(pid))
+            }
+        }
+        return ["ok": true, "chars": text.count]
+    }
+
     private struct Chord {
         let keyCode: CGKeyCode
         let flags: CGEventFlags

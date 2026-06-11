@@ -39,48 +39,16 @@ enum Mouse {
             }
         }
 
-        // Fallback: synthesize mouse down at source, a series of dragged events,
-        // and an up at the destination. Posted to pid so the user's focus is
-        // minimally disrupted.
-        let downType: CGEventType = button == "right" ? .rightMouseDown : .leftMouseDown
-        let dragType: CGEventType = button == "right" ? .rightMouseDragged : .leftMouseDragged
-        let upType: CGEventType = button == "right" ? .rightMouseUp : .leftMouseUp
-        let mouseButton: CGMouseButton = button == "right" ? .right : .left
-
-        guard let down = CGEvent(mouseEventSource: nil, mouseType: downType, mouseCursorPosition: fromPt, mouseButton: mouseButton) else {
-            throw RPCError(code: "action_failed", message: "could not create mouseDown event")
-        }
+        // Fallback: synthesize the full move->down->drag->up sequence through
+        // the centralized synthesizer (HID tap, fully-stamped events) so it
+        // lands on Chromium/UXP/canvas surfaces, not just plain AppKit views.
+        let background = Params.bool(params, "background")
         CursorSprite.shared.showFor(drag: fromPt)
-        down.postToPid(pid_t(pid))
-
-        // Many drag-and-drop implementations (NSView, drop targets, sortable
-        // lists) need a minimum hold after mouseDown before recognising the
-        // gesture as a drag rather than a click. Without this dwell the
-        // sequence is sometimes interpreted as a single click.
-        Thread.sleep(forTimeInterval: 0.05)
-
-        // Intermediate drag events help apps that watch the event stream.
-        let steps = 10
-        for i in 1...steps {
-            let t = Double(i) / Double(steps)
-            let x = fromPt.x + (toPt.x - fromPt.x) * CGFloat(t)
-            let y = fromPt.y + (toPt.y - fromPt.y) * CGFloat(t)
-            let pt = CGPoint(x: x, y: y)
-            CursorSprite.shared.move(to: pt)
-            if let drag = CGEvent(mouseEventSource: nil, mouseType: dragType, mouseCursorPosition: pt, mouseButton: mouseButton) {
-                drag.postToPid(pid_t(pid))
-            }
-            Thread.sleep(forTimeInterval: 0.01)
-        }
-
-        guard let up = CGEvent(mouseEventSource: nil, mouseType: upType, mouseCursorPosition: toPt, mouseButton: mouseButton) else {
-            throw RPCError(code: "action_failed", message: "could not create mouseUp event")
-        }
-        up.postToPid(pid_t(pid))
+        let method = try EventSynth.drag(from: fromPt, to: toPt, pid: pid, button: button, background: background)
         // Brief lingering flash at destination, then hide.
         CursorSprite.shared.flash(at: toPt)
 
-        return ["ok": true, "method": "CGEvent"]
+        return ["ok": true, "method": method]
     }
 
     // MARK: - right click
@@ -97,13 +65,8 @@ enum Mouse {
             if let x = Params.intOpt(params, "x"), let y = Params.intOpt(params, "y") {
                 let pt = CGPoint(x: x, y: y)
                 CursorSprite.shared.flash(at: pt)
-                guard let down = CGEvent(mouseEventSource: nil, mouseType: .rightMouseDown, mouseCursorPosition: pt, mouseButton: .right),
-                      let up = CGEvent(mouseEventSource: nil, mouseType: .rightMouseUp, mouseCursorPosition: pt, mouseButton: .right) else {
-                    throw RPCError(code: "action_failed", message: "could not create right click event")
-                }
-                down.postToPid(pid_t(pid))
-                up.postToPid(pid_t(pid))
-                return ["ok": true, "method": "CGEvent", "at": [x, y]]
+                let method = try EventSynth.click(at: pt, pid: pid, button: "right", clickCount: 1, background: Params.bool(params, "background"))
+                return ["ok": true, "method": method, "at": [x, y]]
             }
             throw RPCError.invalid("pass either element_id or x,y")
         }
@@ -131,14 +94,8 @@ enum Mouse {
             throw RPCError(code: "action_failed", message: "element has no frame")
         }
         CursorSprite.shared.flash(at: center)
-
-        guard let down = CGEvent(mouseEventSource: nil, mouseType: .rightMouseDown, mouseCursorPosition: center, mouseButton: .right),
-              let up = CGEvent(mouseEventSource: nil, mouseType: .rightMouseUp, mouseCursorPosition: center, mouseButton: .right) else {
-            throw RPCError(code: "action_failed", message: "could not create right click event")
-        }
-        down.postToPid(pid_t(pid))
-        up.postToPid(pid_t(pid))
-        return ["ok": true, "method": "CGEvent"]
+        let method = try EventSynth.click(at: center, pid: pid, button: "right", clickCount: 1, background: Params.bool(params, "background"))
+        return ["ok": true, "method": method]
     }
 
     // MARK: - focus window
