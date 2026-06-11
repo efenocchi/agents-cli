@@ -120,6 +120,7 @@ import {
   removeLegacyUserShim,
 } from './lib/shims.js';
 import type { AgentId } from './lib/types.js';
+import { IS_WINDOWS } from './lib/platform/index.js';
 
 // Transparent shim delegate: the generated Windows `.cmd` shims invoke
 // `agents __shim <agent>[@version] <raw args>`. Intercept here, before commander
@@ -518,6 +519,14 @@ async function maybeBootstrapShimIntegration(
   // "yes" to never deletes the file; next invocation finds it again).
   for (const agent of installedAgents) {
     removeLegacyUserShim(agent);
+  }
+
+  // The remaining flow is rc-file PATH repair, which is POSIX-only. On Windows
+  // the shims were just regenerated (incl. `.cmd` companions) above; PATH setup
+  // is covered by the install-time guidance, so stop here rather than printing
+  // shell-rc instructions that don't apply.
+  if (IS_WINDOWS) {
+    return;
   }
 
   const defaultAgents = installedAgents.filter((agent) => getGlobalDefault(agent));

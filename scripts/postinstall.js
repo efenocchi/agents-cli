@@ -95,6 +95,11 @@ function writeAliasShims() {
     const target = path.join(SHIMS_DIR, name);
     const script = `#!/bin/sh\nAGENTS_BIN=${shellQuote(AGENTS_BIN)}\nif [ -z "$AGENTS_BIN" ] || [ ! -x "$AGENTS_BIN" ]; then\n  echo "agents: agents-cli entrypoint missing or not executable: $AGENTS_BIN" >&2\n  exit 127\nfi\nexec "$AGENTS_BIN" ${name} "$@"\n`;
     fs.writeFileSync(target, script, { mode: 0o755 });
+    // Windows can't run the POSIX shim; drop a `.cmd` companion that invokes the
+    // entrypoint via node so the bare shorthand works in a Windows shell.
+    if (process.platform === 'win32') {
+      fs.writeFileSync(target + '.cmd', `@echo off\r\nnode "${AGENTS_BIN}" ${name} %*\r\n`);
+    }
     written.push(name);
   }
   return written;
@@ -139,8 +144,20 @@ function isAlreadyConfigured(rcFile) {
 }
 
 async function main() {
+  // Windows has no shell rc files to edit. Write the `.cmd` shorthands and point
+  // the user at the PATH entry they can add (the primary `agents` command is
+  // already on PATH via npm's global bin, so this only affects bare shorthands
+  // and versioned aliases).
+  if (process.platform === 'win32') {
+    console.log(`\nagents-cli installed.`);
+    const written = writeAliasShims();
+    console.log(`  Installed shorthands: ${written.join(', ')}`);
+    console.log(`\nTo use bare shorthands (${ALIASES.join(', ')}) and versioned aliases, add this to your PATH:`);
+    console.log(`  ${SHIMS_DIR}`);
+    console.log(`  PowerShell: setx PATH "$env:PATH;${SHIMS_DIR}"  (then open a new terminal)`);
+  }
   // Opt-in: AGENTS_INIT_SHELL=1 npm install -g @phnx-labs/agents-cli
-  if (process.env.AGENTS_INIT_SHELL === '1') {
+  else if (process.env.AGENTS_INIT_SHELL === '1') {
     const rcFile = getShellRc();
     if (!isAlreadyConfigured(rcFile)) {
       const addition = `\n# agents-cli: version switching for AI coding agents\n${exportLine}\n`;

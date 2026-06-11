@@ -1638,6 +1638,15 @@ Then restart your shell or run:
 export function addShimsToPath(
   overrides?: { homeDir?: string; shell?: string; shimsDir?: string },
 ): { success: boolean; alreadyPresent?: boolean; rcFile?: string; error?: string } {
+  // Windows has no shell rc file to edit: the primary `agents` command is already
+  // on PATH via npm's global bin, and bare shorthands / versioned aliases are
+  // handled by the `.cmd` shims plus the PATH guidance printed at install time.
+  // Report "already present" so callers don't emit a misleading "added to
+  // ~/.bashrc / source ~/.bashrc" message. (The `shell` override is the test hook
+  // for exercising the POSIX path, so it bypasses this short-circuit.)
+  if (IS_WINDOWS && !overrides?.shell) {
+    return { success: true, alreadyPresent: true };
+  }
   const shimsDir = overrides?.shimsDir || getShimsDir();
   const { rcFile, rcPath, shell } = getShellRcFile(overrides);
 
