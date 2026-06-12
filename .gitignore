@@ -61,3 +61,4 @@ scripts/scrub-history.sh
 
 # Local scratch / abandoned scaffold (lives in agent-cli-web, not here)
 /website/
+.e2e-pack-*
