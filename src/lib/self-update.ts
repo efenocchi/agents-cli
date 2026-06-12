@@ -15,8 +15,74 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
+import { compareVersions } from './versions.js';
 
 export const NPM_PACKAGE_NAME = '@phnx-labs/agents-cli';
+
+export interface UpdateCheckCache {
+  lastCheck: number;
+  latestVersion: string;
+  dismissed?: string;
+}
+
+/** Read the cached update-check state from disk. Returns null if the file is missing or corrupt. */
+export function readUpdateCache(file: string): UpdateCheckCache | null {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf-8'));
+  } catch {
+    /* cache file missing or corrupt */
+    return null;
+  }
+}
+
+/**
+ * Persist the latest known version and current timestamp. Preserves an
+ * existing `dismissed` marker — the background refresh must not erase a
+ * user's "Skip this version" choice, or they get re-prompted for the exact
+ * version they dismissed.
+ */
+export function saveUpdateCheck(file: string, latestVersion: string): void {
+  try {
+    const dir = path.dirname(file);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const dismissed = readUpdateCache(file)?.dismissed;
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ lastCheck: Date.now(), latestVersion, ...(dismissed ? { dismissed } : {}) }),
+    );
+  } catch {
+    /* best-effort cache update */
+  }
+}
+
+/** Record that the user chose to skip `version`; suppresses prompts until a newer version appears. */
+export function dismissUpdateVersion(file: string, version: string): void {
+  try {
+    const dir = path.dirname(file);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const existing = readUpdateCache(file);
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        lastCheck: existing?.lastCheck ?? Date.now(),
+        latestVersion: version,
+        dismissed: version,
+      }),
+    );
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Whether the cached state warrants an upgrade prompt for a copy running `currentVersion`. */
+export function shouldPromptUpgrade(cache: UpdateCheckCache | null, currentVersion: string): boolean {
+  if (!cache?.latestVersion) return false;
+  return (
+    cache.latestVersion !== currentVersion &&
+    compareVersions(cache.latestVersion, currentVersion) > 0 &&
+    cache.latestVersion !== cache.dismissed
+  );
+}
 
 /**
  * Derive the npm global prefix that owns the install at `packageRoot`.

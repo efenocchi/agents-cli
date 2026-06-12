@@ -5,8 +5,12 @@ import * as os from 'os';
 import * as path from 'path';
 import {
   deriveGlobalPrefix,
+  dismissUpdateVersion,
   installPackageIntoPrefix,
   readInstalledVersion,
+  readUpdateCache,
+  saveUpdateCheck,
+  shouldPromptUpgrade,
   verifyInstalledVersion,
 } from './self-update.js';
 
@@ -110,5 +114,59 @@ describe('installPackageIntoPrefix', () => {
     await installPackageIntoPrefix(packDummyPackage('2.0.0'), prefixB);
 
     expect(() => verifyInstalledVersion(runningRoot, '2.0.0')).toThrow(/still 1\.0\.0 \(expected 2\.0\.0\)/);
+  });
+});
+
+describe('update-check cache', () => {
+  function cacheFile(): string {
+    return path.join(makeTempDir('cache'), 'nested', '.update-check');
+  }
+
+  it('readUpdateCache returns null for a missing or corrupt file', () => {
+    const file = cacheFile();
+    expect(readUpdateCache(file)).toBeNull();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, 'not json');
+    expect(readUpdateCache(file)).toBeNull();
+  });
+
+  it('saveUpdateCheck creates the parent directory and records the version', () => {
+    const file = cacheFile();
+    saveUpdateCheck(file, '1.20.7');
+    const cache = readUpdateCache(file);
+    expect(cache?.latestVersion).toBe('1.20.7');
+    expect(cache?.lastCheck).toBeTypeOf('number');
+  });
+
+  it('a background refresh does not erase a dismissed version', () => {
+    // The original bug: the user picked "Skip 1.20.7", then the next 24h
+    // background refresh rewrote the cache without the dismissed marker and
+    // re-prompted for the exact version they skipped.
+    const file = cacheFile();
+    dismissUpdateVersion(file, '1.20.7');
+    expect(shouldPromptUpgrade(readUpdateCache(file), '1.20.4')).toBe(false);
+
+    saveUpdateCheck(file, '1.20.7');
+
+    expect(readUpdateCache(file)?.dismissed).toBe('1.20.7');
+    expect(shouldPromptUpgrade(readUpdateCache(file), '1.20.4')).toBe(false);
+  });
+
+  it('a newer latest than the dismissed one resumes prompting', () => {
+    const file = cacheFile();
+    dismissUpdateVersion(file, '1.20.7');
+    saveUpdateCheck(file, '1.20.8');
+
+    const cache = readUpdateCache(file);
+    expect(cache?.dismissed).toBe('1.20.7');
+    expect(shouldPromptUpgrade(cache, '1.20.4')).toBe(true);
+  });
+
+  it('shouldPromptUpgrade is false when current is equal to or ahead of latest', () => {
+    const cache = { lastCheck: 1, latestVersion: '1.20.7' };
+    expect(shouldPromptUpgrade(cache, '1.20.7')).toBe(false);
+    expect(shouldPromptUpgrade(cache, '1.21.0')).toBe(false);
+    expect(shouldPromptUpgrade(null, '1.20.4')).toBe(false);
+    expect(shouldPromptUpgrade(cache, '1.20.4')).toBe(true);
   });
 });

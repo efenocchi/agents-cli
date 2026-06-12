@@ -300,33 +300,19 @@ async function showWhatsNew(fromVersion: string, toVersion: string): Promise<voi
 
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 import { getUpdateCheckPath, getMigratedSentinelPath, getUserAgentsDir } from './lib/state.js';
+import {
+  readUpdateCache,
+  saveUpdateCheck,
+  dismissUpdateVersion,
+  shouldPromptUpgrade,
+  type UpdateCheckCache,
+} from './lib/self-update.js';
 const UPDATE_CHECK_FILE = getUpdateCheckPath();
 
-/** Read the cached update-check state from disk. Returns null if the file is missing or corrupt. */
-function readUpdateCache(): { lastCheck: number; latestVersion: string; dismissed?: string } | null {
-  try {
-    return JSON.parse(fs.readFileSync(UPDATE_CHECK_FILE, 'utf-8'));
-  } catch {
-    /* cache file missing or corrupt */
-    return null;
-  }
-}
-
 /** Determine whether enough time has elapsed since the last registry fetch. */
-function shouldFetchLatest(cache: { lastCheck: number } | null): boolean {
+function shouldFetchLatest(cache: UpdateCheckCache | null): boolean {
   if (!cache) return true;
   return Date.now() - cache.lastCheck > UPDATE_CHECK_INTERVAL_MS;
-}
-
-/** Persist the latest known version and current timestamp to the update-check cache. */
-function saveUpdateCheck(latestVersion: string): void {
-  try {
-    const dir = path.dirname(UPDATE_CHECK_FILE);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(UPDATE_CHECK_FILE, JSON.stringify({ lastCheck: Date.now(), latestVersion }));
-  } catch {
-    /* best-effort cache update */
-  }
 }
 
 /** Fetch the exact latest npm version plus its registry integrity hash. */
@@ -382,17 +368,7 @@ async function promptUpgrade(latestVersion: string): Promise<void> {
   });
 
   if (answer === 'dismiss') {
-    try {
-      const dir = path.dirname(UPDATE_CHECK_FILE);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      const existing = readUpdateCache();
-      fs.writeFileSync(UPDATE_CHECK_FILE, JSON.stringify({
-        ...existing,
-        lastCheck: existing?.lastCheck ?? Date.now(),
-        latestVersion,
-        dismissed: latestVersion,
-      }));
-    } catch { /* best-effort */ }
+    dismissUpdateVersion(UPDATE_CHECK_FILE, latestVersion);
     return;
   }
 
@@ -401,6 +377,10 @@ async function promptUpgrade(latestVersion: string): Promise<void> {
     let spinner = ora('Resolving package metadata...').start();
     try {
       const metadata = await fetchNpmPackageMetadata();
+      // The prompt showed the cached latest, which can lag the registry (the
+      // 24h window) — sync the cache to what was actually resolved so later
+      // prompts and the install agree on the same version.
+      saveUpdateCheck(UPDATE_CHECK_FILE, metadata.version);
       spinner.succeed(`Resolved ${NPM_PACKAGE_NAME}@${metadata.version}`);
       printResolvedPackage(metadata);
 
@@ -450,7 +430,7 @@ function refreshUpdateCacheInBackground(): void {
     .then((response) => (response.ok ? response.json() : null))
     .then((data) => {
       if (data && typeof (data as any).version === 'string') {
-        saveUpdateCheck((data as any).version);
+        saveUpdateCheck(UPDATE_CHECK_FILE, (data as any).version);
       }
     })
     .catch(() => {
@@ -462,7 +442,7 @@ function refreshUpdateCacheInBackground(): void {
 async function checkForUpdates(): Promise<void> {
   if (process.env.AGENTS_CLI_DISABLE_AUTO_UPDATE) return;
 
-  const cache = readUpdateCache();
+  const cache = readUpdateCache(UPDATE_CHECK_FILE);
 
   // Kick off network refresh in background if stale. Does not block.
   if (shouldFetchLatest(cache)) {
@@ -472,9 +452,9 @@ async function checkForUpdates(): Promise<void> {
   // Prompt based on current cache (may be from a previous run's background refresh).
   // Skip if the user dismissed this exact version — they'll be prompted again when
   // a newer version appears.
-  if (cache?.latestVersion && cache.latestVersion !== VERSION && compareVersions(cache.latestVersion, VERSION) > 0 && cache.latestVersion !== cache.dismissed) {
+  if (shouldPromptUpgrade(cache, VERSION)) {
     try {
-      await promptUpgrade(cache.latestVersion);
+      await promptUpgrade(cache!.latestVersion);
     } catch (err) {
       if (isPromptCancelled(err)) return;
       /* prompt error, ignore */
