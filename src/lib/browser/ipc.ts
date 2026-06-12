@@ -1,6 +1,7 @@
 import * as net from 'net';
 import * as fs from 'fs';
 import * as path from 'path';
+import { IS_WINDOWS, ipcEndpoint } from '../platform/index.js';
 import { getHelpersDir } from '../state.js';
 import { BrowserService } from './service.js';
 import { startDaemon } from '../daemon.js';
@@ -33,10 +34,39 @@ export function getSocketPath(): string {
   return path.join(getHelpersDir(), 'browser', SOCKET_NAME);
 }
 
+/**
+ * The address the daemon actually listens on / clients connect to: the unix
+ * socket file on POSIX, a `\\.\pipe\` named pipe on Windows. `getSocketPath`
+ * stays the canonical key (and the POSIX socket path); on Windows it's only used
+ * to derive a stable pipe name, never touched on disk.
+ */
+function getIpcEndpoint(): string {
+  return ipcEndpoint(getSocketPath());
+}
+
+/** Can we open a connection to the daemon right now? Used on Windows where a
+ * named pipe can't be probed with fs.existsSync. Resolves false on any error. */
+function probeDaemon(endpoint: string, timeoutMs = 500): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sock = net.createConnection(endpoint);
+    let done = false;
+    const finish = (ok: boolean) => { if (done) return; done = true; sock.destroy(); resolve(ok); };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    sock.on('connect', () => { clearTimeout(timer); finish(true); });
+    sock.on('error', () => { clearTimeout(timer); finish(false); });
+  });
+}
+
+/** Is the daemon reachable? existsSync probe on POSIX, connect probe on Windows. */
+async function isDaemonReachable(): Promise<boolean> {
+  if (IS_WINDOWS) return probeDaemon(getIpcEndpoint());
+  return fs.existsSync(getSocketPath());
+}
+
 async function waitForSocket(socketPath: string, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (fs.existsSync(socketPath)) return;
+    if (IS_WINDOWS ? await probeDaemon(getIpcEndpoint()) : fs.existsSync(socketPath)) return;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error('Timeout waiting for browser daemon socket');
@@ -52,12 +82,17 @@ export class BrowserIPCServer {
 
   async start(): Promise<void> {
     const socketPath = getSocketPath();
+    const endpoint = getIpcEndpoint();
     const socketDir = path.dirname(socketPath);
     fs.mkdirSync(socketDir, { recursive: true, mode: 0o700 });
-    fs.chmodSync(socketDir, 0o700);
 
-    if (fs.existsSync(socketPath)) {
-      fs.unlinkSync(socketPath);
+    if (!IS_WINDOWS) {
+      fs.chmodSync(socketDir, 0o700);
+      // Remove a stale unix socket from a prior crash. (Named pipes are not
+      // filesystem objects and vanish with their owning process.)
+      if (fs.existsSync(socketPath)) {
+        fs.unlinkSync(socketPath);
+      }
     }
 
     this.server = net.createServer((socket) => {
@@ -88,6 +123,13 @@ export class BrowserIPCServer {
     });
 
     return new Promise((resolve, reject) => {
+      if (IS_WINDOWS) {
+        // Windows named pipe: no umask/chmod — filesystem perms don't apply and
+        // pipe ACLs default to the creating user.
+        this.server!.listen(endpoint, () => resolve());
+        this.server!.on('error', (err) => reject(err));
+        return;
+      }
       // Lock down the browser socket dir before opening the socket; on macOS
       // the parent dir is the real local-user boundary for AF_UNIX sockets.
       const prevUmask = process.umask(0o077);
@@ -120,9 +162,11 @@ export class BrowserIPCServer {
       this.server = null;
     }
 
-    const socketPath = getSocketPath();
-    if (fs.existsSync(socketPath)) {
-      fs.unlinkSync(socketPath);
+    if (!IS_WINDOWS) {
+      const socketPath = getSocketPath();
+      if (fs.existsSync(socketPath)) {
+        fs.unlinkSync(socketPath);
+      }
     }
 
     await this.service.shutdown();
@@ -524,26 +568,29 @@ async function sendRawIPCRequest(
   opts: IPCRequestOptions = {}
 ): Promise<IPCResponse> {
   const socketPath = getSocketPath();
+  const endpoint = getIpcEndpoint();
   const autoStartDaemon = opts.autoStartDaemon ?? true;
 
-  if (!fs.existsSync(socketPath)) {
+  if (!(await isDaemonReachable())) {
     if (!autoStartDaemon) {
       throw new BrowserDaemonNotRunningError();
     }
-    await fs.promises.mkdir(path.dirname(socketPath), { recursive: true, mode: 0o700 });
-    await fs.promises.chmod(path.dirname(socketPath), 0o700);
+    if (!IS_WINDOWS) {
+      await fs.promises.mkdir(path.dirname(socketPath), { recursive: true, mode: 0o700 });
+      await fs.promises.chmod(path.dirname(socketPath), 0o700);
+    }
     startDaemon();
-    if (!fs.existsSync(socketPath)) {
+    if (!(await isDaemonReachable())) {
       await waitForSocket(socketPath, 6000);
     }
-    if (!fs.existsSync(socketPath)) {
+    if (!(await isDaemonReachable())) {
       throw new Error('Failed to start browser daemon');
     }
     await new Promise((r) => setTimeout(r, 300));
   }
 
   return new Promise((resolve, reject) => {
-    const socket = net.createConnection(socketPath);
+    const socket = net.createConnection(endpoint);
     let buffer = '';
 
     socket.on('connect', () => {

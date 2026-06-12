@@ -19,3 +19,4 @@ export const IS_LINUX = process.platform === 'linux';
 export * from './paths.js';
 export * from './exec.js';
 export * from './process.js';
+export * from './ipc.js';
