@@ -4,43 +4,45 @@ Drive native macOS apps from AI agents via the Accessibility API.
 
 ## Overview
 
-`agents computers` controls macOS applications through the Accessibility
-(`AXUIElement`) and Screen Recording frameworks. It requires a separate helper
-app (`Computer Helper.app`) installed in `/Applications/` with two macOS TCC
-grants: Accessibility and Screen Recording.
+`agents computer` controls macOS applications through the Accessibility
+(`AXUIElement`) framework, ScreenCaptureKit, and HID-tap event synthesis. It
+requires a separate helper app (`Computer Helper.app`) installed in
+`/Applications/` with two macOS TCC grants: Accessibility and Screen Recording.
 
 The helper runs as a launchd user agent, listening on a UNIX socket. Agents
-send JSON-RPC calls through the CLI; the helper translates them into AX actions
-on running apps.
+send JSON-RPC calls through the CLI; the helper translates them into AX
+actions and synthesized input events on running apps.
 
 Use this when you need to drive a macOS app that has no web interface and no
-CDP endpoint — a desktop finance tool, a native editor, a system preferences
-pane, or an app that Electron automation cannot reach cleanly.
+CDP endpoint — a desktop finance tool, a native editor, a VM window, or an app
+that Electron automation cannot reach cleanly.
 
 This is macOS-only. The daemon, socket, and all TCC plumbing are specific to
-macOS APIs (`launchctl`, `AXUIElement`, `CoreGraphics`).
+macOS APIs (`launchctl`, `AXUIElement`, `ScreenCaptureKit`, `CoreGraphics`).
 
 ## Architecture
 
 ```
 agent process
      │
-     │  agents computers <subcommand>
+     │  agents computer <verb>
      ▼
-  CLI (computer.ts)
+  CLI (computer.ts / computer-actions.ts)
      │
      │  JSON-RPC over UNIX socket
      │  ~/.agents/.cache/helpers/computer.sock
+     │  (per-call timeout 30s; COMPUTER_HELPER_RPC_TIMEOUT_MS overrides)
      │
      │  Fallback: spawn helper binary as child process
-     │            (for dev builds without install-helper)
+     │            (for dev builds without setup)
      ▼
   Computer Helper.app
   /Applications/Computer Helper.app
   [launchd: com.phnx-labs.computer-helper]
      │
      │  AXUIElement  (Accessibility framework)
-     │  CGWindowListCopyWindowInfo / CGDisplayCreateImage (Screen Recording)
+     │  ScreenCaptureKit  (window/display capture)
+     │  CGEvent via HID tap  (clicks, drags, keystrokes)
      ▼
   macOS app process
   (any app in the allow list)
@@ -62,7 +64,7 @@ different process.
 ### 1. Install the helper
 
 ```bash
-agents computers install-helper
+agents computer setup        # alias: install-helper
 ```
 
 This copies `Computer Helper.app` to `/Applications/Computer Helper.app`,
@@ -106,7 +108,7 @@ defaults read /Applications/SomeApp.app/Contents/Info CFBundleIdentifier
 ### 4. Start the daemon when you need it
 
 ```bash
-agents computers start
+agents computer start
 ```
 
 The daemon is not always-on. Start it when you need it, stop it when done.
@@ -115,27 +117,94 @@ an always-on background listener that can drive any app is a large attack
 surface.
 
 ```bash
-agents computers stop   # when finished
+agents computer stop   # when finished
 ```
 
 ## Command Reference
 
+Verbs are grouped the way `agents computer --help` groups them.
+
+### Installation & daemon lifecycle
+
 | Command | Description |
 |---------|-------------|
-| `agents computers install-helper` | Copy helper to /Applications/, write LaunchAgent plist |
-| `agents computers start` | Load the LaunchAgent and start the daemon |
-| `agents computers stop` | Unload the LaunchAgent, remove the socket |
-| `agents computers reload` | Reload the allow-list policy from ~/.agents/permissions/groups/ (SIGHUP the daemon) |
-| `agents computers status` | Report install state, daemon state, TCC trust, policy, and peer list |
-| `agents computers screenshot` | Capture a JPEG of the frontmost window of an allowed app |
+| `setup` (alias `install-helper`) | Copy helper to /Applications/, write LaunchAgent plist |
+| `start` | Write policy + peers, load the LaunchAgent, start the daemon |
+| `stop` | Unload the LaunchAgent, remove the socket |
+| `reload` | Reload the allow-list policy from ~/.agents/permissions/groups/ (SIGHUP the daemon) |
+| `status` | Report install state, daemon state, TCC trust, policy, and peer list |
 
-`screenshot` flags:
+### Observe
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--bundle <id>` | frontmost app | Bundle ID of the app to capture |
-| `--out <path>` | `./computer-screenshot.jpg` | Output JPEG path |
-| `--quality <n>` | 85 | JPEG quality 1–100 |
+| Command | Description |
+|---------|-------------|
+| `apps` | List running allow-listed apps (pid, bundle id, active flag) |
+| `describe` | Dump the accessibility tree; element ids (`@eN`) feed `--id` flags |
+| `screenshot` | Capture a window (default: largest), `--list` windows, or `--display` |
+| `get-text` | Extract visible text from the app (or a subtree via `--id`) without OCR |
+
+`screenshot` flags: `--bundle` / `--pid` (target), `--list` (enumerate windows
+with id/title/layer/`on_screen`/bounds), `--window-id <n>` (capture a specific
+window — the way to shoot a modal or dialog), `--display` (whole display,
+composites stacked windows), `--out <path>`, `--quality <n>`, `--json`.
+
+Every capture reports `origin` (global point origin of the captured region)
+and `scale` (backing-store pixels per point). To click a feature seen at
+screenshot pixel `(px, py)`:
+
+```
+global_x = origin_x + px / scale
+global_y = origin_y + py / scale
+```
+
+Re-capture after any raise or window move — a window on an inactive
+fullscreen Space reports shifted global coordinates.
+
+### Interact
+
+| Command | Description |
+|---------|-------------|
+| `launch` | Launch an app by `--bundle`, `--path`, or `--name` |
+| `raise` | Bring an app — or one window via `--window-id`/`--title` — frontmost; switches Spaces for fullscreen windows |
+| `click` | Click an element (`--id`) or coordinate (`--x --y`); `--count 2` double-clicks |
+| `right-click` | Context-menu click (AXShowMenu when advertised, synthesized otherwise) |
+| `type` | Set an AX field value (`--id`) or paste at a coordinate; `--commit` confirms |
+| `type-text` | Stream unicode keystrokes into the focused field; `--commit` presses Return |
+| `key` | Send a key chord: `enter`, `esc`, `cmd+shift+s`, ... |
+| `drag` | Drag `--from "x,y"` `--to "x,y"` |
+| `scroll` | Scroll by `--dy`/`--dx` at an element or coordinate |
+| `ax-action` | Perform any advertised AX action (`AXConfirm`, `AXCancel`, ...) on an element |
+| `focus` | Set AX keyboard focus to an element |
+| `wait` | Sleep (`--duration`) or poll an element/locator until `exists`/`enabled`/`disappears` |
+
+Shared flags: every interact verb takes `--bundle`/`--pid`; reads take
+`--json`. `click`/`type-text`/`key`/`drag`/`scroll` accept `--raise` to bring
+the target frontmost before acting.
+
+### Focus discipline
+
+Keystrokes are posted to the target pid. Apps that gate input on key-window
+status (VM guests such as Parallels, some Catalyst apps) silently drop them
+when the app is not frontmost. The daemon therefore reports `"frontmost"` in
+every `type-text`/`key` result, and the CLI prints a stderr warning when it is
+`false`. Pass `--require-frontmost` to turn that situation into a hard
+`not_frontmost` error instead. The reliable sequence for key-window-gated
+apps:
+
+```bash
+agents computer raise --bundle <id> --title "<window>"
+agents computer type-text --bundle <id> --text "..." --require-frontmost
+```
+
+### Errors worth knowing
+
+| Error code | Meaning | Fix |
+|------------|---------|-----|
+| `not_frontmost` | Keystrokes would be dropped | `raise`, then retry |
+| `window_offscreen` | Window is on an inactive fullscreen Space; SCK cannot capture it | `raise --window-id <n>`, re-screenshot |
+| `element_not_found` | No window/element matched | `screenshot --list` / re-`describe` |
+| `rpc_timeout` | Daemon did not respond within the per-call timeout | `status`; `stop` + `start` |
+| `permission_denied` | Target app not in the allow list | Add `Computer(<bundle-id>)`, `reload` |
 
 `status` output fields:
 
@@ -154,27 +223,31 @@ agents computers stop   # when finished
 
 ```bash
 # Install
-agents computers install-helper
+agents computer setup
 
 # Grant permissions in System Settings (manual step)
 # Then:
-agents computers start
-agents computers status
+agents computer start
+agents computer status
 # trust: granted means you are ready
 ```
 
 ### 2. Screenshot the active app
 
 ```bash
-agents computers start
+agents computer start
 
 # Bring the app you want to the foreground, then:
-agents computers screenshot --out /tmp/app-snapshot.jpg
+agents computer screenshot --out /tmp/app-snapshot.jpg
 
 # Or target a specific app by bundle ID:
-agents computers screenshot --bundle com.apple.mail --out /tmp/mail.jpg
+agents computer screenshot --bundle com.apple.mail --out /tmp/mail.jpg
 
-agents computers stop
+# Or enumerate windows (reveals modals) and capture one:
+agents computer screenshot --bundle com.apple.mail --list --json
+agents computer screenshot --bundle com.apple.mail --window-id 1234 --out /tmp/dialog.jpg
+
+agents computer stop
 ```
 
 ### 3. Add a new app to the allow list, then reload
@@ -186,32 +259,36 @@ cat >> ~/.agents/permissions/groups/computer.yaml << 'EOF'
 EOF
 
 # Reload without restarting the daemon
-agents computers reload
+agents computer reload
 # Output: policy: 4 apps allowed (com.apple.mail, com.apple.notes, ...)
 
 # Now screenshot Calendar
-agents computers screenshot --bundle com.apple.calendar --out /tmp/calendar.jpg
+agents computer screenshot --bundle com.apple.calendar --out /tmp/calendar.jpg
 ```
 
-### 4. Automate a native macOS app from an agent
+### 4. Drive a native app end-to-end
 
-The computer helper exposes JSON-RPC methods (`list_apps`, `screenshot`,
-`trust_status`) over the socket. Agents calling these directly should use
-`agents computers start` to bring the daemon up, then target the socket at
-`~/.agents/.cache/helpers/computer.sock`. The CLI is the intended interface;
-see `src/lib/computer-rpc.ts` for the raw wire format if you need to call the
-socket from another process.
+The loop is observe → act → verify: act, then re-screenshot and compare —
+a byte-identical image means the action did not land.
 
 ```bash
-agents computers start
-agents computers status          # confirm trust: granted
+agents computer start
+agents computer status                                  # confirm trust: granted
 
-# Screenshot Finder and feed the image to your agent
-agents computers screenshot --bundle com.apple.finder --out /tmp/finder.jpg
+agents computer raise --bundle com.apple.notes
+agents computer describe --bundle com.apple.notes       # element ids @eN
+agents computer click --bundle com.apple.notes --id @e7
+agents computer type-text --bundle com.apple.notes --text "meeting notes" --require-frontmost
+agents computer screenshot --bundle com.apple.notes --out /tmp/notes-after.jpg
 
-# When automation is complete:
-agents computers stop
+agents computer stop
 ```
+
+For AX-opaque surfaces (VM guests, Chromium/UXP canvases) `describe` shows
+nothing useful inside the content area — work in coordinate mode from
+screenshot `origin`/`scale` instead, and gate keystrokes with
+`--require-frontmost`. The `computer` skill in the system DotAgents repo
+(`skills/computer/`) is the agent-facing playbook for both modes.
 
 ## Demo
 
