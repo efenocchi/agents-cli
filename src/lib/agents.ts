@@ -17,6 +17,7 @@ import * as TOML from 'smol-toml';
 import chalk from 'chalk';
 import type { AgentConfig, AgentId } from './types.js';
 import { latestFileMtimeMs } from './fs-walk.js';
+import { damerauLevenshtein } from './fuzzy.js';
 import { getCacheDir, getVersionsDir, getShimsDir, getCliVersionCachePath } from './state.js';
 import { resolveVersion, getVersionHomePath, getBinaryPath } from './versions.js';
 
@@ -1744,11 +1745,30 @@ export const AGENT_NAME_ALIASES: Record<string, AgentId> = {
   'grok-build': 'grok',
   'xai-grok': 'grok',
   gk: 'grok',
+  kimi: 'kimi',
+  'kimi-code': 'kimi',
 };
 
-/** Resolve a user-provided agent name (alias, shorthand, or canonical) to its AgentId. */
+/**
+ * Resolve a user-provided agent name (alias, shorthand, or canonical) to its AgentId.
+ * Tolerates a single typo (insertion/deletion/substitution/transposition) against
+ * canonical ids and aliases — `cladue` -> claude, `kim` -> kimi, `codx` -> codex —
+ * but only when the correction is unambiguous (all distance-1 candidates agree on
+ * one agent). Two-letter shorthands are excluded as fuzzy candidates.
+ */
 export function resolveAgentName(input: string): AgentId | null {
-  return AGENT_NAME_ALIASES[input.toLowerCase()] || null;
+  const lower = input.toLowerCase();
+  const exact = AGENT_NAME_ALIASES[lower] ?? (AGENTS[lower as AgentId] ? (lower as AgentId) : null);
+  if (exact || lower.length < 3) return exact;
+
+  const hits = new Set<AgentId>();
+  for (const id of ALL_AGENT_IDS) {
+    if (damerauLevenshtein(lower, id) === 1) hits.add(id);
+  }
+  for (const [key, id] of Object.entries(AGENT_NAME_ALIASES)) {
+    if (key.length >= 3 && damerauLevenshtein(lower, key) === 1) hits.add(id);
+  }
+  return hits.size === 1 ? hits.values().next().value! : null;
 }
 
 /** Check whether the input string matches any known agent name or alias. */

@@ -20,7 +20,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import * as yaml from 'yaml';
 import type { AgentId, CapabilityName } from '../lib/types.js';
-import { AGENTS, getCliState } from '../lib/agents.js';
+import { AGENTS, getCliState, resolveAgentName } from '../lib/agents.js';
 import { supports } from '../lib/capabilities.js';
 import {
   readMeta,
@@ -113,12 +113,16 @@ export async function inspectAction(target: string, options: InspectOptions): Pr
       await inspectRepo(repo, options);
       return;
     }
-    const extras = getEnabledExtraRepos();
-    console.error(chalk.red(`Unknown target: ${target}`));
-    console.error(chalk.gray(`Agents: ${Object.keys(AGENTS).join(', ')}`));
-    const aliases = extras.length > 0 ? `, ${extras.map(e => e.alias).join(', ')}` : '';
-    console.error(chalk.gray(`Repos:  user, system, project${aliases} — or a path to a repo with a .agents/ dir`));
-    process.exit(1);
+    // Repo targets take precedence over typo correction; only fall through to
+    // parseTarget when the key resolves to an agent (alias or single-edit fix).
+    if (!resolveAgentName(agentKey)) {
+      const extras = getEnabledExtraRepos();
+      console.error(chalk.red(`Unknown target: ${target}`));
+      console.error(chalk.gray(`Agents: ${Object.keys(AGENTS).join(', ')}`));
+      const aliases = extras.length > 0 ? `, ${extras.map(e => e.alias).join(', ')}` : '';
+      console.error(chalk.gray(`Repos:  user, system, project${aliases} — or a path to a repo with a .agents/ dir`));
+      process.exit(1);
+    }
   }
 
   const { agent, version } = parseTarget(target);
@@ -148,7 +152,12 @@ export async function inspectAction(target: string, options: InspectOptions): Pr
 
 function parseTarget(target: string): { agent: AgentId; version: string } {
   const [rawAgent, rawVersion] = target.split('@');
-  const agent = (rawAgent || '').toLowerCase() as AgentId;
+  const agent = resolveAgentName(rawAgent || '');
+  if (!agent) {
+    console.error(chalk.red(`Unknown agent: ${rawAgent}`));
+    console.error(chalk.gray(`Known agents: ${Object.keys(AGENTS).join(', ')}`));
+    process.exit(1);
+  }
 
   let version = rawVersion;
   if (!version || version === 'default') {

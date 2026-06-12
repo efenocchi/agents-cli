@@ -851,10 +851,10 @@ export function parseAgentSpec(spec: string): AgentSpec | null {
   if (parts.length > 2) {
     return null;
   }
-  const agentName = parts[0].toLowerCase();
   const version = parts[1] || 'latest';
 
-  if (!AGENTS[agentName as AgentId]) {
+  const agent = resolveAgentName(parts[0]);
+  if (!agent) {
     return null;
   }
 
@@ -865,7 +865,7 @@ export function parseAgentSpec(spec: string): AgentSpec | null {
   }
 
   return {
-    agent: agentName as AgentId,
+    agent,
     version,
   };
 }

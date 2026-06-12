@@ -26,6 +26,7 @@ import { parseSession } from '../lib/session/parse.js';
 import { renderConversationMarkdown, renderSummary, renderSummaryHeader, computeSummaryStats, renderJson, filterEvents, parseRoleList, type FilterOptions } from '../lib/session/render.js';
 import { renderMarkdown } from '../lib/markdown.js';
 import { colorAgent, resolveAgentName } from '../lib/agents.js';
+import { fuzzyMatch, FUZZY_PRESETS } from '../lib/fuzzy.js';
 import { resolveVersionAliasLoose } from '../lib/versions.js';
 import { isInteractiveTerminal, isPromptCancelled } from './utils.js';
 import { sessionPicker, type PickedSession } from './sessions-picker.js';
@@ -973,8 +974,21 @@ interface AgentFilter {
 function parseAgentFilter(agentName?: string): AgentFilter {
   if (!agentName) return {};
   const [name, version] = agentName.split('@', 2);
-  const agent = name as SessionAgentId;
-  if (!SESSION_AGENTS.includes(agent)) {
+  let agent: SessionAgentId | null = SESSION_AGENTS.includes(name as SessionAgentId)
+    ? (name as SessionAgentId)
+    : null;
+  if (!agent) {
+    // Aliases and single-typo corrections (cladue -> claude). SESSION_AGENTS
+    // includes ids (rush, hermes) that resolveAgentName doesn't know, so fall
+    // back to fuzzy-matching the session list directly.
+    const resolved = resolveAgentName(name);
+    if (resolved && SESSION_AGENTS.includes(resolved as SessionAgentId)) {
+      agent = resolved as SessionAgentId;
+    } else {
+      agent = fuzzyMatch(name, SESSION_AGENTS, FUZZY_PRESETS.agents);
+    }
+  }
+  if (!agent) {
     console.error(chalk.red(`Unknown agent: ${name}. Use: ${SESSION_AGENTS.join(', ')}`));
     process.exit(1);
   }

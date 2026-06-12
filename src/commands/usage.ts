@@ -15,6 +15,8 @@ import {
   AGENTS,
   getAccountInfo,
   agentLabel,
+  resolveAgentName,
+  formatAgentError,
 } from '../lib/agents.js';
 import type { AgentId } from '../lib/types.js';
 import { listInstalledVersions, getGlobalDefault, getVersionHomePath } from '../lib/versions.js';
@@ -34,9 +36,17 @@ Examples:
   agents usage codex        Show usage for Codex only
 `)
     .action(async (agentFilter?: string) => {
-      const filter = agentFilter as AgentId | undefined;
+      let filter: AgentId | undefined;
+      if (agentFilter) {
+        const resolved = resolveAgentName(agentFilter);
+        if (!resolved) {
+          console.error(chalk.red(formatAgentError(agentFilter)));
+          process.exit(1);
+        }
+        filter = resolved;
+      }
       const targets = filter
-        ? [filter].filter((id) => ALL_AGENT_IDS.includes(id))
+        ? [filter]
         : ALL_AGENT_IDS.filter((id) => listInstalledVersions(id).length > 0);
 
       if (targets.length === 0) {

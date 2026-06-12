@@ -8,7 +8,7 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { AGENTS } from '../lib/agents.js';
+import { AGENTS, resolveAgentName } from '../lib/agents.js';
 import { isVersionInstalled } from '../lib/versions.js';
 import { ensureRulesFresh, supportsRulesImports } from '../lib/rules/compile.js';
 
@@ -26,12 +26,12 @@ export function registerRefreshRulesCommand(program: Command): void {
     .requiredOption('--agent-version <version>', 'Installed version whose rules file should be refreshed')
     .option('--quiet', 'Suppress all output (exit code indicates success)', false)
     .action((opts) => {
-      const agentId = opts.agent as keyof typeof AGENTS;
+      const agentId = resolveAgentName(opts.agent as string);
       const version = opts.agentVersion as string;
       const quiet = !!opts.quiet;
 
-      if (!AGENTS[agentId]) {
-        if (!quiet) console.error(chalk.red(`Unknown agent '${agentId}'`));
+      if (!agentId) {
+        if (!quiet) console.error(chalk.red(`Unknown agent '${opts.agent}'`));
         process.exitCode = 1;
         return;
       }

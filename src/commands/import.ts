@@ -29,9 +29,8 @@ import * as os from 'os';
 import * as path from 'path';
 import { confirm } from '@inquirer/prompts';
 
-import type { AgentId } from '../lib/types.js';
 import { ALL_AGENT_IDS } from '../lib/agents.js';
-import { AGENTS, getCliPath, getCliVersion, agentLabel } from '../lib/agents.js';
+import { AGENTS, getCliPath, getCliVersion, agentLabel, resolveAgentName } from '../lib/agents.js';
 import { getVersionDir } from '../lib/versions.js';
 import {
   finalizeImport,
@@ -49,17 +48,13 @@ interface ImportOptions {
   yes?: boolean;
 }
 
-function isValidAgentId(value: string): value is AgentId {
-  return (ALL_AGENT_IDS as string[]).includes(value);
-}
-
 async function runImport(agentArg: string, opts: ImportOptions): Promise<void> {
-  if (!isValidAgentId(agentArg)) {
+  const agentId = resolveAgentName(agentArg);
+  if (!agentId) {
     console.error(chalk.red(`Unknown agent: ${agentArg}`));
     console.error(chalk.gray(`Known agents: ${ALL_AGENT_IDS.join(', ')}`));
     process.exit(1);
   }
-  const agentId = agentArg;
   const agent = AGENTS[agentId];
 
   // installScript-based agents (Grok, Antigravity, Cursor, Kiro, Goose, Roo)

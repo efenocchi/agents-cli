@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**Single-typo agent names auto-correct everywhere, not just `agents run`**
+
+- `agents view cladue` used to print `Unknown agent 'cladue'` even though `agents run cladue` auto-corrected. `resolveAgentName` — the canonical resolver behind `view`, `usage`, `inspect`, `doctor`, `sync`, `models`, `skills`, `hooks`, `import`, `sessions --agent`, and every `agent@version` spec (`agents add claud@latest`, `agents use codx@2.1.170`) — now falls back to Damerau-Levenshtein distance-1 matching against canonical ids and multi-letter aliases: `cladue` -> `claude` (transposition), `kim` -> `kimi`, `codx` -> `codex`, `gemni` -> `gemini`.
+- Corrections apply only when unambiguous: every distance-1 candidate must agree on one agent. `kiri` (one edit from both `kiro` and `kimi`) and inputs under 3 characters still error. `agents run` keeps its existing exact -> profile -> workflow -> fuzzy precedence, so a profile named `claud` still beats the typo correction.
+- Fixes `kimi` being listed as a valid agent but missing from the alias map — `agents view kimi` previously errored. Added `kimi` / `kimi-code` entries.
+
 ## 1.20.7
 
 **`agents inspect` — DotAgents repo targets (#256)**
