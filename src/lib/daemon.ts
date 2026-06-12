@@ -12,7 +12,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { getDaemonDir as getDaemonDirRoot } from './state.js';
-import { isAlive } from './platform/index.js';
+import { isAlive, killTree } from './platform/index.js';
 import { listJobs as listAllJobs } from './routines.js';
 import { JobScheduler } from './scheduler.js';
 import { executeJobDetached, monitorRunningJobs } from './runner.js';
@@ -453,16 +453,21 @@ export function stopDaemon(): boolean {
 
   const pid = readDaemonPid();
   if (pid) {
-    try {
-      process.kill(pid, 'SIGTERM');
-    } catch { /* process already exited */ }
-
-    setTimeout(() => {
+    if (process.platform === 'win32') {
+      // Windows has no graceful termination signal — terminate the daemon and
+      // its job/browser child tree in one shot (taskkill /T), so stop doesn't
+      // report success while children keep running.
+      killTree(pid);
+    } else {
       try {
-        process.kill(pid, 0);
-        process.kill(pid, 'SIGKILL');
+        process.kill(pid, 'SIGTERM');
       } catch { /* process already exited */ }
-    }, 5000);
+
+      // Escalate to a hard tree-kill if it ignored SIGTERM after the grace period.
+      setTimeout(() => {
+        if (isAlive(pid)) killTree(pid);
+      }, 5000);
+    }
   }
 
   removeDaemonPid();
@@ -503,6 +508,12 @@ export function readDaemonLog(lines?: number): string {
 export function signalDaemonReload(): boolean {
   const pid = readDaemonPid();
   if (!pid) return false;
+  if (process.platform === 'win32') {
+    // Windows has no SIGHUP, so signal-based live reload isn't available. Sending
+    // it would throw; instead report "not reloaded" so callers tell the user to
+    // restart the daemon to pick up job changes.
+    return false;
+  }
   try {
     process.kill(pid, 'SIGHUP');
     return true;
