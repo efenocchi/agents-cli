@@ -789,14 +789,13 @@ export function registerRoutinesCommands(program: Command): void {
     .option('-f, --follow', 'Stream log output in real time (like tail -f)')
     .action(async (options) => {
       if (options.follow) {
-        const { spawn } = await import('child_process');
         const { getDaemonDir } = await import('../lib/state.js');
+        const { followFile } = await import('../lib/log-follow.js');
         const logPath = path.join(getDaemonDir(), 'logs.jsonl');
-        const child = spawn('tail', ['-f', logPath]);
-        child.stdout?.pipe(process.stdout);
-        child.stderr?.pipe(process.stderr);
-        child.on('exit', () => process.exit(0));
-        process.on('SIGINT', () => { child.kill(); process.exit(0); });
+        const recent = readDaemonLog(parseInt(options.lines, 10));
+        if (recent) console.log(recent);
+        const stop = followFile(logPath, (text) => process.stdout.write(text), { fromEnd: true });
+        process.on('SIGINT', () => { stop(); process.exit(0); });
         return;
       }
 

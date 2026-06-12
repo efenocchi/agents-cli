@@ -7,7 +7,6 @@
  */
 
 import type { Command } from 'commander';
-import { spawn } from 'child_process';
 import chalk from 'chalk';
 import * as path from 'path';
 
@@ -112,12 +111,12 @@ you never need to start it manually.
       warnDeprecated('logs', 'agents routines scheduler-logs');
       if (options.follow) {
         const { getDaemonDir } = await import('../lib/state.js');
+        const { followFile } = await import('../lib/log-follow.js');
         const logPath = path.join(getDaemonDir(), 'logs.jsonl');
-        const child = spawn('tail', ['-f', logPath], { stdio: ['ignore', 'pipe', 'pipe'] });
-        child.stdout.pipe(process.stdout);
-        child.stderr.pipe(process.stderr);
-        child.on('exit', () => process.exit(0));
-        process.on('SIGINT', () => { child.kill(); process.exit(0); });
+        const recent = readDaemonLog(parseInt(options.lines, 10));
+        if (recent) console.log(recent);
+        const stop = followFile(logPath, (text) => process.stdout.write(text), { fromEnd: true });
+        process.on('SIGINT', () => { stop(); process.exit(0); });
         return;
       }
 
