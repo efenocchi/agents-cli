@@ -41,13 +41,15 @@ describe('package-name consistency (@phnx-labs canonical)', () => {
     expect(src).not.toContain('@companion/agents-cli');
   });
 
-  it('src/index.ts upgrade commands install the canonical package', () => {
+  it('upgrade installs are built from the canonical package constant', () => {
+    // The npm install itself lives in src/lib/self-update.ts; index.ts builds
+    // the install spec from the shared NPM_PACKAGE_NAME constant.
+    const selfUpdate = read('src/lib/self-update.ts');
+    expect(selfUpdate).toContain(`export const NPM_PACKAGE_NAME = '${NPM_PACKAGE}';`);
+    expect(selfUpdate).not.toContain('@companion');
     const src = read('src/index.ts');
-    const matches = src.match(/'install',\s*'-g',\s*'([^']+)'/g) ?? [];
-    expect(matches.length).toBeGreaterThan(0);
-    for (const m of matches) {
-      expect(m).toContain(NPM_PACKAGE);
-    }
+    const specs = src.match(/installPackageIntoPrefix\(`\$\{NPM_PACKAGE_NAME\}@/g) ?? [];
+    expect(specs.length).toBeGreaterThan(0);
   });
 
   it('src/index.ts version-check URLs target the canonical package', () => {

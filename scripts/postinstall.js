@@ -32,6 +32,35 @@ function shellQuote(value) {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+// Shorthands that delegate to the installed agents-cli entrypoint.
+const ALIASES = ['sessions', 'secrets', 'browser', 'pty', 'teams'];
+
+function writeAliasShims() {
+  const written = [];
+  for (const name of ALIASES) {
+    const target = path.join(SHIMS_DIR, name);
+    const script = `#!/bin/sh\nAGENTS_BIN=${shellQuote(AGENTS_BIN)}\nif [ -z "$AGENTS_BIN" ] || [ ! -x "$AGENTS_BIN" ]; then\n  echo "agents: agents-cli entrypoint missing or not executable: $AGENTS_BIN" >&2\n  exit 127\nfi\nexec "$AGENTS_BIN" ${name} "$@"\n`;
+    fs.writeFileSync(target, script, { mode: 0o755 });
+    // Windows can't run the POSIX shim; drop a `.cmd` companion that invokes the
+    // entrypoint via node so the bare shorthand works in a Windows shell.
+    if (process.platform === 'win32') {
+      fs.writeFileSync(target + '.cmd', `@echo off\r\nnode "${AGENTS_BIN}" ${name} %*\r\n`);
+    }
+    written.push(name);
+  }
+  return written;
+}
+
+// Self-updater entry: the upgrade installs with --ignore-scripts (skipping
+// this script as an npm lifecycle hook), then re-invokes it with this env var
+// so the alias shims are refreshed from the newly installed copy. Shims only —
+// no prompts, no rc-file edits, no output.
+if (process.env.AGENTS_POSTINSTALL_SHIMS_ONLY === '1') {
+  fs.mkdirSync(SHIMS_DIR, { recursive: true });
+  writeAliasShims();
+  process.exit(0);
+}
+
 // For local installs, create directories and show a message
 const isGlobalInstall = process.env.npm_config_global || process.argv.includes('-g');
 if (!isGlobalInstall) {
@@ -85,25 +114,6 @@ function getShellRc() {
 const exportLine = shellName === 'fish'
   ? `fish_add_path ${SHIMS_DIR}`
   : `export PATH="${SHIMS_DIR}:$PATH"`;
-
-// Shorthands that delegate to the installed agents-cli entrypoint.
-const ALIASES = ['sessions', 'secrets', 'browser', 'pty', 'teams'];
-
-function writeAliasShims() {
-  const written = [];
-  for (const name of ALIASES) {
-    const target = path.join(SHIMS_DIR, name);
-    const script = `#!/bin/sh\nAGENTS_BIN=${shellQuote(AGENTS_BIN)}\nif [ -z "$AGENTS_BIN" ] || [ ! -x "$AGENTS_BIN" ]; then\n  echo "agents: agents-cli entrypoint missing or not executable: $AGENTS_BIN" >&2\n  exit 127\nfi\nexec "$AGENTS_BIN" ${name} "$@"\n`;
-    fs.writeFileSync(target, script, { mode: 0o755 });
-    // Windows can't run the POSIX shim; drop a `.cmd` companion that invokes the
-    // entrypoint via node so the bare shorthand works in a Windows shell.
-    if (process.platform === 'win32') {
-      fs.writeFileSync(target + '.cmd', `@echo off\r\nnode "${AGENTS_BIN}" ${name} %*\r\n`);
-    }
-    written.push(name);
-  }
-  return written;
-}
 
 function getVersion() {
   const pkgPath = new URL('../package.json', import.meta.url).pathname;

@@ -28,7 +28,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageJsonPath = path.join(__dirname, '..', 'package.json');
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
 const VERSION = packageJson.version;
-const NPM_PACKAGE_NAME = '@phnx-labs/agents-cli';
+import {
+  NPM_PACKAGE_NAME,
+  deriveGlobalPrefix,
+  installPackageIntoPrefix,
+  verifyInstalledVersion,
+  refreshAliasShims,
+} from './lib/self-update.js';
 
 interface NpmPackageMetadata {
   version: string;
@@ -352,12 +358,11 @@ function printResolvedPackage(metadata: NpmPackageMetadata): void {
 }
 
 async function installResolvedPackage(metadata: NpmPackageMetadata): Promise<void> {
-  const { execFile } = await import('child_process');
-  const { promisify } = await import('util');
-  const execFileAsync = promisify(execFile);
-  const installArgs = ['install', '-g', '@phnx-labs/agents-cli', '--ignore-scripts'];
-  installArgs[2] = `${NPM_PACKAGE_NAME}@${metadata.version}`;
-  await execFileAsync('npm', installArgs);
+  const packageRoot = path.resolve(__dirname, '..');
+  const prefix = deriveGlobalPrefix(packageRoot);
+  await installPackageIntoPrefix(`${NPM_PACKAGE_NAME}@${metadata.version}`, prefix);
+  verifyInstalledVersion(packageRoot, metadata.version);
+  refreshAliasShims(packageRoot);
 }
 
 /** Present an interactive upgrade prompt (TTY) or a one-line hint (non-TTY). */
@@ -413,14 +418,18 @@ async function promptUpgrade(latestVersion: string): Promise<void> {
       spinner.succeed(`Upgraded to ${metadata.version}`);
       await showWhatsNew(VERSION, metadata.version);
       console.log();
-      // Re-exec with new version and exit
-      const result = spawnSync('agents', process.argv.slice(2), {
+      // Re-exec the verified install's entrypoint and exit. PATH lookup of
+      // `agents` could resolve a different copy (dev build, another prefix)
+      // than the one that was just upgraded.
+      const entrypoint = path.resolve(__dirname, '..', 'dist', 'index.js');
+      const result = spawnSync(process.execPath, [entrypoint, ...process.argv.slice(2)], {
         stdio: 'inherit',
         shell: false,
       });
       process.exit(result.status ?? 0);
-    } catch {
-      spinner.fail('Upgrade failed');
+    } catch (err) {
+      if (isPromptCancelled(err)) return;
+      spinner.fail(`Upgrade failed: ${err instanceof Error ? err.message : String(err)}`);
       console.log(chalk.gray('Run manually: agents upgrade --yes'));
     }
     console.log();
@@ -753,7 +762,8 @@ program
           await showWhatsNew(VERSION, resolvedVersion);
         }
       } catch (err) {
-        spinner.fail('Upgrade failed');
+        if (isPromptCancelled(err)) return;
+        spinner.fail(`Upgrade failed: ${err instanceof Error ? err.message : String(err)}`);
         console.log(chalk.gray(`Run manually: agents upgrade ${version ? version + ' ' : ''}--yes`));
       }
     });

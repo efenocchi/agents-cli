@@ -47,4 +47,29 @@ describe('postinstall alias shims', () => {
     expect(script).toContain('exec "$AGENTS_BIN" sessions "$@"');
     expect(script).not.toContain('exec agents sessions "$@"');
   });
+
+  it('shims-only mode writes aliases silently without the install flow', () => {
+    // The self-updater installs with --ignore-scripts and then re-invokes
+    // postinstall with this env var to refresh the alias shims. It must not
+    // prompt, print, or take the local/global install branches.
+    const home = makeTempHome();
+    const result = spawnSync(process.execPath, [path.join(REPO_ROOT, 'scripts', 'postinstall.js')], {
+      env: {
+        ...process.env,
+        HOME: home,
+        AGENTS_POSTINSTALL_SHIMS_ONLY: '1',
+        SHELL: '/bin/sh',
+      },
+      encoding: 'utf-8',
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe('');
+
+    for (const name of ['sessions', 'secrets', 'browser', 'pty', 'teams']) {
+      const script = fs.readFileSync(path.join(home, '.agents', '.cache', 'shims', name), 'utf-8');
+      expect(script).toContain(`exec "$AGENTS_BIN" ${name} "$@"`);
+      expect(script).toContain(path.join(REPO_ROOT, 'dist', 'index.js'));
+    }
+  });
 });
