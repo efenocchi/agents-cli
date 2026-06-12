@@ -4,7 +4,7 @@ import * as path from 'path';
 import { pathToFileURL } from 'url';
 import { spawnSync } from 'child_process';
 import { afterEach, describe, expect, it } from 'vitest';
-import { AGENTS } from './agents.js';
+import { AGENTS, resolveLastActive } from './agents.js';
 import type { CapabilityName } from './types.js';
 
 const tempDirs: string[] = [];
@@ -190,5 +190,100 @@ describe('AGENTS capability matrix', () => {
         expect(config.capabilities, `${agentId} missing ${capability}`).toHaveProperty(capability);
       }
     }
+  });
+});
+
+describe('resolveLastActive', () => {
+  function makeClaudeHome(sessionMtimeSec?: number): string {
+    const home = makeTempDir();
+    const projects = path.join(home, '.claude', 'projects', 'some-project');
+    fs.mkdirSync(projects, { recursive: true });
+    if (sessionMtimeSec !== undefined) {
+      const session = path.join(projects, 'session.jsonl');
+      fs.writeFileSync(session, '{}', 'utf-8');
+      fs.utimesSync(session, sessionMtimeSec, sessionMtimeSec);
+    }
+    return home;
+  }
+
+  function cacheFile(): string {
+    return path.join(makeTempDir(), 'last-active.json');
+  }
+
+  it('returns the newest session mtime and persists it to the cache', () => {
+    const home = makeClaudeHome(5_000);
+    const cachePath = cacheFile();
+
+    const result = resolveLastActive('claude', home, undefined, cachePath);
+    expect(result?.getTime()).toBe(5_000_000);
+
+    const cache = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
+    expect(cache[`claude:${home}`]).toEqual({ mtimeMs: 5_000_000, computedAt: expect.any(Number) });
+  });
+
+  it('serves from cache within the fresh window instead of re-walking', () => {
+    const home = makeClaudeHome(5_000);
+    const cachePath = cacheFile();
+    const t0 = new Date('2026-06-11T00:00:00Z');
+
+    expect(resolveLastActive('claude', home, undefined, cachePath, t0)?.getTime()).toBe(5_000_000);
+
+    // A newer session appears, but the cache is still fresh — the cached
+    // value must win, proving the walk was skipped.
+    const newer = path.join(home, '.claude', 'projects', 'some-project', 'newer.jsonl');
+    fs.writeFileSync(newer, '{}', 'utf-8');
+    fs.utimesSync(newer, 9_000, 9_000);
+
+    const within = new Date(t0.getTime() + 60_000);
+    expect(resolveLastActive('claude', home, undefined, cachePath, within)?.getTime()).toBe(5_000_000);
+
+    // Past the fresh window the walk runs again and picks up the newer file.
+    const beyond = new Date(t0.getTime() + 3 * 60_000);
+    expect(resolveLastActive('claude', home, undefined, cachePath, beyond)?.getTime()).toBe(9_000_000);
+  });
+
+  it('falls back to config mtime when the home has no sessions, including via a fresh null entry', () => {
+    const home = makeClaudeHome();
+    const cachePath = cacheFile();
+    const config = path.join(home, '.claude.json');
+    fs.writeFileSync(config, '{}', 'utf-8');
+    fs.utimesSync(config, 7_000, 7_000);
+    const t0 = new Date('2026-06-11T00:00:00Z');
+
+    expect(resolveLastActive('claude', home, config, cachePath, t0)?.getTime()).toBe(7_000_000);
+    // Second call hits the fresh null entry and must still fall through to config mtime.
+    const within = new Date(t0.getTime() + 60_000);
+    expect(resolveLastActive('claude', home, config, cachePath, within)?.getTime()).toBe(7_000_000);
+  });
+
+  it('treats a corrupt cache file as empty and recomputes', () => {
+    const home = makeClaudeHome(5_000);
+    const cachePath = cacheFile();
+    fs.writeFileSync(cachePath, 'not json', 'utf-8');
+
+    expect(resolveLastActive('claude', home, undefined, cachePath)?.getTime()).toBe(5_000_000);
+  });
+});
+
+describe('resolveLastActive cache pruning', () => {
+  it('drops stale entries for other homes on write', () => {
+    const home = path.join(makeTempDir(), 'live-home');
+    const projects = path.join(home, '.claude', 'projects', 'p');
+    fs.mkdirSync(projects, { recursive: true });
+    const session = path.join(projects, 's.jsonl');
+    fs.writeFileSync(session, '{}', 'utf-8');
+    fs.utimesSync(session, 5_000, 5_000);
+
+    const cachePath = path.join(makeTempDir(), 'last-active.json');
+    const t0 = new Date('2026-06-11T00:00:00Z');
+    fs.writeFileSync(cachePath, JSON.stringify({
+      'claude:/gone/stale-home': { mtimeMs: 1_000, computedAt: t0.getTime() - 10 * 60_000 },
+      'claude:/gone/fresh-home': { mtimeMs: 2_000, computedAt: t0.getTime() - 30_000 },
+    }), 'utf-8');
+
+    resolveLastActive('claude', home, undefined, cachePath, t0);
+
+    const cache = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
+    expect(Object.keys(cache).sort()).toEqual([`claude:${home}`, 'claude:/gone/fresh-home'].sort());
   });
 });
