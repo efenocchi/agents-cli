@@ -11,6 +11,14 @@ import type { Readable, Writable } from 'stream';
 
 import type { BrowserType } from './types.js';
 
+// Windows install roots. Resolve from the environment (fall back to the usual
+// defaults) so per-user installs under %LOCALAPPDATA% and 64-bit Program Files
+// are found, not just the hardcoded x86 path. Only the `win32` entries below use
+// these; on other platforms they compute unused placeholder strings.
+const WIN_PROGRAMFILES = process.env.ProgramFiles || 'C:\\Program Files';
+const WIN_PROGRAMFILES_X86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+const WIN_LOCALAPPDATA = process.env.LOCALAPPDATA || `${os.homedir()}\\AppData\\Local`;
+
 const BROWSER_PATHS: Record<string, Record<BrowserType, string[]>> = {
   darwin: {
     chrome: [
@@ -33,16 +41,22 @@ const BROWSER_PATHS: Record<string, Record<BrowserType, string[]>> = {
   },
   win32: {
     chrome: [
-      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+      `${WIN_PROGRAMFILES}\\Google\\Chrome\\Application\\chrome.exe`,
+      `${WIN_PROGRAMFILES_X86}\\Google\\Chrome\\Application\\chrome.exe`,
+      `${WIN_LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe`,
     ],
     comet: [],
-    chromium: [],
+    chromium: [
+      `${WIN_LOCALAPPDATA}\\Chromium\\Application\\chrome.exe`,
+    ],
     brave: [
-      'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
+      `${WIN_PROGRAMFILES}\\BraveSoftware\\Brave-Browser\\Application\\brave.exe`,
+      `${WIN_PROGRAMFILES_X86}\\BraveSoftware\\Brave-Browser\\Application\\brave.exe`,
+      `${WIN_LOCALAPPDATA}\\BraveSoftware\\Brave-Browser\\Application\\brave.exe`,
     ],
     edge: [
-      'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+      `${WIN_PROGRAMFILES}\\Microsoft\\Edge\\Application\\msedge.exe`,
+      `${WIN_PROGRAMFILES_X86}\\Microsoft\\Edge\\Application\\msedge.exe`,
     ],
     custom: [],
   },
