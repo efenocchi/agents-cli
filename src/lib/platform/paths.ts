@@ -54,3 +54,13 @@ export function toComparablePath(p: string, platform: NodeJS.Platform = process.
 export function homeDir(): string {
   return os.homedir();
 }
+
+/**
+ * Is this a Windows absolute path — a drive-letter root (`C:\`, `C:/`) or a UNC
+ * share (`\\server\share`)? Used by local-source parsing to recognize a native
+ * Windows path that the POSIX `/`, `./`, `../` prefixes miss. Caller decides
+ * whether to apply it (typically gated on win32).
+ */
+export function isWindowsAbsolutePath(p: string): boolean {
+  return WIN_DRIVE_RE.test(p) || p.startsWith('\\\\');
+}

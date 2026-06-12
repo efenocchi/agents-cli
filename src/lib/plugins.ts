@@ -14,6 +14,7 @@ import * as path from 'path';
 import { execFileSync } from 'child_process';
 import type { AgentId, DiscoveredPlugin, PluginManifest, MarketplaceSpec } from './types.js';
 import { getPluginsDir, getTrashPluginsDir, getExtraPluginsDir, getProjectPluginsDir } from './state.js';
+import { IS_WINDOWS, isWindowsAbsolutePath, homeDir } from './platform/index.js';
 import { listInstalledVersions, getVersionHomePath } from './versions.js';
 import { AGENTS, agentConfigDirName } from './agents.js';
 import { capableAgents, isCapable } from './capabilities.js';
@@ -1125,9 +1126,10 @@ export async function installPlugin(spec: string): Promise<{ name: string; root:
   const { name: specName, source } = parseInstallSpec(spec);
 
   // Resolve local path (handle ~)
-  const isLocalPath = source.startsWith('/') || source.startsWith('./') || source.startsWith('../') || source.startsWith('~');
+  const isLocalPath = source.startsWith('/') || source.startsWith('./') || source.startsWith('../') || source.startsWith('~')
+    || (IS_WINDOWS && isWindowsAbsolutePath(source));
   const resolvedSource = isLocalPath
-    ? source.replace(/^~/, process.env.HOME || '~')
+    ? source.replace(/^~/, homeDir())
     : source;
 
   const pluginsDir = getPluginsDir();
@@ -1209,7 +1211,7 @@ export async function updatePlugin(name: string): Promise<{ success: boolean; er
     if (sourceInfo.isGit) {
       execFileSync('git', ['-C', plugin.root, 'pull', '--ff-only'], { stdio: 'pipe' });
     } else {
-      const resolvedSource = sourceInfo.source.replace(/^~/, process.env.HOME || '~');
+      const resolvedSource = sourceInfo.source.replace(/^~/, homeDir());
       if (!fs.existsSync(resolvedSource)) {
         return { success: false, error: `Source path no longer exists: ${resolvedSource}` };
       }

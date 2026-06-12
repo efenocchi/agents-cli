@@ -9,6 +9,7 @@
 import type { Command } from 'commander';
 import chalk from 'chalk';
 import * as fs from 'fs';
+import { homeDir } from '../lib/platform/index.js';
 import {
   AGENTS,
   ALL_AGENT_IDS,
@@ -193,5 +194,5 @@ function printCatalog(agent: AgentId, version: string, isDefault: boolean, optio
 
 /** Abbreviate a path by replacing the home directory with ~. */
 function shortPath(p: string): string {
-  return p.replace(process.env.HOME || '~', '~');
+  return p.replace(homeDir(), '~');
 }

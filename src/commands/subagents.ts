@@ -14,6 +14,7 @@ import * as path from 'path';
 import { checkbox } from '@inquirer/prompts';
 
 import { AGENTS, agentLabel } from '../lib/agents.js';
+import { homeDir } from '../lib/platform/index.js';
 import { capableAgents } from '../lib/capabilities.js';
 import type { AgentId } from '../lib/types.js';
 import { cloneRepo } from '../lib/git.js';
@@ -55,7 +56,7 @@ import {
 
 /** Replace the home directory prefix with ~ for display. */
 function formatPath(p: string): string {
-  const home = process.env.HOME || '';
+  const home = homeDir();
   if (home && p.startsWith(home)) {
     return '~' + p.slice(home.length);
   }

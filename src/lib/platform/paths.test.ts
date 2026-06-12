@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as os from 'os';
-import { looksLikePath, toComparablePath, homeDir } from './paths.js';
+import { looksLikePath, toComparablePath, homeDir, isWindowsAbsolutePath } from './paths.js';
 
 describe('looksLikePath', () => {
   // POSIX markers must classify identically on every platform — this is the
@@ -43,5 +43,18 @@ describe('toComparablePath', () => {
 describe('homeDir', () => {
   it('matches os.homedir()', () => {
     expect(homeDir()).toBe(os.homedir());
+  });
+});
+
+describe('isWindowsAbsolutePath', () => {
+  it('recognizes drive-letter and UNC roots', () => {
+    for (const p of ['C:\\repo', 'c:/repo', 'D:\\a\\b', '\\\\server\\share']) {
+      expect(isWindowsAbsolutePath(p)).toBe(true);
+    }
+  });
+  it('rejects POSIX paths and bare names', () => {
+    for (const p of ['/abs/path', './rel', '~/x', 'owner/repo', 'plugin-name', '']) {
+      expect(isWindowsAbsolutePath(p)).toBe(false);
+    }
   });
 });

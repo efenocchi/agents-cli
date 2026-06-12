@@ -10,6 +10,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { Command } from 'commander';
 import chalk from 'chalk';
+import { homeDir } from '../lib/platform/index.js';
 import { input } from '@inquirer/prompts';
 
 import { agentLabel } from '../lib/agents.js';
@@ -60,7 +61,7 @@ import { discoverMarketplaces } from '../lib/plugin-marketplace.js';
 
 /** Replace the home directory prefix with ~ for display. */
 function formatPath(p: string): string {
-  const home = process.env.HOME || '';
+  const home = homeDir();
   if (home && p.startsWith(home)) {
     return '~' + p.slice(home.length);
   }
@@ -429,7 +430,7 @@ Examples:
         });
       }
       const name = nameArg;
-      const pluginsDir = path.join(process.env.HOME || '', '.agents', 'plugins');
+      const pluginsDir = path.join(homeDir(), '.agents', 'plugins');
       const pluginRoot = safeJoin(pluginsDir, name);
 
       // Use discovered plugin when present; fall back to name+root if source is already gone

@@ -37,6 +37,7 @@ import {
 } from '../lib/routines.js';
 import type { JobConfig } from '../lib/routines.js';
 import { getRoutinesDir } from '../lib/state.js';
+import { IS_WINDOWS } from '../lib/platform/index.js';
 import { safeJoin } from '../lib/paths.js';
 import { executeJob, executeJobDetached } from '../lib/runner.js';
 import { JobScheduler } from '../lib/scheduler.js';
@@ -462,7 +463,7 @@ export function registerRoutinesCommands(program: Command): void {
       }
 
       const targetPath = jobPath || path.join(getRoutinesDir(), `${name}.yml`);
-      const editor = process.env.EDITOR || process.env.VISUAL || 'vi';
+      const editor = process.env.EDITOR || process.env.VISUAL || (IS_WINDOWS ? 'notepad' : 'vi');
       const editorParts = editor.split(/\s+/).filter(Boolean);
       const editorBin = editorParts[0];
       const editorArgs = [...editorParts.slice(1), targetPath];
