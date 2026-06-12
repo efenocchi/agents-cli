@@ -77,6 +77,8 @@ describe('addShimsToPath', () => {
         success: true,
         ...(fixture.meta.alreadyPresent ? { alreadyPresent: true } : {}),
         rcFile,
+        location: `~/${rcFile}`,
+        reloadHint: `Restart your shell or run: source ~/${rcFile}`,
       });
 
       const content = fs.readFileSync(rcPath, 'utf8');

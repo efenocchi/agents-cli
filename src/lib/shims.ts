@@ -11,6 +11,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { confirm, select } from '@inquirer/prompts';
 import type { AgentId } from './types.js';
@@ -1631,21 +1632,29 @@ Then restart your shell or run:
   source ~/${rcFile}`;
 }
 
+interface ShimPathResult {
+  success: boolean;
+  alreadyPresent?: boolean;
+  rcFile?: string;
+  /** Human label of where the entry landed, e.g. `~/.zshrc` or `your user PATH`. */
+  location?: string;
+  /** Per-platform "how to pick it up" hint, e.g. `source ~/.zshrc` / open a new terminal. */
+  reloadHint?: string;
+  error?: string;
+}
+
 /**
- * Add shims directory to shell PATH configuration.
- * Returns true if added, false if already present or failed.
+ * Add the shims directory to PATH: edits the shell rc file on POSIX, or registers
+ * it on the Windows User PATH (registry + WM_SETTINGCHANGE). Idempotent.
  */
 export function addShimsToPath(
   overrides?: { homeDir?: string; shell?: string; shimsDir?: string },
-): { success: boolean; alreadyPresent?: boolean; rcFile?: string; error?: string } {
-  // Windows has no shell rc file to edit: the primary `agents` command is already
-  // on PATH via npm's global bin, and bare shorthands / versioned aliases are
-  // handled by the `.cmd` shims plus the PATH guidance printed at install time.
-  // Report "already present" so callers don't emit a misleading "added to
-  // ~/.bashrc / source ~/.bashrc" message. (The `shell` override is the test hook
-  // for exercising the POSIX path, so it bypasses this short-circuit.)
+): ShimPathResult {
+  // Windows has no shell rc file to edit. Register the shims dir on the User PATH
+  // via the platform-native mechanism instead. (The `shell` override is the test
+  // hook for exercising the POSIX path, so it bypasses this branch.)
   if (IS_WINDOWS && !overrides?.shell) {
-    return { success: true, alreadyPresent: true };
+    return addShimsToWindowsUserPath(overrides?.shimsDir || getShimsDir());
   }
   const shimsDir = overrides?.shimsDir || getShimsDir();
   const { rcFile, rcPath, shell } = getShellRcFile(overrides);
@@ -1683,14 +1692,51 @@ export function addShimsToPath(
     let newContent = contentWithoutShimLines + separator + exportBlock;
     newContent = newContent.replace(/\n{2,}$/g, '\n');
 
+    const location = `~/${rcFile}`;
+    const reloadHint = `Restart your shell or run: source ~/${rcFile}`;
     if (newContent === content) {
-      return { success: true, alreadyPresent: true, rcFile };
+      return { success: true, alreadyPresent: true, rcFile, location, reloadHint };
     }
 
     fs.writeFileSync(rcPath, newContent, 'utf-8');
-    return { success: true, rcFile };
+    return { success: true, rcFile, location, reloadHint };
   } catch (err) {
     return { success: false, error: `Could not write ${rcFile}: ${(err as Error).message}` };
+  }
+}
+
+/**
+ * Register the shims dir on the Windows User PATH via the .NET environment API,
+ * which writes the registry AND broadcasts WM_SETTINGCHANGE — the correct analog
+ * of editing a shell rc file (no `setx` truncation, no manual step). Idempotent:
+ * a no-op when the dir is already present. The shims dir is passed via an env var
+ * so it is never interpolated into the PowerShell script text.
+ */
+function addShimsToWindowsUserPath(shimsDir: string): ShimPathResult {
+  const script = [
+    '$d = $env:AGENTS_SHIMS_DIR',
+    "$u = [Environment]::GetEnvironmentVariable('Path','User')",
+    "if ($null -eq $u) { $u = '' }",
+    "$parts = @($u -split ';' | Where-Object { $_ -ne '' })",
+    "if ($parts -contains $d) { 'present' } else {",
+    "  [Environment]::SetEnvironmentVariable('Path', (($parts + $d) -join ';'), 'User')",
+    "  'added'",
+    '}',
+  ].join('\n');
+  try {
+    const out = execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], {
+      encoding: 'utf-8',
+      env: { ...process.env, AGENTS_SHIMS_DIR: shimsDir },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    return {
+      success: true,
+      alreadyPresent: out.includes('present'),
+      location: 'your user PATH',
+      reloadHint: 'Open a new terminal for the change to take effect.',
+    };
+  } catch (err) {
+    return { success: false, error: `Could not update the Windows user PATH: ${(err as Error).message}` };
   }
 }
 

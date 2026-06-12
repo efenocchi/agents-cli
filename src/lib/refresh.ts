@@ -273,8 +273,8 @@ export async function refresh(options: RefreshOptions = {}): Promise<void> {
   if (!isShimsInPath()) {
     const pathResult = addShimsToPath();
     if (pathResult.success && !pathResult.alreadyPresent) {
-      console.log(chalk.green(`\nAdded shims to ~/${pathResult.rcFile}`));
-      console.log(chalk.gray('Restart your shell or run: source ~/' + pathResult.rcFile));
+      console.log(chalk.green(`\nAdded shims to ${pathResult.location}`));
+      console.log(chalk.gray(pathResult.reloadHint));
     } else if (!pathResult.success) {
       console.log(chalk.yellow('\nCould not auto-add shims to PATH:'));
       console.log(chalk.gray(getPathSetupInstructions()));

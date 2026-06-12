@@ -168,8 +168,8 @@ export async function runSetup(program: Command, options: { force?: boolean; sup
       if (!isShimsInPath()) {
         const pathResult = addShimsToPath();
         if (pathResult.success && !pathResult.alreadyPresent) {
-          console.log(chalk.green(`\nAdded shims to ~/${pathResult.rcFile}`));
-          console.log(chalk.gray('Restart your shell or run: source ~/' + pathResult.rcFile));
+          console.log(chalk.green(`\nAdded shims to ${pathResult.location}`));
+          console.log(chalk.gray(pathResult.reloadHint));
         } else if (!pathResult.success) {
           console.log(chalk.yellow('\nTo enable version switching, add shims to PATH:'));
           console.log(chalk.gray(getPathSetupInstructions()));

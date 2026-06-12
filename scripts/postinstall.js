@@ -144,17 +144,17 @@ function isAlreadyConfigured(rcFile) {
 }
 
 async function main() {
-  // Windows has no shell rc files to edit. Write the `.cmd` shorthands and point
-  // the user at the PATH entry they can add (the primary `agents` command is
-  // already on PATH via npm's global bin, so this only affects bare shorthands
-  // and versioned aliases).
+  // Windows has no shell rc files to edit. Write the `.cmd` shorthands here; the
+  // shims dir gets registered on the User PATH by `agents setup` (via the native
+  // registry API), so we point the user there instead of mutating PATH from an
+  // npm lifecycle script. The primary `agents` command is already on PATH via
+  // npm's global bin and works immediately.
   if (process.platform === 'win32') {
     console.log(`\nagents-cli installed.`);
     const written = writeAliasShims();
     console.log(`  Installed shorthands: ${written.join(', ')}`);
-    console.log(`\nTo use bare shorthands (${ALIASES.join(', ')}) and versioned aliases, add this to your PATH:`);
-    console.log(`  ${SHIMS_DIR}`);
-    console.log(`  PowerShell: setx PATH "$env:PATH;${SHIMS_DIR}"  (then open a new terminal)`);
+    console.log(`\nNext: run  agents setup  — it finishes setup and adds the shims dir to your PATH`);
+    console.log(`(so the bare shorthands ${ALIASES.join(', ')} and versioned aliases work in a new terminal).`);
   }
   // Opt-in: AGENTS_INIT_SHELL=1 npm install -g @phnx-labs/agents-cli
   else if (process.env.AGENTS_INIT_SHELL === '1') {
