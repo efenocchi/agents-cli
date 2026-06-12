@@ -153,3 +153,53 @@ export function refreshAliasShims(packageRoot: string): void {
     stdio: 'ignore',
   });
 }
+
+export interface AgentsCliInstall {
+  /** The PATH entry (`<dir>/agents`) that resolves to this install. */
+  binPath: string;
+  /** Package root containing package.json and dist/. */
+  packageRoot: string;
+  version: string;
+}
+
+/**
+ * Scan PATH for `agents` entrypoints and resolve each to the agents-cli
+ * package root it executes. More than one distinct root means upgrades,
+ * shims, and the command the user types can act on different copies — the
+ * divergence behind silently-failing self-updates.
+ *
+ * npm bin entries are symlinks that resolve to `<packageRoot>/dist/index.js`
+ * (the dev install's `~/.local/bin/agents` chains through the dev prefix to
+ * the same shape). Anything that doesn't resolve to a dist/index.js inside a
+ * package named @phnx-labs/agents-cli is some other tool and is skipped.
+ * POSIX-only: Windows npm bins are .cmd wrappers, not symlinks.
+ */
+export function findAgentsCliInstalls(pathEnv: string): AgentsCliInstall[] {
+  if (process.platform === 'win32') return [];
+  const installs: AgentsCliInstall[] = [];
+  const seenRoots = new Set<string>();
+  for (const dir of pathEnv.split(path.delimiter).filter(Boolean)) {
+    const candidate = path.join(dir, 'agents');
+    let real: string;
+    try {
+      real = fs.realpathSync(candidate);
+    } catch {
+      continue; // missing or dangling symlink
+    }
+    if (path.basename(real) !== 'index.js' || path.basename(path.dirname(real)) !== 'dist') {
+      continue;
+    }
+    const packageRoot = path.dirname(path.dirname(real));
+    if (seenRoots.has(packageRoot)) continue;
+    let pkg: { name?: unknown; version?: unknown };
+    try {
+      pkg = JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf-8'));
+    } catch {
+      continue;
+    }
+    if (pkg.name !== NPM_PACKAGE_NAME || typeof pkg.version !== 'string') continue;
+    seenRoots.add(packageRoot);
+    installs.push({ binPath: candidate, packageRoot, version: pkg.version });
+  }
+  return installs;
+}

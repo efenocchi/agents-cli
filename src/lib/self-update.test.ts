@@ -6,6 +6,7 @@ import * as path from 'path';
 import {
   deriveGlobalPrefix,
   dismissUpdateVersion,
+  findAgentsCliInstalls,
   installPackageIntoPrefix,
   readInstalledVersion,
   readUpdateCache,
@@ -168,5 +169,68 @@ describe('update-check cache', () => {
     expect(shouldPromptUpgrade(cache, '1.21.0')).toBe(false);
     expect(shouldPromptUpgrade(null, '1.20.4')).toBe(false);
     expect(shouldPromptUpgrade(cache, '1.20.4')).toBe(true);
+  });
+});
+
+describe('findAgentsCliInstalls', () => {
+  /** Lay out an npm-global-shaped install and a bin dir whose `agents` symlinks into it. */
+  function makeInstall(base: string, name: string, version: string, pkgName = '@phnx-labs/agents-cli') {
+    const packageRoot = path.join(base, name, 'lib', 'node_modules', ...pkgName.split('/'));
+    fs.mkdirSync(path.join(packageRoot, 'dist'), { recursive: true });
+    fs.writeFileSync(path.join(packageRoot, 'package.json'), JSON.stringify({ name: pkgName, version }));
+    fs.writeFileSync(path.join(packageRoot, 'dist', 'index.js'), '// entrypoint\n');
+    const binDir = path.join(base, name, 'bin');
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.symlinkSync(path.join(packageRoot, 'dist', 'index.js'), path.join(binDir, 'agents'));
+    // realpath the root: on macOS the tmpdir lives under /var -> /private/var,
+    // and the scanner reports canonicalized paths.
+    return { packageRoot: fs.realpathSync(packageRoot), binDir };
+  }
+
+  it('resolves each PATH entry to its package root, deduplicating repeats', () => {
+    const base = makeTempDir('installs');
+    const a = makeInstall(base, 'prefix-a', '1.20.4');
+    const b = makeInstall(base, 'prefix-b', '1.20.7');
+    const pathEnv = [a.binDir, b.binDir, a.binDir].join(path.delimiter);
+
+    const installs = findAgentsCliInstalls(pathEnv);
+
+    expect(installs).toHaveLength(2);
+    expect(installs.map((i) => i.packageRoot).sort()).toEqual([a.packageRoot, b.packageRoot].sort());
+    expect(installs.find((i) => i.packageRoot === a.packageRoot)?.version).toBe('1.20.4');
+    expect(installs.find((i) => i.packageRoot === b.packageRoot)?.version).toBe('1.20.7');
+  });
+
+  it('follows symlink chains like the dev install (~/.local/bin/agents -> prefix bin -> dist)', () => {
+    const base = makeTempDir('chain');
+    const real = makeInstall(base, 'dev-prefix', '0.0.0-dev.abc123');
+    const localBin = path.join(base, 'local-bin');
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.symlinkSync(path.join(real.binDir, 'agents'), path.join(localBin, 'agents'));
+
+    const installs = findAgentsCliInstalls(localBin);
+
+    expect(installs).toHaveLength(1);
+    expect(installs[0].packageRoot).toBe(real.packageRoot);
+    expect(installs[0].version).toBe('0.0.0-dev.abc123');
+  });
+
+  it('skips unrelated binaries, foreign packages, and missing entries', () => {
+    const base = makeTempDir('noise');
+    // A plain executable named `agents` that is some other tool entirely.
+    const plainBin = path.join(base, 'plain-bin');
+    fs.mkdirSync(plainBin, { recursive: true });
+    fs.writeFileSync(path.join(plainBin, 'agents'), '#!/bin/sh\necho other tool\n', { mode: 0o755 });
+    // A dist/index.js layout that belongs to a different npm package.
+    const foreign = makeInstall(base, 'foreign', '3.0.0', '@other/agents-tool');
+    // A dangling symlink and a dir with no `agents` at all.
+    const dangling = path.join(base, 'dangling-bin');
+    fs.mkdirSync(dangling, { recursive: true });
+    fs.symlinkSync(path.join(base, 'nowhere', 'dist', 'index.js'), path.join(dangling, 'agents'));
+    const empty = path.join(base, 'empty-bin');
+    fs.mkdirSync(empty, { recursive: true });
+
+    const pathEnv = [plainBin, foreign.binDir, dangling, empty].join(path.delimiter);
+    expect(findAgentsCliInstalls(pathEnv)).toEqual([]);
   });
 });

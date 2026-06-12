@@ -299,15 +299,58 @@ async function showWhatsNew(fromVersion: string, toVersion: string): Promise<voi
 }
 
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
-import { getUpdateCheckPath, getMigratedSentinelPath, getUserAgentsDir } from './lib/state.js';
+import { getUpdateCheckPath, getMigratedSentinelPath, getUserAgentsDir, getRuntimeStateDir } from './lib/state.js';
 import {
   readUpdateCache,
   saveUpdateCheck,
   dismissUpdateVersion,
   shouldPromptUpgrade,
+  findAgentsCliInstalls,
   type UpdateCheckCache,
 } from './lib/self-update.js';
 const UPDATE_CHECK_FILE = getUpdateCheckPath();
+
+/**
+ * Warn once when PATH resolves `agents` to a different agents-cli install
+ * than the copy that is currently running (or to several). Divergent installs
+ * are how self-updates "succeed" without changing the command the user types.
+ * The warning re-fires only when the set of install roots changes; dev builds
+ * (0.0.0-dev) are ignored because side-by-side dev installs are a supported
+ * workflow.
+ */
+function maybeWarnMultiInstall(): void {
+  const sentinel = path.join(getRuntimeStateDir(), 'multi-install-warned');
+  const runningRoot = path.resolve(__dirname, '..');
+  const byRoot = new Map<string, { version: string; note: string }>();
+  byRoot.set(runningRoot, { version: VERSION, note: 'running' });
+  for (const install of findAgentsCliInstalls(process.env.PATH || '')) {
+    if (install.version.startsWith('0.0.0-dev')) continue;
+    if (!byRoot.has(install.packageRoot)) {
+      byRoot.set(install.packageRoot, { version: install.version, note: `agents on PATH: ${install.binPath}` });
+    }
+  }
+
+  if (byRoot.size < 2) {
+    try { fs.unlinkSync(sentinel); } catch { /* nothing recorded */ }
+    return;
+  }
+
+  const key = [...byRoot.keys()].sort().join('\n');
+  try {
+    if (fs.readFileSync(sentinel, 'utf-8') === key) return;
+  } catch { /* not warned for this set yet */ }
+
+  console.error(chalk.yellow('Multiple agents-cli installs detected:'));
+  for (const [root, info] of byRoot) {
+    console.error(chalk.gray(`  ${root}  ${info.version}  (${info.note})`));
+  }
+  console.error(chalk.gray('Upgrades apply to the running copy. Remove a stale copy with: npm uninstall -g --prefix <prefix> @phnx-labs/agents-cli'));
+
+  try {
+    fs.mkdirSync(path.dirname(sentinel), { recursive: true });
+    fs.writeFileSync(sentinel, key);
+  } catch { /* best-effort; worst case the warning repeats */ }
+}
 
 /** Determine whether enough time has elapsed since the last registry fetch. */
 function shouldFetchLatest(cache: UpdateCheckCache | null): boolean {
@@ -441,6 +484,8 @@ function refreshUpdateCacheInBackground(): void {
 /** Check for available updates using the local cache. Triggers a background refresh if stale. */
 async function checkForUpdates(): Promise<void> {
   if (process.env.AGENTS_CLI_DISABLE_AUTO_UPDATE) return;
+
+  maybeWarnMultiInstall();
 
   const cache = readUpdateCache(UPDATE_CHECK_FILE);
 
