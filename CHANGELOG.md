@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## 1.20.6
+## 1.20.7
 
 **`agents inspect` — DotAgents repo targets (#256)**
 
