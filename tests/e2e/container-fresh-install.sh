@@ -68,9 +68,16 @@ assert_claude_settings() {
     const after = JSON.parse(fs.readFileSync(process.env.HOME + "/.claude/settings.json", "utf8"));
     const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
     const errs = [];
-    for (const key of ["env", "hooks", "mcpServers", "customKey"]) {
+    for (const key of ["env", "mcpServers", "customKey"]) {
       if (!eq(before[key], after[key])) errs.push(`${key} changed: ${JSON.stringify(after[key])}`);
     }
+    // Hooks: factory sync legitimately merges system hooks into user entries,
+    // so assert the user hook survived and fires exactly once (a stale-union
+    // carry-forward bug would duplicate it).
+    const fires = (after.hooks?.PreToolUse || [])
+      .flatMap((e) => e.hooks || [])
+      .filter((h) => h.command === "echo guard").length;
+    if (fires !== 1) errs.push(`user hook "echo guard" fires ${fires} times (want exactly 1)`);
     for (const list of ["allow", "deny"]) {
       for (const rule of before.permissions[list]) {
         if (!(after.permissions?.[list] || []).includes(rule)) errs.push(`permissions.${list} lost: ${rule}`);
@@ -126,5 +133,18 @@ agents sync --agent codex --agent-version "$CODEX_VERSION" --launch --cwd "$HOME
 assert_claude_settings "after launch sync"
 assert_codex_config "after launch sync"
 
+# ---------------------------------------------------------------------------
+# 6. Version switch: install a second claude version and switch to it. The
+#    carry-forward step must seed the new (empty) version home with the user's
+#    settings from the imported version.
+# ---------------------------------------------------------------------------
+SWITCH_CLAUDE_VERSION="${SWITCH_CLAUDE_VERSION:-2.1.170}"
+step "version switch carry-forward (claude@$SWITCH_CLAUDE_VERSION)"
+agents add "claude@$SWITCH_CLAUDE_VERSION" --yes </dev/null || fail "agents add claude@$SWITCH_CLAUDE_VERSION failed"
+agents use "claude@$SWITCH_CLAUDE_VERSION" </dev/null || fail "agents use claude@$SWITCH_CLAUDE_VERSION failed"
+
+readlink ~/.claude | grep -q "$SWITCH_CLAUDE_VERSION" || fail "~/.claude does not point at $SWITCH_CLAUDE_VERSION after use"
+assert_claude_settings "after version switch"
+
 echo
-echo "PASS: all user settings survived install, import, and factory sync"
+echo "PASS: all user settings survived install, import, factory sync, and version switch"
