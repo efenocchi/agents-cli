@@ -17,6 +17,7 @@ enum Events {
             throw RPCError.appMissing(pid)
         }
         try ensurePidAllowed(pid)
+        let front = try checkFrontmost(pid: pid, params: params)
 
         let chord = try parseChord(keys)
 
@@ -30,7 +31,7 @@ enum Events {
 
         down.postToPid(pid_t(pid))
         up.postToPid(pid_t(pid))
-        return ["ok": true]
+        return ["ok": true, "frontmost": front]
     }
 
     // Type an arbitrary unicode string into the focused field. Unlike sendKey
@@ -45,6 +46,7 @@ enum Events {
             throw RPCError.appMissing(pid)
         }
         try ensurePidAllowed(pid)
+        let front = try checkFrontmost(pid: pid, params: params)
 
         for scalar in text.unicodeScalars {
             var utf16 = Array(String(scalar).utf16)
@@ -66,7 +68,20 @@ enum Events {
                 up.postToPid(pid_t(pid))
             }
         }
-        return ["ok": true, "chars": text.count]
+        return ["ok": true, "chars": text.count, "frontmost": front]
+    }
+
+    // postToPid keyboard events are silently dropped by apps that gate input
+    // on key-window status (Parallels guest VMs, some Catalyst apps) — the
+    // caller would see ok:true while nothing landed. Always report whether
+    // the target was frontmost at post time; with require_frontmost the
+    // mismatch becomes a hard error instead of a warning.
+    private static func checkFrontmost(pid: Int, params: [String: Any]) throws -> Bool {
+        let front = NSWorkspace.shared.frontmostApplication?.processIdentifier == pid_t(pid)
+        if !front && Params.bool(params, "require_frontmost") {
+            throw RPCError(code: "not_frontmost", message: "pid \(pid) is not the frontmost app — keystrokes would be dropped by key-window-gated targets. Run `agents computer raise` first, then retry")
+        }
+        return front
     }
 
     private struct Chord {

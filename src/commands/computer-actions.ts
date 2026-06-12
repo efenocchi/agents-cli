@@ -83,6 +83,58 @@ export function buildElementOrCoords(opts: {
   return { ok: false, error: 'pass --id <@eN> (from `describe`) or --x <n> --y <n>' };
 }
 
+// Build the focus_window params for `raise`. Pure + tested: window_id and
+// title are both optional refinements over the app-level activate.
+export function buildRaiseParams(opts: {
+  windowId?: number;
+  title?: string;
+}): Record<string, unknown> {
+  const params: Record<string, unknown> = {};
+  if (opts.windowId != null) params.window_id = opts.windowId;
+  if (opts.title) params.title = opts.title;
+  return params;
+}
+
+// Build the wait RPC params. Pure + tested. Three modes, mirroring the
+// daemon's Wait.run: --duration (unconditional sleep), --id + --until
+// (cached-element poll), or --role/--label/--identifier (live locator poll).
+export function buildWaitParams(opts: {
+  duration?: number;
+  id?: string;
+  until?: string;
+  role?: string;
+  label?: string;
+  identifier?: string;
+  timeout?: number;
+}): { ok: true; params: Record<string, unknown> } | { ok: false; error: string } {
+  if (opts.duration != null) {
+    return { ok: true, params: { duration_ms: opts.duration } };
+  }
+  const params: Record<string, unknown> = {};
+  if (opts.until) params.until = opts.until;
+  if (opts.timeout != null) params.timeout_ms = opts.timeout;
+  if (opts.id) {
+    return { ok: true, params: { ...params, element_id: opts.id } };
+  }
+  const locator: Record<string, string> = {};
+  if (opts.role) locator.role = opts.role;
+  if (opts.label) locator.label = opts.label;
+  if (opts.identifier) locator.identifier = opts.identifier;
+  if (Object.keys(locator).length === 0) {
+    return { ok: false, error: 'pass --duration <ms>, --id <@eN>, or a locator (--role/--label/--identifier)' };
+  }
+  return { ok: true, params: { ...params, locator } };
+}
+
+// postToPid keyboard delivery is dropped by key-window-gated apps (Parallels
+// VMs and friends) — when the daemon reports the target was not frontmost,
+// the keystrokes may have landed nowhere. Surface that loudly on stderr.
+function warnIfNotFrontmost(res: Record<string, unknown>): void {
+  if (res.frontmost === false) {
+    console.error('warning: target was not the frontmost app — keystrokes may have been dropped. Run `agents computer raise` first.');
+  }
+}
+
 function reportMissingHelper(): never {
   console.error('helper not built. Run: ./packages/computer-helper/scripts/build.sh debug');
   process.exit(1);
@@ -121,6 +173,12 @@ async function resolveTargetPid(client: ComputerClient, opts: { pid?: number; bu
     process.exit(1);
   }
   return picked.app.pid;
+}
+
+// --raise flag: app-level focus_window before the main action so coordinate
+// clicks and keystrokes land on a visible, key window.
+async function raiseIfRequested(client: ComputerClient, pid: number, raise?: boolean): Promise<void> {
+  if (raise) unwrap(await client.call('focus_window', { pid }));
 }
 
 function emit(result: Record<string, unknown>, json: boolean, human: () => string): void {
@@ -196,9 +254,10 @@ export function registerActionCommands(program: Command): void {
         .description('Click an element (--id) or screen coordinate (--x --y)')
         .option('--count <n>', 'Click count (2 = double-click)', (v) => parseInt(v, 10))
         .option('--background', 'Focus-safe postToPid delivery (plain AppKit only; skips HID tap)')
+        .option('--raise', 'Bring the target app to the front first')
         .option('--json', 'Emit JSON'),
     ),
-  ).action(async (opts: ElemOpts & { count?: number; background?: boolean }) => {
+  ).action(async (opts: ElemOpts & { count?: number; background?: boolean; raise?: boolean }) => {
     await withClient(async (client) => {
       const pid = await resolveTargetPid(client, opts);
       const spec = buildElementOrCoords(opts);
@@ -206,6 +265,7 @@ export function registerActionCommands(program: Command): void {
         console.error(spec.error);
         process.exit(1);
       }
+      await raiseIfRequested(client, pid, opts.raise);
       const params: Record<string, unknown> = { pid, ...spec.params };
       if (opts.count != null) params.count = opts.count;
       if (opts.background) params.background = true;
@@ -269,13 +329,18 @@ export function registerActionCommands(program: Command): void {
       .description('Type an arbitrary unicode string into the focused field (focus first via click/focus)')
       .requiredOption('--text <s>', 'Text to type')
       .option('--commit', 'Press Return after typing')
+      .option('--raise', 'Bring the target app to the front first')
+      .option('--require-frontmost', 'Fail (not warn) if the target is not the frontmost app')
       .option('--json', 'Emit JSON'),
-  ).action(async (opts: TargetOpts & { text: string; commit?: boolean }) => {
+  ).action(async (opts: TargetOpts & { text: string; commit?: boolean; raise?: boolean; requireFrontmost?: boolean }) => {
     await withClient(async (client) => {
       const pid = await resolveTargetPid(client, opts);
+      await raiseIfRequested(client, pid, opts.raise);
       const params: Record<string, unknown> = { pid, text: opts.text };
       if (opts.commit) params.commit = true;
+      if (opts.requireFrontmost) params.require_frontmost = true;
       const res = unwrap(await client.call('type_text', params));
+      warnIfNotFrontmost(res);
       emit(res, Boolean(opts.json), () => `typed ${res.chars ?? opts.text.length} char(s)`);
     });
   });
@@ -286,11 +351,17 @@ export function registerActionCommands(program: Command): void {
       .command('key')
       .description('Send a key chord, e.g. "cmd+shift+s", "enter", "esc"')
       .requiredOption('--keys <chord>', 'Key chord')
+      .option('--raise', 'Bring the target app to the front first')
+      .option('--require-frontmost', 'Fail (not warn) if the target is not the frontmost app')
       .option('--json', 'Emit JSON'),
-  ).action(async (opts: TargetOpts & { keys: string }) => {
+  ).action(async (opts: TargetOpts & { keys: string; raise?: boolean; requireFrontmost?: boolean }) => {
     await withClient(async (client) => {
       const pid = await resolveTargetPid(client, opts);
-      const res = unwrap(await client.call('key', { pid, keys: opts.keys }));
+      await raiseIfRequested(client, pid, opts.raise);
+      const params: Record<string, unknown> = { pid, keys: opts.keys };
+      if (opts.requireFrontmost) params.require_frontmost = true;
+      const res = unwrap(await client.call('key', params));
+      warnIfNotFrontmost(res);
       emit(res, Boolean(opts.json), () => `sent ${opts.keys}`);
     });
   });
@@ -304,8 +375,9 @@ export function registerActionCommands(program: Command): void {
       .requiredOption('--to <x,y>', 'End coordinate "x,y"')
       .option('--button <left|right>', 'Mouse button', 'left')
       .option('--background', 'Focus-safe postToPid delivery (plain AppKit only)')
+      .option('--raise', 'Bring the target app to the front first')
       .option('--json', 'Emit JSON'),
-  ).action(async (opts: TargetOpts & { from: string; to: string; button: string; background?: boolean }) => {
+  ).action(async (opts: TargetOpts & { from: string; to: string; button: string; background?: boolean; raise?: boolean }) => {
     let from: { x: number; y: number };
     let to: { x: number; y: number };
     try {
@@ -317,6 +389,7 @@ export function registerActionCommands(program: Command): void {
     }
     await withClient(async (client) => {
       const pid = await resolveTargetPid(client, opts);
+      await raiseIfRequested(client, pid, opts.raise);
       const params: Record<string, unknown> = {
         pid,
         from: [from.x, from.y],
@@ -337,11 +410,13 @@ export function registerActionCommands(program: Command): void {
         .description('Scroll by a pixel delta at an element or coordinate')
         .option('--dy <n>', 'Vertical delta (negative = down)', (v) => parseInt(v, 10))
         .option('--dx <n>', 'Horizontal delta', (v) => parseInt(v, 10))
+        .option('--raise', 'Bring the target app to the front first')
         .option('--json', 'Emit JSON'),
     ),
-  ).action(async (opts: ElemOpts & { dy?: number; dx?: number }) => {
+  ).action(async (opts: ElemOpts & { dy?: number; dx?: number; raise?: boolean }) => {
     await withClient(async (client) => {
       const pid = await resolveTargetPid(client, opts);
+      await raiseIfRequested(client, pid, opts.raise);
       const params: Record<string, unknown> = { pid };
       if (opts.id) params.element_id = opts.id;
       if (opts.x != null) params.x = opts.x;
@@ -383,4 +458,98 @@ export function registerActionCommands(program: Command): void {
       emit(res, Boolean(opts.json), () => `focused ${opts.id}`);
     });
   });
+
+  // raise — bring an app (or one of its windows) to the front. The window
+  // forms (--window-id/--title) also switch macOS Spaces, which is the only
+  // way to reach a fullscreen-Space window (VM, fullscreen editor) for
+  // capture and HID-tap input.
+  addTargetOpts(
+    program
+      .command('raise')
+      .description('Bring an app (or a specific window) to the front — switches Spaces for fullscreen windows')
+      .option('--window-id <n>', 'Raise a specific window by id (from `screenshot --list`)', (v) => parseInt(v, 10))
+      .option('--title <s>', 'Raise the window whose title contains this string')
+      .option('--json', 'Emit JSON'),
+  ).action(async (opts: TargetOpts & { windowId?: number; title?: string }) => {
+    await withClient(async (client) => {
+      const pid = await resolveTargetPid(client, opts);
+      const res = unwrap(await client.call('focus_window', { pid, ...buildRaiseParams(opts) }));
+      emit(res, Boolean(opts.json), () => {
+        const scope = res.raised_window ? `window ${res.title ?? res.window_id ?? ''}`.trim() : 'app';
+        return `raised ${scope} (${res.focus_elapsed_ms ?? 0}ms)`;
+      });
+    });
+  });
+
+  // wait — settle the UI before the next action
+  addTargetOpts(
+    program
+      .command('wait')
+      .description('Wait for a duration (--duration) or for an element (--id / --role/--label) to satisfy --until')
+      .option('--duration <ms>', 'Unconditional sleep in ms (50-30000)', (v) => parseInt(v, 10))
+      .option('--id <@eN>', 'Element id from `describe` to poll')
+      .option('--until <cond>', 'Condition: exists | enabled | disappears (default: exists)')
+      .option('--role <s>', 'Locator: AX role (e.g. AXButton)')
+      .option('--label <s>', 'Locator: element label')
+      .option('--identifier <s>', 'Locator: AX identifier')
+      .option('--timeout <ms>', 'Poll timeout in ms (default 5000)', (v) => parseInt(v, 10))
+      .option('--json', 'Emit JSON'),
+  ).action(async (opts: TargetOpts & { duration?: number; id?: string; until?: string; role?: string; label?: string; identifier?: string; timeout?: number }) => {
+    const spec = buildWaitParams(opts);
+    if (!spec.ok) {
+      console.error(spec.error);
+      process.exit(1);
+    }
+    await withClient(async (client) => {
+      const params: Record<string, unknown> = { ...spec.params };
+      // duration-only waits don't need a target pid
+      if (params.duration_ms == null) params.pid = await resolveTargetPid(client, opts);
+      const res = unwrap(await client.call('wait', params));
+      emit(res, Boolean(opts.json), () =>
+        res.satisfied ? `satisfied (${res.waited_ms}ms)` : `timed out (${res.waited_ms}ms)`,
+      );
+    });
+  });
+
+  // get-text — read text without OCR
+  addTargetOpts(
+    program
+      .command('get-text')
+      .description('Extract visible text from the app (or a subtree via --id)')
+      .option('--id <@eN>', 'Element id from `describe` to scope the extraction')
+      .option('--max-chars <n>', 'Cap the extracted text length', (v) => parseInt(v, 10))
+      .option('--json', 'Emit JSON'),
+  ).action(async (opts: TargetOpts & { id?: string; maxChars?: number }) => {
+    await withClient(async (client) => {
+      const pid = await resolveTargetPid(client, opts);
+      const params: Record<string, unknown> = { pid };
+      if (opts.id) params.element_id = opts.id;
+      if (opts.maxChars != null) params.max_chars = opts.maxChars;
+      const res = unwrap(await client.call('get_text', params));
+      emit(res, Boolean(opts.json), () => String(res.text ?? ''));
+    });
+  });
+
+  // launch — start an app (no target resolution: it isn't running yet)
+  program
+    .command('launch')
+    .description('Launch an app by bundle id, path, or name')
+    .option('--bundle <id>', 'Bundle id (e.g. com.apple.TextEdit)')
+    .option('--path <p>', 'Path to the .app bundle')
+    .option('--name <s>', 'App name (resolved via /Applications and LaunchServices)')
+    .option('--json', 'Emit JSON')
+    .action(async (opts: { bundle?: string; path?: string; name?: string; json?: boolean }) => {
+      if (!opts.bundle && !opts.path && !opts.name) {
+        console.error('pass one of --bundle, --path, --name');
+        process.exit(1);
+      }
+      await withClient(async (client) => {
+        const params: Record<string, unknown> = {};
+        if (opts.bundle) params.bundle_id = opts.bundle;
+        if (opts.path) params.path = opts.path;
+        if (opts.name) params.name = opts.name;
+        const res = unwrap(await client.call('launch_app', params));
+        emit(res, Boolean(opts.json), () => `launched ${res.name} (pid ${res.pid})`);
+      });
+    });
 }

@@ -220,6 +220,17 @@ export function openComputerClient(): ComputerClient {
   return new StdioClient(helperExec);
 }
 
+// Per-call RPC timeout. Without it a hung daemon (deadlocked connection
+// queue, stopped process) hangs the CLI forever — the waiter map never
+// settles. 30s clears every daemon-side ceiling (wait caps at 30s,
+// launch_app at 10s, screenshot at 5s). Overridable for slower flows.
+export const RPC_TIMEOUT_MS = 30_000;
+
+export function resolveRpcTimeoutMs(env: string | undefined): number {
+  const n = Number(env);
+  return Number.isFinite(n) && n > 0 ? n : RPC_TIMEOUT_MS;
+}
+
 // Shared waiter map + line parser. Both transports plug their reader into
 // `handleChunk` and their writer into `send`.
 abstract class BaseClient implements ComputerClient {
@@ -262,8 +273,19 @@ abstract class BaseClient implements ComputerClient {
     }
     const id = this.nextId++;
     const payload = JSON.stringify({ id, method, params: params ?? {} }) + '\n';
+    const timeoutMs = resolveRpcTimeoutMs(process.env.COMPUTER_HELPER_RPC_TIMEOUT_MS);
     return new Promise((resolve) => {
-      this.waiters.set(id, resolve);
+      const timer = setTimeout(() => {
+        if (this.waiters.delete(id)) {
+          resolve({ id, error: { code: 'rpc_timeout', message: `helper did not respond within ${timeoutMs}ms` } });
+        }
+      }, timeoutMs);
+      // Resolve as an error (never reject) so callers flow through unwrap()
+      // uniformly, matching failPending's contract.
+      this.waiters.set(id, (r) => {
+        clearTimeout(timer);
+        resolve(r);
+      });
       this.send(payload);
     });
   }

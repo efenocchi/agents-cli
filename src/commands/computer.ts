@@ -24,8 +24,8 @@ import { registerActionCommands, withClient, unwrap, pickTarget, type AppInfo } 
 const COMPUTER_HELP_GROUPS = [
   { title: 'Installation', names: ['setup'] },
   { title: 'Daemon lifecycle', names: ['start', 'stop', 'reload', 'status'] },
-  { title: 'Observe', names: ['apps', 'describe', 'screenshot'] },
-  { title: 'Interact', names: ['click', 'right-click', 'type', 'type-text', 'key', 'drag', 'scroll', 'ax-action', 'focus'] },
+  { title: 'Observe', names: ['apps', 'describe', 'screenshot', 'get-text'] },
+  { title: 'Interact', names: ['launch', 'raise', 'click', 'right-click', 'type', 'type-text', 'key', 'drag', 'scroll', 'ax-action', 'focus', 'wait'] },
 ] as const;
 
 export function registerComputerCommand(program: Command): void {

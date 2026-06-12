@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { pickTarget, parseXY, buildElementOrCoords, type AppInfo } from './computer-actions.js';
+import {
+  pickTarget,
+  parseXY,
+  buildElementOrCoords,
+  buildRaiseParams,
+  buildWaitParams,
+  type AppInfo,
+} from './computer-actions.js';
+import { resolveRpcTimeoutMs, RPC_TIMEOUT_MS } from '../lib/computer-rpc.js';
 
 const apps: AppInfo[] = [
   { pid: 100, name: 'Finder', bundle_id: 'com.apple.finder', active: false },
@@ -101,5 +109,71 @@ describe('buildElementOrCoords', () => {
   it('errors when only one coordinate is provided', () => {
     const r = buildElementOrCoords({ x: 18 });
     expect(r.ok).toBe(false);
+  });
+});
+
+describe('buildRaiseParams', () => {
+  it('returns empty params for an app-level raise', () => {
+    expect(buildRaiseParams({})).toEqual({});
+  });
+
+  it('builds a window_id param', () => {
+    expect(buildRaiseParams({ windowId: 127403 })).toEqual({ window_id: 127403 });
+  });
+
+  it('builds a title param', () => {
+    expect(buildRaiseParams({ title: 'Windows 11' })).toEqual({ title: 'Windows 11' });
+  });
+
+  it('passes both refinements through when given', () => {
+    expect(buildRaiseParams({ windowId: 5, title: 'VM' })).toEqual({ window_id: 5, title: 'VM' });
+  });
+});
+
+describe('buildWaitParams', () => {
+  it('duration wins over every other mode', () => {
+    const r = buildWaitParams({ duration: 500, id: '@e1', role: 'AXButton' });
+    expect(r).toEqual({ ok: true, params: { duration_ms: 500 } });
+  });
+
+  it('builds an element poll from --id', () => {
+    const r = buildWaitParams({ id: '@e3', until: 'enabled', timeout: 2000 });
+    expect(r).toEqual({ ok: true, params: { until: 'enabled', timeout_ms: 2000, element_id: '@e3' } });
+  });
+
+  it('element id wins over a locator', () => {
+    const r = buildWaitParams({ id: '@e3', role: 'AXButton' });
+    expect(r).toEqual({ ok: true, params: { element_id: '@e3' } });
+  });
+
+  it('builds a locator from role/label/identifier', () => {
+    const r = buildWaitParams({ role: 'AXButton', label: 'Save' });
+    expect(r).toEqual({ ok: true, params: { locator: { role: 'AXButton', label: 'Save' } } });
+  });
+
+  it('errors when no mode is selected', () => {
+    const r = buildWaitParams({});
+    expect(r.ok).toBe(false);
+  });
+
+  it('errors when only --until/--timeout are given (no target)', () => {
+    const r = buildWaitParams({ until: 'exists', timeout: 1000 });
+    expect(r.ok).toBe(false);
+  });
+});
+
+describe('resolveRpcTimeoutMs', () => {
+  it('defaults to RPC_TIMEOUT_MS when the env var is unset', () => {
+    expect(resolveRpcTimeoutMs(undefined)).toBe(RPC_TIMEOUT_MS);
+  });
+
+  it('parses a positive override', () => {
+    expect(resolveRpcTimeoutMs('5000')).toBe(5000);
+  });
+
+  it('rejects garbage and non-positive values', () => {
+    expect(resolveRpcTimeoutMs('abc')).toBe(RPC_TIMEOUT_MS);
+    expect(resolveRpcTimeoutMs('0')).toBe(RPC_TIMEOUT_MS);
+    expect(resolveRpcTimeoutMs('-1')).toBe(RPC_TIMEOUT_MS);
   });
 });

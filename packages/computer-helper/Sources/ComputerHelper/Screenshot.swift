@@ -170,7 +170,20 @@ enum Screenshot {
         config.showsCursor = false
         config.capturesAudio = false
 
-        let cgImage = try await captureImage(filter: filter, config: config)
+        // Off-Space capture works for plain windows (that's why shareable()
+        // passes onScreenWindowsOnly=false) but SCK refuses windows on
+        // inactive *fullscreen* Spaces with an opaque stream error. Don't
+        // pre-block the attempt — convert the failure into an actionable
+        // error instead.
+        let cgImage: CGImage
+        do {
+            cgImage = try await captureImage(filter: filter, config: config)
+        } catch {
+            if !window.isOnScreen {
+                throw RPCError(code: "window_offscreen", message: "window_id \(Int(window.windowID)) (\(window.title ?? "")) is not on the active Space and SCK could not capture it — run `agents computer raise --window-id \(Int(window.windowID))` first, then retry")
+            }
+            throw error
+        }
         // SCK returns a backing-store image: on Retina it is ~2x the requested
         // point size. Report the scale so callers can map pixels -> points.
         let scale = window.frame.width > 0 ? Double(cgImage.width) / Double(window.frame.width) : 1.0
