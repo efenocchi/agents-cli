@@ -19,7 +19,7 @@ import * as path from 'path';
 import { Command } from 'commander';
 import chalk from 'chalk';
 import * as yaml from 'yaml';
-import type { AgentId, CapabilityName } from '../lib/types.js';
+import type { AgentId, CapabilityName, DiscoveredPlugin } from '../lib/types.js';
 import { AGENTS, getCliState, resolveAgentName } from '../lib/agents.js';
 import { supports } from '../lib/capabilities.js';
 import {
@@ -37,7 +37,7 @@ import {
   type ResourceEntry,
   type SkillResourceEntry,
 } from '../lib/resources.js';
-import { discoverPlugins } from '../lib/plugins.js';
+import { discoverPlugins, discoverPluginsInDir } from '../lib/plugins.js';
 import { countSessionsInScope } from '../lib/session/discover.js';
 import type { SessionAgentId } from '../lib/session/types.js';
 import { damerauLevenshtein } from '../lib/fuzzy.js';
@@ -68,6 +68,8 @@ interface ResourceItem {
   linkTarget: string;
   /** One-line description (frontmatter `description:` or first non-frontmatter line). */
   description: string;
+  /** Extra detail rows surfaced in detail mode (e.g. a plugin's bundled skills/commands). */
+  extra?: Array<[string, string]>;
 }
 
 interface InspectOptions {
@@ -226,18 +228,23 @@ export function resolveRepoTarget(target: string, cwd?: string): RepoTarget | nu
   const stat = safeStat(abs);
   if (!stat || !stat.isDirectory()) return null;
 
-  // A dir that is itself a DotAgents root wins over its nested .agents/ —
-  // extra repos like ~/.agents-extras keep resources at the top level and use
-  // .agents/ only for worktrees.
-  if (isDotAgentsRoot(abs)) {
-    const label = path.basename(abs) === '.agents' ? path.basename(path.dirname(abs)) : path.basename(abs);
-    return { label, root: abs };
+  // A dir literally named `.agents` is the root itself.
+  if (path.basename(abs) === '.agents') {
+    return { label: path.basename(path.dirname(abs)), root: abs };
   }
-  if (path.basename(abs) !== '.agents') {
-    const nested = path.join(abs, '.agents');
-    if (safeStat(nested)?.isDirectory()) {
-      return { label: path.basename(abs), root: nested };
-    }
+  // A nested `.agents/` that is a populated DotAgents root wins over `abs` — the
+  // project case (`agents inspect .` from a repo root whose resources live under
+  // `.agents/`, while the repo's own top-level `skills/`, `agents.yaml` pin, etc.
+  // are unrelated source, not a DotAgents tree).
+  const nested = path.join(abs, '.agents');
+  if (isDotAgentsRoot(nested)) {
+    return { label: path.basename(abs), root: nested };
+  }
+  // Otherwise treat `abs` itself as the root: standalone clones and extra repos
+  // like ~/.agents-extras keep resources at the top level and use `.agents/`
+  // only for worktrees (so their nested `.agents/` is not a DotAgents root).
+  if (isDotAgentsRoot(abs)) {
+    return { label: path.basename(abs), root: abs };
   }
   return null;
 }
@@ -271,6 +278,15 @@ async function inspectRepo(repo: RepoTarget, options: InspectOptions): Promise<v
 
 /** List one resource kind from a single repo root — no layering, no overrides. */
 export function collectRepoKind(repo: RepoTarget, kind: DrillableKind): ResourceItem[] {
+  // Plugins are bundles with a manifest + nested skills/commands/hooks — read
+  // them through the plugin discoverer so the manifest description and bundled
+  // resources surface, rather than treating each as an opaque directory.
+  if (kind === 'plugins') {
+    return discoverPluginsInDir(path.join(repo.root, 'plugins'))
+      .map(p => pluginToItem(p, repo.label))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
   const dir = path.join(repo.root, kind);
   let entries: fs.Dirent[];
   try {
@@ -582,14 +598,31 @@ function collectKind(agent: AgentId, versionHome: string, kind: DrillableKind): 
 }
 
 function pluginItems(): ResourceItem[] {
-  const plugins = discoverPlugins();
-  return plugins.map(p => ({
-    name: p.name,
-    source: 'user',
-    path: p.root,
-    linkTarget: linkTarget(p.root),
-    description: p.manifest.description ?? '',
-  }));
+  return discoverPlugins().map(p => pluginToItem(p, 'user'));
+}
+
+/**
+ * Map a discovered plugin to a resource item, surfacing the manifest description
+ * and the bundle's nested resources (skills, commands, hooks, ...) as detail rows.
+ */
+function pluginToItem(plugin: DiscoveredPlugin, source: string): ResourceItem {
+  const extra: Array<[string, string]> = [];
+  const list = (names: string[]): string =>
+    names.length <= 8 ? names.join(', ') : `${names.slice(0, 8).join(', ')}, +${names.length - 8} more`;
+  if (plugin.skills.length) extra.push(['skills', `${plugin.skills.length}  (${list(plugin.skills)})`]);
+  if (plugin.commands.length) extra.push(['commands', `${plugin.commands.length}  (${list(plugin.commands)})`]);
+  if (plugin.agentDefs.length) extra.push(['subagents', `${plugin.agentDefs.length}  (${list(plugin.agentDefs)})`]);
+  if (plugin.hooks.length) extra.push(['hooks', String(plugin.hooks.length)]);
+  if (plugin.mcpServers.length) extra.push(['mcp', list(plugin.mcpServers)]);
+  if (plugin.manifest.version) extra.push(['version', plugin.manifest.version]);
+  return {
+    name: plugin.name,
+    source,
+    path: plugin.root,
+    linkTarget: linkTarget(plugin.root),
+    description: plugin.manifest.description ?? '',
+    extra,
+  };
 }
 
 function entriesFromAgentResources(agent: AgentId, versionHome: string, kind: 'commands' | 'hooks' | 'workflows'): ResourceItem[] {
@@ -658,6 +691,10 @@ function buildDetailRows(item: ResourceItem, kind: DrillableKind): Array<[string
       if (typeof fm.model === 'string') rows.push(['model', fm.model]);
       if (Array.isArray(fm.tools)) rows.push(['tools', fm.tools.join(', ')]);
     }
+  }
+  // Plugin bundles carry their nested resources as pre-built rows.
+  if (kind === 'plugins' && item.extra) {
+    rows.push(...item.extra);
   }
   return rows;
 }

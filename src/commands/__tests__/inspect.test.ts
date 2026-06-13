@@ -72,9 +72,9 @@ function makeFixture(): string {
   return home;
 }
 
-function run(home: string, args: string[]) {
+function run(home: string, args: string[], cwd: string = home) {
   return spawnSync(tsxBin, [cliEntry, ...args], {
-    cwd: home,
+    cwd,
     env: {
       ...process.env,
       HOME: home,
@@ -84,6 +84,43 @@ function run(home: string, args: string[]) {
     },
     encoding: 'utf-8',
   });
+}
+
+/**
+ * Build a project dir (separate from HOME's ~/.agents) whose resources live
+ * under `.agents/`, plus decoy top-level `agents.yaml` + `skills/` that must NOT
+ * be mistaken for the DotAgents tree. The `.agents/` holds a skill, a command,
+ * and a plugin bundling its own skill.
+ */
+function makeProjectRepo(): string {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'inspect-proj-' + crypto.randomBytes(4).toString('hex') + '-'));
+
+  // Decoys at the project root — a version pin and an unrelated source skills/ dir.
+  writeFile(path.join(proj, 'agents.yaml'), 'agents:\n  claude: 9.9.9\n');
+  writeFile(
+    path.join(proj, 'skills', 'decoy-skill', 'SKILL.md'),
+    '---\nname: decoy-skill\ndescription: Top-level source skill, not a DotAgents resource.\n---\n\nBody.\n'
+  );
+
+  // The real DotAgents tree under .agents/.
+  const dot = path.join(proj, '.agents');
+  writeFile(
+    path.join(dot, 'skills', 'proj-skill', 'SKILL.md'),
+    '---\nname: proj-skill\ndescription: A project-scoped skill.\n---\n\nBody.\n'
+  );
+  writeFile(path.join(dot, 'commands', 'proj-cmd.md'), '---\ndescription: Project command.\n---\n\nDo it.\n');
+
+  const plugin = path.join(dot, 'plugins', 'myplugin');
+  writeFile(
+    path.join(plugin, '.claude-plugin', 'plugin.json'),
+    JSON.stringify({ name: 'myplugin', description: 'A bundled plugin.', version: '0.0.1' })
+  );
+  writeFile(
+    path.join(plugin, 'skills', 'bundled', 'SKILL.md'),
+    '---\nname: bundled\ndescription: Skill shipped inside the plugin.\n---\n\nBody.\n'
+  );
+
+  return proj;
 }
 
 let fixtureHome: string;
@@ -168,5 +205,61 @@ describe('agents inspect', () => {
     const r = run(fixtureHome, ['inspect', 'claude', '--skills', '--commands']);
     expect(r.status).toBe(1);
     expect(r.stderr + r.stdout).toMatch(/at most one drill-down flag/i);
+  });
+});
+
+describe('agents inspect <repo>', () => {
+  let projectRepo: string;
+
+  beforeEach(() => {
+    projectRepo = makeProjectRepo();
+  });
+
+  afterEach(() => {
+    try { fs.rmSync(projectRepo, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  it('inspect . from a project root reads .agents/, not the top-level source dirs', () => {
+    // cwd is the project root, which has a decoy top-level skills/ + agents.yaml.
+    const r = run(fixtureHome, ['inspect', '.', '--json'], projectRepo);
+    expect(r.status).toBe(0);
+    const data = JSON.parse(r.stdout);
+    // Root must be the nested .agents/, not the project root.
+    expect(data.root).toMatch(/\.agents$/);
+    // .agents/ has exactly one skill (proj-skill) — the decoy top-level skill is excluded.
+    expect(data.resources.skills).toBe(1);
+    expect(data.resources.commands).toBe(1);
+    expect(data.resources.plugins).toBe(1);
+  });
+
+  it('--skills lists the .agents/ skill, not the decoy top-level one', () => {
+    const r = run(fixtureHome, ['inspect', '.', '--skills', '--json'], projectRepo);
+    expect(r.status).toBe(0);
+    const names = (JSON.parse(r.stdout).items as Array<{ name: string }>).map(i => i.name);
+    expect(names).toContain('proj-skill');
+    expect(names).not.toContain('decoy-skill');
+  });
+
+  it('--plugins surfaces the manifest description and bundled skills', () => {
+    const list = run(fixtureHome, ['inspect', '.', '--plugins', '--json'], projectRepo);
+    expect(list.status).toBe(0);
+    const item = (JSON.parse(list.stdout).items as Array<{ name: string; description: string }>)
+      .find(i => i.name === 'myplugin');
+    expect(item?.description).toBe('A bundled plugin.');
+
+    // Drilling into the plugin reports its nested skill.
+    const detail = run(fixtureHome, ['inspect', '.', '--plugins', 'myplugin', '--json'], projectRepo);
+    expect(detail.status).toBe(0);
+    const match = JSON.parse(detail.stdout).match as { name: string; skills?: string };
+    expect(match.name).toBe('myplugin');
+    expect(match.skills).toContain('bundled');
+  });
+
+  it('resolves built-in repo layers (system) and reports resource counts', () => {
+    const r = run(fixtureHome, ['inspect', 'system', '--json']);
+    expect(r.status).toBe(0);
+    const data = JSON.parse(r.stdout);
+    expect(data.repo).toBe('system');
+    expect(data.root).toMatch(/\.system$/);
   });
 });

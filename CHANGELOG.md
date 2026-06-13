@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+**`agents inspect .` reads the project `.agents/`, and plugin drill-down shows bundled skills**
+
+- `agents inspect .` (and any path to a repo root) now resolves to the project's nested `.agents/` tree when that tree is a populated DotAgents root, instead of the project root itself. Previously a top-level `agents.yaml` version-pin or an unrelated source `skills/` dir at the repo root was mistaken for a DotAgents root, so `inspect .` reported the wrong directory's resources (e.g. `plugins 0` while the real `.agents/plugins/` held a plugin). A bare `.agents`-named dir still resolves to itself, and standalone clones / extra repos that keep resources at the top level (using `.agents/` only for worktrees) are unaffected — their nested `.agents/` is not a DotAgents root, so the top level still wins.
+- `agents inspect <repo> --plugins` now reads plugin bundles through the plugin discoverer: the list shows each plugin's manifest description, and drilling into one (`--plugins <name>`) reports its bundled skills, commands, subagents, hooks, MCP servers, and version. Previously plugins were treated as opaque directories with no description and no view into what they ship.
+
 **Single-typo agent names auto-correct everywhere, not just `agents run`**
 
 - `agents view cladue` used to print `Unknown agent 'cladue'` even though `agents run cladue` auto-corrected. `resolveAgentName` — the canonical resolver behind `view`, `usage`, `inspect`, `doctor`, `sync`, `models`, `skills`, `hooks`, `import`, `sessions --agent`, and every `agent@version` spec (`agents add claud@latest`, `agents use codx@2.1.170`) — now falls back to Damerau-Levenshtein distance-1 matching against canonical ids and multi-letter aliases: `cladue` -> `claude` (transposition), `kim` -> `kimi`, `codx` -> `codex`, `gemni` -> `gemini`.
