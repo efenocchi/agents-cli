@@ -296,6 +296,8 @@ export function collectRepoKind(repo: RepoTarget, kind: DrillableKind): Resource
   const items: ResourceItem[] = [];
   for (const entry of entries) {
     if (entry.name.startsWith('.')) continue;
+    // Build/tooling caches are never resources — they only inflate counts.
+    if (entry.name === '__pycache__' || entry.name === 'node_modules') continue;
     const p = path.join(dir, entry.name);
     items.push({
       name: entry.name.replace(/\.(md|yaml|yml|toml|json)$/, ''),
@@ -308,15 +310,88 @@ export function collectRepoKind(repo: RepoTarget, kind: DrillableKind): Resource
   return items.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** A few resource names for the at-a-glance preview, with a `…(+N)` tail. */
+function previewNames(items: ResourceItem[], n: number): string {
+  if (items.length === 0) return '';
+  const shown = items.slice(0, n).map(i => i.name);
+  const extra = items.length - shown.length;
+  return shown.join(', ') + (extra > 0 ? ` …(+${extra})` : '');
+}
+
+/** Recursive size + file count of a path; symlinks are not followed. */
+export function pathSize(p: string): { bytes: number; files: number } {
+  let stat: fs.Stats;
+  try { stat = fs.lstatSync(p); } catch { return { bytes: 0, files: 0 }; }
+  if (stat.isSymbolicLink()) return { bytes: 0, files: 0 };
+  if (stat.isFile()) return { bytes: stat.size, files: 1 };
+  if (!stat.isDirectory()) return { bytes: 0, files: 0 };
+  let entries: fs.Dirent[];
+  try { entries = fs.readdirSync(p, { withFileTypes: true }); } catch { return { bytes: 0, files: 0 }; }
+  let bytes = 0, files = 0;
+  for (const e of entries) {
+    const sub = pathSize(path.join(p, e.name));
+    bytes += sub.bytes; files += sub.files;
+  }
+  return { bytes, files };
+}
+
+/** Human byte size: "84 KB", "3.1 MB". */
+export function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let v = n / 1024, i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${v >= 10 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
+}
+
+export interface ManifestSummary {
+  /** `run.<agent>.strategy` pairs from agents.yaml. */
+  strategies: Array<{ agent: string; strategy: string }>;
+  /** `agents.<agent>` version pins from agents.yaml, when present. */
+  versions: Array<{ agent: string; version: string }>;
+}
+
+/** Parse the repo's own agents.yaml into the version pins + run strategies it declares. */
+export function repoManifestSummary(root: string): ManifestSummary | null {
+  let parsed: unknown;
+  try {
+    parsed = yaml.parse(fs.readFileSync(path.join(root, 'agents.yaml'), 'utf-8'));
+  } catch { return null; }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const obj = parsed as Record<string, unknown>;
+
+  const strategies: ManifestSummary['strategies'] = [];
+  if (obj.run && typeof obj.run === 'object') {
+    for (const [agent, cfg] of Object.entries(obj.run as Record<string, unknown>)) {
+      const strategy = cfg && typeof cfg === 'object' ? (cfg as Record<string, unknown>).strategy : undefined;
+      if (typeof strategy === 'string') strategies.push({ agent, strategy });
+    }
+  }
+
+  const versions: ManifestSummary['versions'] = [];
+  if (obj.agents && typeof obj.agents === 'object') {
+    for (const [agent, ver] of Object.entries(obj.agents as Record<string, unknown>)) {
+      if (typeof ver === 'string') versions.push({ agent, version: ver });
+    }
+  }
+
+  if (strategies.length === 0 && versions.length === 0) return null;
+  return { strategies, versions };
+}
+
 function renderRepoSummary(repo: RepoTarget, options: InspectOptions): void {
   const git = repoGitInfo(repo.root);
   const manifests = REPO_MARKER_FILES.filter(m => fs.existsSync(path.join(repo.root, m)));
+  const manifest = repoManifestSummary(repo.root);
 
-  const counts = {} as Record<DrillableKind, { total: number; bySource: Record<string, number> }>;
+  const kindData = {} as Record<DrillableKind, { items: ResourceItem[]; size: { bytes: number; files: number } }>;
+  let totalBytes = 0, totalFiles = 0;
   if (!options.brief) {
     for (const kind of DRILLABLE_KINDS) {
       const items = collectRepoKind(repo, kind);
-      counts[kind] = { total: items.length, bySource: { [repo.label]: items.length } };
+      const size = pathSize(path.join(repo.root, kind));
+      kindData[kind] = { items, size };
+      totalBytes += size.bytes; totalFiles += size.files;
     }
   }
 
@@ -326,8 +401,15 @@ function renderRepoSummary(repo: RepoTarget, options: InspectOptions): void {
       root: repo.root,
       git,
       manifests,
+      manifest,
+      size: options.brief ? null : { bytes: totalBytes, files: totalFiles },
       resources: options.brief ? null : Object.fromEntries(
-        DRILLABLE_KINDS.map(kind => [kind, counts[kind].total]),
+        DRILLABLE_KINDS.map(kind => [kind, {
+          count: kindData[kind].items.length,
+          bytes: kindData[kind].size.bytes,
+          files: kindData[kind].size.files,
+          names: kindData[kind].items.map(i => i.name),
+        }]),
       ),
     }, null, 2));
     return;
@@ -335,19 +417,51 @@ function renderRepoSummary(repo: RepoTarget, options: InspectOptions): void {
 
   console.log('\n' + chalk.bold(repo.label) + '  ' + chalk.gray('[dotagents repo]') + '\n');
 
-  const rows: Array<[string, string]> = [['root', termLink(repo.root, repo.root)]];
+  // Indent for continuation sub-rows: 2 leading + 10 key column + 1 space.
+  const sub = (label: string, value: string) => console.log(`  ${''.padEnd(10)} ${chalk.gray(label.padEnd(8))} ${value}`);
+
+  console.log(`  ${'root'.padEnd(10)} ${termLink(repo.root, repo.root)}`);
+
   if (git) {
     const dirty = git.dirty > 0 ? ` ${chalk.gray('·')} ${chalk.yellow(`${git.dirty} dirty`)}` : '';
     const url = git.url ? ` ${chalk.gray('·')} ${chalk.gray(git.url)}` : '';
-    rows.push(['git', `${git.branch}${dirty}${url}`]);
+    console.log(`  ${'git'.padEnd(10)} ${git.branch}${dirty}${url}`);
+    if (git.lastCommit) {
+      const rel = git.lastCommit.relative ? `  ${chalk.gray(`(${git.lastCommit.relative})`)}` : '';
+      sub('last', `${chalk.cyan(git.lastCommit.sha)}  ${truncate(git.lastCommit.subject, 60)}${rel}`);
+    }
+    if (git.ahead !== null && git.behind !== null && (git.ahead > 0 || git.behind > 0)) {
+      sub('sync', `ahead ${git.ahead} ${chalk.gray('·')} behind ${git.behind}`);
+    }
+    if (git.dirtyFiles.length > 0) {
+      const shown = git.dirtyFiles.slice(0, 4).join(', ');
+      const extra = git.dirtyFiles.length - Math.min(4, git.dirtyFiles.length);
+      sub('dirty', chalk.yellow(shown + (extra > 0 ? ` …(+${extra})` : '')));
+    }
   }
-  if (manifests.length > 0) rows.push(['manifests', manifests.join(', ')]);
-  for (const [k, v] of rows) console.log(`  ${k.padEnd(10)} ${v}`);
+
+  if (manifests.length > 0) {
+    console.log(`  ${'manifests'.padEnd(10)} ${manifests.join(', ')}`);
+    if (manifest) {
+      if (manifest.versions.length > 0) {
+        sub('versions', manifest.versions.map(v => `${v.agent} ${chalk.cyan(v.version)}`).join(chalk.gray(' · ')));
+      }
+      if (manifest.strategies.length > 0) {
+        sub('run', manifest.strategies.map(s => `${s.agent}:${s.strategy}`).join(chalk.gray(' · ')));
+      }
+    }
+  }
 
   if (!options.brief) {
+    console.log(`  ${'size'.padEnd(10)} ${formatBytes(totalBytes)} ${chalk.gray('·')} ${totalFiles} files`);
+
     console.log('\n' + chalk.bold('Resources'));
     for (const kind of DRILLABLE_KINDS) {
-      console.log(`  ${kind.padEnd(10)} ${String(counts[kind].total).padStart(4)}`);
+      const { items, size } = kindData[kind];
+      const count = String(items.length).padStart(4);
+      const sz = items.length > 0 ? formatBytes(size.bytes).padStart(8) : ''.padEnd(8);
+      const preview = items.length > 0 ? chalk.gray(truncate(previewNames(items, 4), 60)) : '';
+      console.log(`  ${kind.padEnd(10)} ${count}  ${sz}  ${preview}`.trimEnd());
     }
   }
 
@@ -356,7 +470,17 @@ function renderRepoSummary(repo: RepoTarget, options: InspectOptions): void {
   console.log('');
 }
 
-function repoGitInfo(root: string): { branch: string; dirty: number; url: string | null } | null {
+export interface RepoGitInfo {
+  branch: string;
+  dirty: number;
+  dirtyFiles: string[];
+  url: string | null;
+  lastCommit: { sha: string; subject: string; relative: string } | null;
+  ahead: number | null;
+  behind: number | null;
+}
+
+export function repoGitInfo(root: string): RepoGitInfo | null {
   const git = (args: string): string | null => {
     try {
       return execSync(`git -C ${JSON.stringify(root)} ${args}`, { stdio: ['ignore', 'pipe', 'ignore'] })
@@ -365,9 +489,30 @@ function repoGitInfo(root: string): { branch: string; dirty: number; url: string
   };
   const branch = git('rev-parse --abbrev-ref HEAD');
   if (branch === null) return null;
-  const status = git('status --porcelain');
-  const dirty = status ? status.split('\n').filter(Boolean).length : 0;
-  return { branch, dirty, url: git('remote get-url origin') };
+
+  // Read status WITHOUT trimming — git()'s .trim() would strip the leading
+  // space of the first porcelain line (`XY path`), corrupting the path slice.
+  let statusRaw: string | null;
+  try {
+    statusRaw = execSync(`git -C ${JSON.stringify(root)} status --porcelain`, { stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+  } catch { statusRaw = null; }
+  const dirtyFiles = statusRaw ? statusRaw.split('\n').filter(Boolean).map(l => l.slice(3)) : [];
+
+  let lastCommit: RepoGitInfo['lastCommit'] = null;
+  const log = git('log -1 --format=%h%x1f%s%x1f%cr');
+  if (log) {
+    const [sha, subject, relative] = log.split('\x1f');
+    if (sha) lastCommit = { sha, subject: subject ?? '', relative: relative ?? '' };
+  }
+
+  let ahead: number | null = null, behind: number | null = null;
+  const counts = git("rev-list --left-right --count '@{upstream}...HEAD'");
+  if (counts) {
+    const [b, a] = counts.split(/\s+/).map(n => parseInt(n, 10));
+    if (Number.isFinite(b) && Number.isFinite(a)) { behind = b; ahead = a; }
+  }
+
+  return { branch, dirty: dirtyFiles.length, dirtyFiles, url: git('remote get-url origin'), lastCommit, ahead, behind };
 }
 
 // ─── Summary mode ────────────────────────────────────────────────────────────

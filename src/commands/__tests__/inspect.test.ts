@@ -227,9 +227,9 @@ describe('agents inspect <repo>', () => {
     // Root must be the nested .agents/, not the project root.
     expect(data.root).toMatch(/\.agents$/);
     // .agents/ has exactly one skill (proj-skill) — the decoy top-level skill is excluded.
-    expect(data.resources.skills).toBe(1);
-    expect(data.resources.commands).toBe(1);
-    expect(data.resources.plugins).toBe(1);
+    expect(data.resources.skills.count).toBe(1);
+    expect(data.resources.commands.count).toBe(1);
+    expect(data.resources.plugins.count).toBe(1);
   });
 
   it('--skills lists the .agents/ skill, not the decoy top-level one', () => {

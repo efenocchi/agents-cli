@@ -1,8 +1,16 @@
+import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { resolveRepoTarget, collectRepoKind } from './inspect.js';
+import {
+  resolveRepoTarget,
+  collectRepoKind,
+  repoManifestSummary,
+  repoGitInfo,
+  pathSize,
+  formatBytes,
+} from './inspect.js';
 import { getUserAgentsDir, getSystemAgentsDir } from '../lib/state.js';
 
 const tempDirs: string[] = [];
@@ -97,5 +105,95 @@ describe('collectRepoKind', () => {
     const root = makeProjectRepo();
     const repo = resolveRepoTarget(root)!;
     expect(collectRepoKind(repo, 'workflows')).toEqual([]);
+  });
+
+  it('skips build/tooling caches (__pycache__, node_modules)', () => {
+    const root = makeProjectRepo();
+    fs.mkdirSync(path.join(root, '.agents', 'commands', '__pycache__'));
+    fs.mkdirSync(path.join(root, '.agents', 'commands', 'node_modules'));
+    const repo = resolveRepoTarget(root)!;
+    expect(collectRepoKind(repo, 'commands').map(c => c.name)).toEqual(['plain', 'ship']);
+  });
+});
+
+describe('repoManifestSummary', () => {
+  it('extracts run strategies and version pins from agents.yaml', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-cli-manifest-'));
+    tempDirs.push(dir);
+    fs.writeFileSync(path.join(dir, 'agents.yaml'),
+      'run:\n  claude:\n    strategy: balanced\n  codex:\n    strategy: pinned\nagents:\n  claude: 2.1.170\n');
+
+    const summary = repoManifestSummary(dir)!;
+    expect(summary.strategies).toEqual([
+      { agent: 'claude', strategy: 'balanced' },
+      { agent: 'codex', strategy: 'pinned' },
+    ]);
+    expect(summary.versions).toEqual([{ agent: 'claude', version: '2.1.170' }]);
+  });
+
+  it('returns null when agents.yaml is absent or has nothing to summarize', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-cli-manifest-empty-'));
+    tempDirs.push(dir);
+    expect(repoManifestSummary(dir)).toBeNull();
+    fs.writeFileSync(path.join(dir, 'agents.yaml'), 'hooks:\n  some-hook:\n    script: x.sh\n');
+    expect(repoManifestSummary(dir)).toBeNull();
+  });
+});
+
+describe('pathSize', () => {
+  it('sums file bytes and counts, recursing dirs and ignoring symlinks', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-cli-size-'));
+    tempDirs.push(dir);
+    fs.writeFileSync(path.join(dir, 'a.txt'), 'hello');          // 5 bytes
+    fs.mkdirSync(path.join(dir, 'sub'));
+    fs.writeFileSync(path.join(dir, 'sub', 'b.txt'), 'world!!');  // 7 bytes
+    // A symlink to a real file must not be followed/counted.
+    fs.symlinkSync(path.join(dir, 'a.txt'), path.join(dir, 'link.txt'));
+
+    const size = pathSize(dir);
+    expect(size.bytes).toBe(12);
+    expect(size.files).toBe(2);
+  });
+
+  it('returns zero for a missing path', () => {
+    expect(pathSize(path.join(os.tmpdir(), 'definitely-missing-xyz'))).toEqual({ bytes: 0, files: 0 });
+  });
+});
+
+describe('formatBytes', () => {
+  it('renders human-readable sizes', () => {
+    expect(formatBytes(0)).toBe('0 B');
+    expect(formatBytes(512)).toBe('512 B');
+    expect(formatBytes(1024)).toBe('1.0 KB');
+    expect(formatBytes(86 * 1024)).toBe('86 KB');
+    expect(formatBytes(3.1 * 1024 * 1024)).toBe('3.1 MB');
+  });
+});
+
+describe('repoGitInfo', () => {
+  it('reports branch, last commit, and dirty files on a real repo', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-cli-git-'));
+    tempDirs.push(dir);
+    const g = (args: string) => execSync(`git -C ${JSON.stringify(dir)} ${args}`, { stdio: ['ignore', 'pipe', 'ignore'] });
+    g('init -q -b main');
+    g('config user.email t@t.t');
+    g('config user.name t');
+    fs.writeFileSync(path.join(dir, 'a.txt'), 'one');
+    g('add a.txt');
+    g('commit -q -m "first commit"');
+    fs.writeFileSync(path.join(dir, 'a.txt'), 'two');   // make the tree dirty
+
+    const info = repoGitInfo(dir)!;
+    expect(info.branch).toBe('main');
+    expect(info.lastCommit?.subject).toBe('first commit');
+    expect(info.lastCommit?.sha).toMatch(/^[0-9a-f]{7,}$/);
+    expect(info.dirtyFiles).toContain('a.txt');
+    expect(info.dirty).toBe(1);
+  });
+
+  it('returns null for a non-git directory', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-cli-nogit-'));
+    tempDirs.push(dir);
+    expect(repoGitInfo(dir)).toBeNull();
   });
 });

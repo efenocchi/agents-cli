@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+**`agents inspect <repo>` summary now shows what's actually inside, not just counts**
+
+- The bare repo summary gained four enrichments so it reads as an inventory instead of a tally: (1) **resource name previews** — each kind lists its first few names with a `…(+N)` tail; (2) **manifest summary** — `agents.yaml` is parsed for its `run.<agent>.strategy` and any `agents.<agent>` version pins, shown under `manifests` instead of just the filename; (3) **git detail** — last commit (sha, subject, relative time), ahead/behind upstream when non-zero, and the names of dirty files; (4) **size + file counts** — total repo size and a per-kind byte size. `--json` carries all of it (`git.lastCommit`, `git.ahead/behind`, `manifest`, `size`, and per-kind `{count, bytes, files, names}`); `--brief` still skips resources and size.
+- Fixed a path-parse bug surfaced by the dirty-files list: the shared git helper trimmed leading whitespace, which clipped the first character off the first `git status --porcelain` path; status is now read untrimmed.
+
 **`agents inspect .` reads the project `.agents/`, and plugin drill-down shows bundled skills**
 
 - `agents inspect .` (and any path to a repo root) now resolves to the project's nested `.agents/` tree when that tree is a populated DotAgents root, instead of the project root itself. Previously a top-level `agents.yaml` version-pin or an unrelated source `skills/` dir at the repo root was mistaken for a DotAgents root, so `inspect .` reported the wrong directory's resources (e.g. `plugins 0` while the real `.agents/plugins/` held a plugin). A bare `.agents`-named dir still resolves to itself, and standalone clones / extra repos that keep resources at the top level (using `.agents/` only for worktrees) are unaffected — their nested `.agents/` is not a DotAgents root, so the top level still wins.
