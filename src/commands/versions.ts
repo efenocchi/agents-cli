@@ -55,6 +55,7 @@ import {
   printTrashFooter,
   type ResourceSelection,
 } from '../lib/versions.js';
+import { carryForwardSettings } from '../lib/settings-manifest.js';
 import {
   createShim,
   createVersionedAlias,
@@ -377,6 +378,21 @@ export function registerVersionsCommands(program: Command): void {
             }
 
             const installedVersion = result.installedVersion || version;
+
+            // Seed the fresh version home with user settings from the current
+            // default version (settings.json, keybindings, codex config/auth).
+            // Gap-filling only — never overwrites what the new home has.
+            const carrySource = getGlobalDefault(agent);
+            if (carrySource && carrySource !== installedVersion) {
+              const carried = carryForwardSettings(
+                agent,
+                getVersionHomePath(agent, carrySource),
+                getVersionHomePath(agent, installedVersion)
+              );
+              if (carried.applied.length > 0) {
+                console.log(chalk.gray(`  Carried settings from ${agent}@${carrySource}: ${carried.applied.map(r => path.basename(r)).join(', ')}`));
+              }
+            }
 
             // Smart resource detection: compare available vs ACTUALLY synced (source of truth: files)
             const available = getAvailableResources();
@@ -768,6 +784,23 @@ export function registerVersionsCommands(program: Command): void {
           }
 
           const previousDefault = getGlobalDefault(agentId);
+
+          // Carry user settings from the outgoing default into the target
+          // version home before switching. Gap-filling only, so versions that
+          // already have their own settings are left untouched.
+          if (previousDefault && previousDefault !== finalVersion) {
+            const carried = carryForwardSettings(
+              agentId,
+              getVersionHomePath(agentId, previousDefault),
+              getVersionHomePath(agentId, finalVersion)
+            );
+            if (carried.applied.length > 0) {
+              console.log(chalk.gray(`Carried settings from ${agentId}@${previousDefault}: ${carried.applied.map(r => path.basename(r)).join(', ')}`));
+              if (carried.backupDir) {
+                console.log(chalk.gray(`  Pre-merge backup: ${carried.backupDir}`));
+              }
+            }
+          }
 
           // Set global default
           setGlobalDefault(agentId, finalVersion);
