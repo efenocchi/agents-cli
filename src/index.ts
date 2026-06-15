@@ -392,6 +392,23 @@ async function installResolvedPackage(metadata: NpmPackageMetadata): Promise<voi
   await installPackageIntoPrefix(`${NPM_PACKAGE_NAME}@${metadata.version}`, prefix);
   verifyInstalledVersion(packageRoot, metadata.version);
   refreshAliasShims(packageRoot);
+  // The npm install above runs with --ignore-scripts, so the postinstall that
+  // installs the macOS Keychain helper never fires on upgrade. Force-refresh the
+  // helper here so a user upgrading FROM a broken build (e.g. the entitlement-less
+  // 1.20.4 helper that fails SecItemAdd with -34018) gets the fixed, signed bundle
+  // immediately — instead of waiting for the lazy staleness check in
+  // getKeychainHelperPath() to repair it on their next secret operation. The new
+  // package is already on disk, so the dynamic import resolves the freshly-installed
+  // helper module + bundle. Best-effort: an upgrade must never fail because the
+  // helper could not be reinstalled (`agents helper install --force` stays available).
+  if (process.platform === 'darwin') {
+    try {
+      const { ensureKeychainHelperInstalled } = await import('./lib/secrets/install-helper.js');
+      ensureKeychainHelperInstalled({ forceReinstall: true });
+    } catch {
+      // Non-fatal.
+    }
+  }
 }
 
 /** Present an interactive upgrade prompt (TTY) or a one-line hint (non-TTY). */

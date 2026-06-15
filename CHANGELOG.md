@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**`agents upgrade` now refreshes the macOS Keychain helper**
+
+- Upgrading runs `npm install -g … --ignore-scripts`, so the postinstall that installs the signed Keychain helper never fired — a user upgrading away from a broken build (e.g. the entitlement-less 1.20.4 helper that failed `SecItemAdd` with `errSecMissingEntitlement -34018`) kept the broken helper until the lazy staleness check in `getKeychainHelperPath()` happened to repair it on their next secret operation. `installResolvedPackage` now force-refreshes the helper (`ensureKeychainHelperInstalled({ forceReinstall: true })`) on darwin after the install, so both the explicit `agents upgrade` and the auto-update prompt land the fixed helper immediately. Best-effort and non-fatal: an upgrade never fails because the helper could not be reinstalled, and `agents helper install --force` remains the manual path.
+
 **`agents inspect <repo>` summary now shows what's actually inside, not just counts**
 
 - The bare repo summary gained four enrichments so it reads as an inventory instead of a tally: (1) **resource name previews** — each kind lists its first few names with a `…(+N)` tail; (2) **manifest summary** — `agents.yaml` is parsed for its `run.<agent>.strategy` and any `agents.<agent>` version pins, shown under `manifests` instead of just the filename; (3) **git detail** — last commit (sha, subject, relative time), ahead/behind upstream when non-zero, and the names of dirty files; (4) **size + file counts** — total repo size and a per-kind byte size. `--json` carries all of it (`git.lastCommit`, `git.ahead/behind`, `manifest`, `size`, and per-kind `{count, bytes, files, names}`); `--brief` still skips resources and size.
