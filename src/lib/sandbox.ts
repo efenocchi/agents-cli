@@ -12,7 +12,7 @@ import * as path from 'path';
 import * as os from 'os';
 import type { JobConfig } from './routines.js';
 import { setGeminiAutoUpdateDisabled, updateGeminiSettings } from './gemini-settings.js';
-import { getRoutinesDir } from './state.js';
+import { getRoutinesDir, getUserAgentsDir } from './state.js';
 
 function resolveRealHome(): string {
   const home = os.homedir();
@@ -65,7 +65,10 @@ function tomlString(value: string): string {
 
 /** Build a restricted environment for a sandboxed process, setting HOME to the overlay. */
 export function buildSpawnEnv(overlayHome: string, extraEnv?: Record<string, string>): Record<string, string> {
-  const env: Record<string, string> = { HOME: overlayHome };
+  const env: Record<string, string> = {
+    HOME: overlayHome,
+    AGENTS_USER_DIR: getUserAgentsDir(),
+  };
 
   for (const key of ENV_ALLOWLIST) {
     if (process.env[key]) {

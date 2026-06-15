@@ -232,7 +232,7 @@ async function promptConflictStrategy(
  *         top-level entry add/remove — deep edits to plugin contents won't
  *         trigger auto-resync, run `agents sync` for that.
  */
-export const SHIM_SCHEMA_VERSION = 17;
+export const SHIM_SCHEMA_VERSION = 18;
 
 /** Internal marker string used to embed the schema version in shim scripts. */
 const SHIM_VERSION_MARKER = 'agents-shim-version:';
@@ -308,7 +308,7 @@ export KIMI_CODE_HOME="$VERSION_DIR/home/${configDirName}"
 # Shim for ${agentConfig.name}
 # ${SHIM_VERSION_MARKER} ${SHIM_SCHEMA_VERSION}
 
-AGENTS_USER_DIR="$HOME/.agents"
+AGENTS_USER_DIR="\${AGENTS_USER_DIR:-$HOME/.agents}"
 AGENTS_BIN=${agentsBin}
 AGENT="${agent}"
 CLI_COMMAND="${cliCommand}"

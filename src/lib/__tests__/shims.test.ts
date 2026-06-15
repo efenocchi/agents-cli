@@ -89,8 +89,8 @@ describe('addShimsToPath', () => {
 });
 
 describe('SHIM_SCHEMA_VERSION', () => {
-  it('is 17 (launch sync wrapped in a bash skip-fast sentinel gate)', () => {
-    expect(SHIM_SCHEMA_VERSION).toBe(17);
+  it('is 18 (overridable AGENTS_USER_DIR for routines sandbox)', () => {
+    expect(SHIM_SCHEMA_VERSION).toBe(18);
   });
 });
 
