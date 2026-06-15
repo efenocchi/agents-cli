@@ -48,6 +48,12 @@ enum Events {
         try ensurePidAllowed(pid)
         let front = try checkFrontmost(pid: pid, params: params)
 
+        // Inter-character delay. Default 4ms (backward compatible); lossy
+        // keyboard relays (Parallels/VM guests) can drop chars mid-stream at
+        // that rate, so callers may raise it. Clamp to [1, 250]ms.
+        let charDelayMs = min(250, max(1, Params.intOpt(params, "char_delay_ms") ?? 4))
+        let charDelay = Double(charDelayMs) / 1000.0
+
         for scalar in text.unicodeScalars {
             var utf16 = Array(String(scalar).utf16)
             guard let down = CGEvent(keyboardEventSource: EventSynth.source, virtualKey: 0, keyDown: true),
@@ -58,7 +64,7 @@ enum Events {
             up.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
             down.postToPid(pid_t(pid))
             up.postToPid(pid_t(pid))
-            Thread.sleep(forTimeInterval: 0.004)
+            Thread.sleep(forTimeInterval: charDelay)
         }
 
         if Params.bool(params, "commit") {

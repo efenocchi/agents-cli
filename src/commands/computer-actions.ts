@@ -95,6 +95,18 @@ export function buildRaiseParams(opts: {
   return params;
 }
 
+// Inter-character typing delay for type-text. Default 4ms matches the daemon's
+// historical fixed rate; lossy keyboard relays (Parallels/VM guests) drop chars
+// at that rate, so callers can raise it. Clamp to [1, 250]ms CLI-side (the
+// daemon clamps too — defense in depth). Returns undefined when unset so the
+// daemon applies its own default. Pure + tested.
+export const CHAR_DELAY_MIN_MS = 1;
+export const CHAR_DELAY_MAX_MS = 250;
+export function clampCharDelay(ms: number | undefined): number | undefined {
+  if (ms === undefined || !Number.isFinite(ms)) return undefined;
+  return Math.min(CHAR_DELAY_MAX_MS, Math.max(CHAR_DELAY_MIN_MS, Math.trunc(ms)));
+}
+
 // Build the wait RPC params. Pure + tested. Three modes, mirroring the
 // daemon's Wait.run: --duration (unconditional sleep), --id + --until
 // (cached-element poll), or --role/--label/--identifier (live locator poll).
@@ -331,14 +343,17 @@ export function registerActionCommands(program: Command): void {
       .option('--commit', 'Press Return after typing')
       .option('--raise', 'Bring the target app to the front first')
       .option('--require-frontmost', 'Fail (not warn) if the target is not the frontmost app')
+      .option('--char-delay <ms>', 'Inter-character delay in ms (default 4; raise for lossy keyboard relays like VM guests, e.g. 25). Clamped to [1, 250].', (v) => parseInt(v, 10))
       .option('--json', 'Emit JSON'),
-  ).action(async (opts: TargetOpts & { text: string; commit?: boolean; raise?: boolean; requireFrontmost?: boolean }) => {
+  ).action(async (opts: TargetOpts & { text: string; commit?: boolean; raise?: boolean; requireFrontmost?: boolean; charDelay?: number }) => {
     await withClient(async (client) => {
       const pid = await resolveTargetPid(client, opts);
       await raiseIfRequested(client, pid, opts.raise);
       const params: Record<string, unknown> = { pid, text: opts.text };
       if (opts.commit) params.commit = true;
       if (opts.requireFrontmost) params.require_frontmost = true;
+      const charDelay = clampCharDelay(opts.charDelay);
+      if (charDelay !== undefined) params.char_delay_ms = charDelay;
       const res = unwrap(await client.call('type_text', params));
       warnIfNotFrontmost(res);
       emit(res, Boolean(opts.json), () => `typed ${res.chars ?? opts.text.length} char(s)`);

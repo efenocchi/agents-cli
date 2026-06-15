@@ -5,6 +5,9 @@ import {
   buildElementOrCoords,
   buildRaiseParams,
   buildWaitParams,
+  clampCharDelay,
+  CHAR_DELAY_MIN_MS,
+  CHAR_DELAY_MAX_MS,
   type AppInfo,
 } from './computer-actions.js';
 import { resolveRpcTimeoutMs, RPC_TIMEOUT_MS } from '../lib/computer-rpc.js';
@@ -159,6 +162,35 @@ describe('buildWaitParams', () => {
   it('errors when only --until/--timeout are given (no target)', () => {
     const r = buildWaitParams({ until: 'exists', timeout: 1000 });
     expect(r.ok).toBe(false);
+  });
+});
+
+describe('clampCharDelay', () => {
+  it('returns undefined when unset so the daemon applies its 4ms default', () => {
+    expect(clampCharDelay(undefined)).toBeUndefined();
+  });
+
+  it('passes a typical VM-guest value through unchanged', () => {
+    expect(clampCharDelay(25)).toBe(25);
+  });
+
+  it('clamps below the floor up to the minimum', () => {
+    expect(clampCharDelay(0)).toBe(CHAR_DELAY_MIN_MS);
+    expect(clampCharDelay(-100)).toBe(CHAR_DELAY_MIN_MS);
+  });
+
+  it('clamps above the ceiling down to the maximum', () => {
+    expect(clampCharDelay(1000)).toBe(CHAR_DELAY_MAX_MS);
+  });
+
+  it('keeps the boundary values', () => {
+    expect(clampCharDelay(CHAR_DELAY_MIN_MS)).toBe(1);
+    expect(clampCharDelay(CHAR_DELAY_MAX_MS)).toBe(250);
+  });
+
+  it('truncates fractional input and rejects NaN', () => {
+    expect(clampCharDelay(25.9)).toBe(25);
+    expect(clampCharDelay(NaN)).toBeUndefined();
   });
 });
 
