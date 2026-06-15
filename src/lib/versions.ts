@@ -42,7 +42,7 @@ import { composeRulesFromState } from './rules/compose.js';
 import { loadManifest, saveManifest, buildManifest as buildSyncManifest, isStale } from './staleness/index.js';
 import { emit } from './events.js';
 import { safeJoin } from './paths.js';
-import { installCommandSkillToVersion, listCommandSkillsInVersion, shouldInstallCommandAsSkill } from './command-skills.js';
+import { installCommandSkillToVersion, listCommandSkillsInVersion, readSkillSourceCommandMarker, shouldInstallCommandAsSkill } from './command-skills.js';
 import { getWriter, getDetector } from './staleness/registry.js';
 
 /** Promisified exec for running shell commands. */
@@ -883,10 +883,7 @@ export function getVersionDir(agent: AgentId, version: string): string {
 export function getBinaryPath(agent: AgentId, version: string): string {
   const agentConfig = AGENTS[agent];
   if (agent === 'grok') {
-    // Grok binaries live in the global ~/.grok/downloads, not per-version node_modules.
-    // We return a best-effort path (used for display / checks). Real resolution
-    // happens in agents.ts resolveGrokBinary + the generated shims.
-    const grokDownloads = path.join(os.homedir(), '.grok', 'downloads');
+    const grokDownloads = path.join(getVersionHomePath(agent, version), '.grok', 'downloads');
     // Best effort: first matching file for this version
     try {
       const entries = fs.readdirSync(grokDownloads);
@@ -1805,11 +1802,11 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
   const commandsToSync = selection
     ? resolveSelection(selection.commands, available.commands)
     : available.commands; // No selection = sync all
+  const commandsAsSkills = shouldInstallCommandAsSkill(agent, version);
 
   if (commandsToSync.length > 0 && commandsWriter) {
     const commandsTarget = path.join(agentDir, agentConfig.commandsSubdir);
-    const commandsAsSkills = shouldInstallCommandAsSkill(agent, version);
-    if (commandsAsSkills) {
+    if (commandsAsSkills && agentConfig.commandsSubdir) {
       removePath(commandsTarget);
     }
     const r = commandsWriter.write({ version, versionHome, selection: commandsToSync, cwd });
@@ -1843,9 +1840,21 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
   // ~/.agents/skills/ (Gemini) are not registered; we clear the version-home
   // skills dir for them so a stale per-version copy never shadows central.
   const skillsWriter = getWriter('skills', agent);
-  const skillsToSync = selection
+  let skillsToSync = selection
     ? resolveSelection(selection.skills, available.skills)
     : available.skills;
+  if (commandsAsSkills && commandsToSync.length > 0 && skillsToSync.length > 0) {
+    const commandNames = new Set(commandsToSync);
+    const skillRoots = [
+      path.join(getUserAgentsDir(), 'skills'),
+      getSkillsDir(),
+      ...getEnabledExtraRepos().map((e) => path.join(e.dir, 'skills')),
+    ];
+    skillsToSync = skillsToSync.filter((skill) => {
+      if (!commandNames.has(skill)) return true;
+      return readSkillSourceCommandMarker(skill, skillRoots) !== skill;
+    });
+  }
 
   if (agentConfig.nativeAgentsSkillsDir) {
     removePath(path.join(agentDir, 'skills'));
@@ -1910,7 +1919,7 @@ export function syncResourcesToVersion(agent: AgentId, version: string, selectio
   // CAPABLE_AGENTS list and silently skipped it). Project rules are NOT
   // synced into the version home — they are composed into the workspace at
   // agents-run time (see compileRulesForProject).
-  const skipMemory = selection && (selection.memory === undefined || (Array.isArray(selection.memory) && selection.memory.length === 0));
+  const skipMemory = selection && Array.isArray(selection.memory) && selection.memory.length === 0;
   const rulesWriter = getWriter('rules', agent);
   if (!skipMemory && rulesWriter) {
     try {

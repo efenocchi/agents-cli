@@ -25,7 +25,7 @@ function runVersionSync(home: string, expression: string): unknown {
   const moduleUrl = pathToFileURL(path.resolve('src/lib/versions.ts')).href;
   const tsxBin = path.resolve('node_modules/.bin/tsx');
   const child = spawnSync(tsxBin, ['-e', `
-    import { syncResourcesToVersion } from ${JSON.stringify(moduleUrl)};
+    import { listInstalledVersions, syncResourcesToVersion } from ${JSON.stringify(moduleUrl)};
     const home = ${JSON.stringify(home)};
     const result = ${expression};
     console.log(JSON.stringify(result));
@@ -89,6 +89,42 @@ describe('version resource sync path handling', () => {
     expect(skill).toContain('agents_command: "recap"');
     expect(skill).toContain('When invoked with `$recap`');
     expect(skill).toContain('Recap the conversation so far.');
+  });
+
+  it('keeps grok command-generated skills authoritative over marker-bearing source skills', async () => {
+    const home = makeTempHome();
+    const commandPath = path.join(home, '.agents', 'commands', 'debug.md');
+    const sourceSkillPath = path.join(home, '.agents', 'skills', 'debug', 'SKILL.md');
+    const binaryPath = path.join(home, '.agents', '.history', 'versions', 'grok', '0.2.33', 'home', '.grok', 'downloads', 'grok-0.2.33-macos-aarch64');
+
+    fs.mkdirSync(path.dirname(commandPath), { recursive: true });
+    fs.mkdirSync(path.dirname(sourceSkillPath), { recursive: true });
+    fs.mkdirSync(path.dirname(binaryPath), { recursive: true });
+    fs.writeFileSync(
+      commandPath,
+      ['---', 'description: Fresh debug command', '---', '', 'fresh command body'].join('\n'),
+      'utf-8'
+    );
+    fs.writeFileSync(
+      sourceSkillPath,
+      ['---', 'name: "debug"', 'description: "old generated command"', 'agents_command: "debug"', '---', '', 'old source skill body'].join('\n'),
+      'utf-8'
+    );
+    fs.writeFileSync(binaryPath, '#!/bin/sh\nexit 0\n', 'utf-8');
+    fs.chmodSync(binaryPath, 0o755);
+
+    const result = runVersionSync(
+      home,
+      "syncResourcesToVersion('grok', '0.2.33', { commands: ['debug'], skills: ['debug'] }, { cwd: home })"
+    ) as { commands: boolean; skills: boolean };
+
+    const syncedSkillPath = path.join(home, '.agents', '.history', 'versions', 'grok', '0.2.33', 'home', '.grok', 'skills', 'debug', 'SKILL.md');
+    const syncedSkill = fs.readFileSync(syncedSkillPath, 'utf-8');
+    expect(result.commands).toBe(true);
+    expect(result.skills).toBe(false);
+    expect(syncedSkill).toContain('fresh command body');
+    expect(syncedSkill).not.toContain('old source skill body');
+    expect(fs.existsSync(binaryPath)).toBe(true);
   });
 
   it('does not follow symlinks inside copied skill resources', async () => {
@@ -161,5 +197,45 @@ describe('version resource sync path handling', () => {
     expect(result.mcp).toEqual(['safe']);
     expect(settings.mcpServers?.safe).toBeDefined();
     expect(settings.mcpServers?.evil).toBeUndefined();
+  });
+
+  it('writes missing grok AGENTS.md when syncing a partial selection without memory', async () => {
+    const home = makeTempHome();
+    const rulesDir = path.join(home, '.agents', '.system', 'rules');
+
+    fs.mkdirSync(path.join(rulesDir, 'subrules'), { recursive: true });
+    fs.writeFileSync(
+      path.join(rulesDir, 'rules.yaml'),
+      'presets:\n  default:\n    subrules:\n      - core\n',
+      'utf-8'
+    );
+    fs.writeFileSync(path.join(rulesDir, 'subrules', 'core.md'), 'Grok memory body\n', 'utf-8');
+
+    const result = runVersionSync(
+      home,
+      "syncResourcesToVersion('grok', '0.2.33', { skills: [] }, { cwd: home })"
+    ) as { memory: string[] };
+
+    const agentsPath = path.join(home, '.agents', '.history', 'versions', 'grok', '0.2.33', 'home', '.grok', 'AGENTS.md');
+    expect(result.memory).toContain('AGENTS.md');
+    expect(fs.existsSync(agentsPath)).toBe(true);
+    expect(fs.readFileSync(agentsPath, 'utf-8')).toContain('Grok memory body');
+  });
+
+  it('detects grok binaries from the per-version home, not the host .grok symlink', async () => {
+    const home = makeTempHome();
+    const installedDownloads = path.join(home, '.agents', '.history', 'versions', 'grok', '0.2.33', 'home', '.grok', 'downloads');
+    const emptyConfigDir = path.join(home, '.agents', '.history', 'versions', 'grok', '0.2.32', 'home', '.grok');
+    const hostGrok = path.join(home, '.grok');
+
+    fs.mkdirSync(installedDownloads, { recursive: true });
+    fs.mkdirSync(path.join(emptyConfigDir, 'downloads'), { recursive: true });
+    fs.writeFileSync(path.join(installedDownloads, 'grok-0.2.33-macos-aarch64'), '#!/bin/sh\nexit 0\n', 'utf-8');
+    fs.chmodSync(path.join(installedDownloads, 'grok-0.2.33-macos-aarch64'), 0o755);
+    fs.symlinkSync(emptyConfigDir, hostGrok, 'dir');
+
+    const result = runVersionSync(home, "listInstalledVersions('grok')") as string[];
+
+    expect(result).toEqual(['0.2.33']);
   });
 });

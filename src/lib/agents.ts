@@ -105,39 +105,41 @@ function findInPath(command: string): string | null {
 }
 
 /** Grok-specific binary resolution.
- * Grok does not live in node_modules/.bin. Its versioned binaries live in
- * ~/.grok/downloads/ with names like `grok-0.1.218-macos-aarch64`.
- * We still use the agents-cli version dir for *config isolation* via GROK_HOME.
+ * Grok does not live in node_modules/.bin. Its versioned binaries live in each
+ * managed version home under `.grok/downloads/`, so detection must not follow
+ * the host ~/.grok config symlink.
  */
 function resolveGrokBinary(version?: string): string | null {
-  const grokDownloads = path.join(HOME, '.grok', 'downloads');
-  if (!fs.existsSync(grokDownloads)) return null;
-
-  const entries = fs.readdirSync(grokDownloads);
-  // Prefer exact version match in filename
   if (version && version !== 'latest') {
-    const match = entries.find((e) => e.includes(version) && e.startsWith('grok-'));
-    if (match) return path.join(grokDownloads, match);
+    const binaryPath = getBinaryPath('grok', version);
+    if (fs.existsSync(binaryPath)) return binaryPath;
+    return null;
   }
 
-  // Fallback: the "current" symlink or the plain `grok-*` without version in name
-  const current = entries.find((e) => e === 'grok' || e.startsWith('grok-') && !e.match(/grok-\d/));
-  if (current) return path.join(grokDownloads, current);
+  const resolvedVersion = resolveVersion('grok', process.cwd());
+  if (resolvedVersion) {
+    const binaryPath = getBinaryPath('grok', resolvedVersion);
+    if (fs.existsSync(binaryPath)) return binaryPath;
+  }
 
-  // Last resort: newest file by mtime
+  const grokVersionsDir = path.join(getVersionsDir(), 'grok');
+  if (!fs.existsSync(grokVersionsDir)) return null;
+
   let latest: string | null = null;
   let latestMtime = 0;
-  for (const e of entries) {
-    if (!e.startsWith('grok-')) continue;
+  for (const entry of fs.readdirSync(grokVersionsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const binaryPath = getBinaryPath('grok', entry.name);
+    if (!fs.existsSync(binaryPath)) continue;
     try {
-      const stat = fs.statSync(path.join(grokDownloads, e));
+      const stat = fs.statSync(binaryPath);
       if (stat.mtimeMs > latestMtime) {
         latestMtime = stat.mtimeMs;
-        latest = e;
+        latest = binaryPath;
       }
     } catch {}
   }
-  return latest ? path.join(grokDownloads, latest) : null;
+  return latest;
 }
 
 function splitCommandLine(command: string): string[] {

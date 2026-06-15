@@ -83,12 +83,25 @@ export function buildCommandSkillContent(commandName: string, sourcePath: string
   ].join('\n');
 }
 
-export function skillSourceExists(skillName: string, skillSourceDirs: Array<string | null | undefined>): boolean {
-  return skillSourceDirs.some((dir) => {
-    if (!dir) return false;
+function findSkillSourceDir(skillName: string, skillSourceDirs: Array<string | null | undefined>): string | null {
+  for (const dir of skillSourceDirs) {
+    if (!dir) continue;
     const candidate = path.join(dir, skillName);
-    return fs.existsSync(candidate) && fs.lstatSync(candidate).isDirectory();
-  });
+    if (fs.existsSync(candidate) && fs.lstatSync(candidate).isDirectory()) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+export function skillSourceExists(skillName: string, skillSourceDirs: Array<string | null | undefined>): boolean {
+  return findSkillSourceDir(skillName, skillSourceDirs) !== null;
+}
+
+export function readSkillSourceCommandMarker(skillName: string, skillSourceDirs: Array<string | null | undefined>): string | null {
+  const sourceDir = findSkillSourceDir(skillName, skillSourceDirs);
+  if (!sourceDir) return null;
+  return readSkillCommandMarker(path.join(sourceDir, 'SKILL.md'));
 }
 
 export function installCommandSkillToVersion(
@@ -98,8 +111,12 @@ export function installCommandSkillToVersion(
   skillSourceDirs: Array<string | null | undefined> = []
 ): { success: boolean; skipped?: boolean; error?: string } {
   const skillName = commandSkillName(commandName);
-  if (skillSourceExists(skillName, skillSourceDirs)) {
-    return { success: false, skipped: true, error: `Skill '${skillName}' already exists` };
+  const existingSkillSource = findSkillSourceDir(skillName, skillSourceDirs);
+  if (existingSkillSource) {
+    const sourceMarker = readSkillCommandMarker(path.join(existingSkillSource, 'SKILL.md'));
+    if (sourceMarker !== commandName) {
+      return { success: true, skipped: true, error: `Skill '${skillName}' already exists` };
+    }
   }
 
   const skillsDir = safeJoin(agentDir, 'skills');
