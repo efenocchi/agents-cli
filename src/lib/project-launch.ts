@@ -56,6 +56,7 @@ import {
   getSystemPluginsDir,
 } from './state.js';
 import { getVersionHomePath } from './versions.js';
+import { transformSubagentForClaude } from './subagents.js';
 import { compileRulesForProject } from './rules/compile.js';
 import { discoverPluginsInDir, hasPluginExecSurfaces, inspectPluginCapabilities } from './plugins.js';
 import type { DiscoveredPlugin } from './types.js';
@@ -166,15 +167,36 @@ interface MirrorPlan {
   srcSubdir: string;
   /** Dest subdir under `<cwd>/.{agent}/`. */
   destSubdir: string;
-  /** True when entries are directories (skills); false when entries are files (md). */
-  entriesAreDirs: boolean;
+  /**
+   * How each source entry becomes a dest entry:
+   *  - 'file-symlink':   each *.md FILE is symlinked 1:1 (commands).
+   *  - 'dir-symlink':    each DIRECTORY is symlinked 1:1 (skills — a skill IS a dir).
+   *  - 'subagent-write': each subagent DIRECTORY (containing AGENT.md plus
+   *    optional sibling .md files) is FLATTENED into a single written .md file.
+   *    A subagent has no single file to point a symlink at, so we write the
+   *    transform output instead — see writeProjectSubagents.
+   */
+  mode: 'file-symlink' | 'dir-symlink' | 'subagent-write';
 }
 
 const CLAUDE_MIRROR_PLANS: MirrorPlan[] = [
-  { srcSubdir: 'subagents', destSubdir: 'agents',   entriesAreDirs: false },
-  { srcSubdir: 'commands',  destSubdir: 'commands', entriesAreDirs: false },
-  { srcSubdir: 'skills',    destSubdir: 'skills',   entriesAreDirs: true },
+  { srcSubdir: 'subagents', destSubdir: 'agents',   mode: 'subagent-write' },
+  { srcSubdir: 'commands',  destSubdir: 'commands', mode: 'file-symlink' },
+  { srcSubdir: 'skills',    destSubdir: 'skills',   mode: 'dir-symlink' },
 ];
+
+/**
+ * Marker prepended-as-trailing-comment to every subagent file WE generate.
+ * It's an HTML comment — invisible to the markdown the agent reads — placed on
+ * the last line so it never disturbs the leading `---` frontmatter block.
+ *
+ * Ownership rule (the one don't-clobber decision for written, non-symlink
+ * files): we only overwrite a `.claude/agents/<name>.md` whose content carries
+ * this marker. A user-authored file (no marker) or a symlink at the dest is
+ * left untouched. A marker beats an mtime/sidecar sentinel because it travels
+ * with the file across copies and git, and needs no out-of-band state.
+ */
+const GENERATED_SUBAGENT_MARKER = '<!-- agents-cli:generated-subagent';
 
 function mirrorWorkspaceResources(cwd: string, agent: AgentId): { links: number; skipped: string[] } {
   // v1: claude-only. Other agents have workspace conventions we haven't
@@ -204,11 +226,19 @@ function mirrorWorkspaceResources(cwd: string, agent: AgentId): { links: number;
     const destDir = path.join(agentWorkspaceDir, plan.destSubdir);
     fs.mkdirSync(destDir, { recursive: true });
 
+    // Subagents flatten N source files into one written .md — not a symlink.
+    if (plan.mode === 'subagent-write') {
+      const r = writeProjectSubagents(srcDir, destDir, cwd);
+      links += r.links;
+      skipped.push(...r.skipped);
+      continue;
+    }
+
     const entries = fs.readdirSync(srcDir, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.name.startsWith('.')) continue;
-      if (plan.entriesAreDirs && !entry.isDirectory()) continue;
-      if (!plan.entriesAreDirs && !entry.isFile() && !entry.isSymbolicLink()) continue;
+      if (plan.mode === 'dir-symlink' && !entry.isDirectory()) continue;
+      if (plan.mode === 'file-symlink' && !entry.isFile() && !entry.isSymbolicLink()) continue;
 
       const srcPath = path.join(srcDir, entry.name);
       const destPath = path.join(destDir, entry.name);
@@ -222,6 +252,84 @@ function mirrorWorkspaceResources(cwd: string, agent: AgentId): { links: number;
   }
 
   return { links, skipped };
+}
+
+/**
+ * Mirror project subagents into `<cwd>/.claude/agents/`. The canonical source
+ * shape is a DIRECTORY containing AGENT.md (e.g. `.agents/subagents/probe/AGENT.md`)
+ * — confirmed by the detector (versions.ts) and lister (subagents.ts). Each
+ * such directory is flattened via transformSubagentForClaude (the exact writer
+ * the version-home sync uses) into a single `<name>.md`, then written under an
+ * ownership marker so a re-launch refreshes our file but never clobbers a
+ * user-authored one.
+ *
+ * Returns the same {links, skipped} shape the symlink path reports, so the
+ * caller's accounting is uniform across resource kinds.
+ */
+function writeProjectSubagents(srcDir: string, destDir: string, cwd: string): { links: number; skipped: string[] } {
+  let links = 0;
+  const skipped: string[] = [];
+
+  for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+    if (entry.name.startsWith('.')) continue;
+    if (!entry.isDirectory()) continue;
+
+    const subagentDir = path.join(srcDir, entry.name);
+    if (!fs.existsSync(path.join(subagentDir, 'AGENT.md'))) continue;
+
+    const destPath = path.join(destDir, `${entry.name}.md`);
+    if (writeSubagentIfOwned(subagentDir, destPath)) {
+      links += 1;
+    } else {
+      skipped.push(path.relative(cwd, destPath));
+    }
+  }
+
+  return { links, skipped };
+}
+
+/**
+ * Write a flattened subagent file at `destPath`, refusing to clobber user state.
+ *
+ *   - dest missing            → write fresh.
+ *   - dest is our generation  → overwrite (refresh; carries GENERATED_SUBAGENT_MARKER).
+ *   - dest is a symlink / any
+ *     non-regular file         → SKIP (user state we don't own).
+ *   - dest is a regular file
+ *     without our marker        → SKIP (hand-authored .claude/agents/<name>.md).
+ *
+ * Returns true when our file is present (written now or already current),
+ * false when we left a user-owned dest alone.
+ */
+function writeSubagentIfOwned(subagentDir: string, destPath: string): boolean {
+  let existing: string | null = null;
+  let destLstat: fs.Stats | null = null;
+  try { destLstat = fs.lstatSync(destPath); } catch { /* missing — write fresh */ }
+
+  if (destLstat) {
+    if (!destLstat.isFile()) return false; // symlink/dir/etc. — user state
+    try { existing = fs.readFileSync(destPath, 'utf-8'); } catch { return false; }
+    if (!existing.includes(GENERATED_SUBAGENT_MARKER)) return false; // hand-authored
+  }
+
+  let body: string;
+  try {
+    body = transformSubagentForClaude(subagentDir);
+  } catch {
+    return false; // malformed AGENT.md — don't write a broken file
+  }
+  const content = `${body}\n\n${GENERATED_SUBAGENT_MARKER} — edit .agents/subagents/${path.basename(subagentDir)}/ instead -->\n`;
+
+  // Skip-fast: identical content already on disk → no write (keeps mtime stable).
+  if (existing === content) return true;
+
+  try {
+    fs.mkdirSync(path.dirname(destPath), { recursive: true });
+    fs.writeFileSync(destPath, content);
+  } catch {
+    return false;
+  }
+  return true;
 }
 
 /**

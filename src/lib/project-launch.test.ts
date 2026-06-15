@@ -77,15 +77,63 @@ afterEach(() => {
 });
 
 describe('runLaunchSync — workspace resource mirror', () => {
-  it('symlinks .agents/subagents/*.md → cwd/.claude/agents/*.md', () => {
-    writeFile(path.join(PROJECT_DIR, '.agents', 'subagents', 'reviewer.md'), '# Reviewer subagent');
+  // #281: the real subagent source shape is a DIRECTORY containing AGENT.md
+  // (NOT a flat .md file). It must be flattened and WRITTEN to
+  // cwd/.claude/agents/<name>.md as a regular file — symlinking can't work
+  // because a subagent is N source files collapsed into one.
+  it('writes .agents/subagents/<name>/AGENT.md → cwd/.claude/agents/<name>.md (flattened, regular file)', () => {
+    writeFile(
+      path.join(PROJECT_DIR, '.agents', 'subagents', 'probe-agent', 'AGENT.md'),
+      '---\nname: probe-agent\ndescription: Probes things\nmodel: sonnet\n---\n\nProbe the codebase carefully.',
+    );
 
     const result = runLaunchSync({ agent: 'claude', version: '1.0.0', cwd: PROJECT_DIR });
 
     expect(result.workspaceLinks).toBeGreaterThanOrEqual(1);
-    const linked = path.join(PROJECT_DIR, '.claude', 'agents', 'reviewer.md');
-    expect(fs.lstatSync(linked).isSymbolicLink()).toBe(true);
-    expect(fs.readFileSync(linked, 'utf-8')).toBe('# Reviewer subagent');
+    const dest = path.join(PROJECT_DIR, '.claude', 'agents', 'probe-agent.md');
+    // Regular file, NOT a symlink — the bug was a silent zero-delivery drop.
+    expect(fs.lstatSync(dest).isFile()).toBe(true);
+    expect(fs.lstatSync(dest).isSymbolicLink()).toBe(false);
+    const written = fs.readFileSync(dest, 'utf-8');
+    // Clean flattened frontmatter + body.
+    expect(written).toMatch(/^---\nname: probe-agent\ndescription: Probes things\nmodel: sonnet\n---/);
+    expect(written).toContain('Probe the codebase carefully.');
+  });
+
+  it('flattens a multi-file subagent (AGENT.md + SOUL.md) into ## sections', () => {
+    writeFile(
+      path.join(PROJECT_DIR, '.agents', 'subagents', 'probe-agent', 'AGENT.md'),
+      '---\nname: probe-agent\ndescription: Probes things\n---\n\nMain body.',
+    );
+    writeFile(
+      path.join(PROJECT_DIR, '.agents', 'subagents', 'probe-agent', 'SOUL.md'),
+      'The soul of the agent.',
+    );
+
+    runLaunchSync({ agent: 'claude', version: '1.0.0', cwd: PROJECT_DIR });
+
+    const written = fs.readFileSync(path.join(PROJECT_DIR, '.claude', 'agents', 'probe-agent.md'), 'utf-8');
+    expect(written).toContain('Main body.');
+    expect(written).toContain('## Soul');
+    expect(written).toContain('The soul of the agent.');
+  });
+
+  it('refreshes a previously-generated subagent file on a later launch', () => {
+    const agentMd = path.join(PROJECT_DIR, '.agents', 'subagents', 'probe-agent', 'AGENT.md');
+    writeFile(agentMd, '---\nname: probe-agent\ndescription: v1\n---\n\nVersion one.');
+    runLaunchSync({ agent: 'claude', version: '1.0.0', cwd: PROJECT_DIR });
+
+    const dest = path.join(PROJECT_DIR, '.claude', 'agents', 'probe-agent.md');
+    expect(fs.readFileSync(dest, 'utf-8')).toContain('Version one.');
+
+    // Edit the source; the generated file (carries our marker) must refresh.
+    writeFile(agentMd, '---\nname: probe-agent\ndescription: v2\n---\n\nVersion two.');
+    const result = runLaunchSync({ agent: 'claude', version: '1.0.0', cwd: PROJECT_DIR });
+
+    expect(result.workspaceLinks).toBeGreaterThanOrEqual(1);
+    const refreshed = fs.readFileSync(dest, 'utf-8');
+    expect(refreshed).toContain('Version two.');
+    expect(refreshed).not.toContain('Version one.');
   });
 
   it('mirrors commands and skills under .claude/, but NOT mcp.json (supply-chain surface)', () => {
@@ -102,7 +150,7 @@ describe('runLaunchSync — workspace resource mirror', () => {
   });
 
   it('does not clobber a hand-authored .claude/agents/foo.md', () => {
-    writeFile(path.join(PROJECT_DIR, '.agents', 'subagents', 'foo.md'), '# from project rules');
+    writeFile(path.join(PROJECT_DIR, '.agents', 'subagents', 'foo', 'AGENT.md'), '---\nname: foo\ndescription: from project\n---\n\nGenerated body.');
     writeFile(path.join(PROJECT_DIR, '.claude', 'agents', 'foo.md'), '# hand-authored — keep me');
 
     const result = runLaunchSync({ agent: 'claude', version: '1.0.0', cwd: PROJECT_DIR });
@@ -110,11 +158,12 @@ describe('runLaunchSync — workspace resource mirror', () => {
     expect(result.workspaceSkipped).toContain(path.join('.claude', 'agents', 'foo.md'));
     const dest = path.join(PROJECT_DIR, '.claude', 'agents', 'foo.md');
     expect(fs.lstatSync(dest).isSymbolicLink()).toBe(false);
+    // Hand-authored file (no generated marker) survives untouched.
     expect(fs.readFileSync(dest, 'utf-8')).toBe('# hand-authored — keep me');
   });
 
   it('does not clobber a dangling user symlink at the dest path', () => {
-    writeFile(path.join(PROJECT_DIR, '.agents', 'subagents', 'foo.md'), '# from project rules');
+    writeFile(path.join(PROJECT_DIR, '.agents', 'subagents', 'foo', 'AGENT.md'), '---\nname: foo\ndescription: from project\n---\n\nGenerated body.');
     fs.mkdirSync(path.join(PROJECT_DIR, '.claude', 'agents'), { recursive: true });
     fs.symlinkSync('/tmp/does-not-exist-pls-keep-this-dangling', path.join(PROJECT_DIR, '.claude', 'agents', 'foo.md'));
 
@@ -136,7 +185,7 @@ describe('runLaunchSync — workspace resource mirror', () => {
   });
 
   it('is idempotent: running twice does not duplicate links', () => {
-    writeFile(path.join(PROJECT_DIR, '.agents', 'subagents', 'r.md'), '# r');
+    writeFile(path.join(PROJECT_DIR, '.agents', 'subagents', 'r', 'AGENT.md'), '---\nname: r\ndescription: r\n---\n\nBody.');
 
     const first = runLaunchSync({ agent: 'claude', version: '1.0.0', cwd: PROJECT_DIR });
     const second = runLaunchSync({ agent: 'claude', version: '1.0.0', cwd: PROJECT_DIR });
