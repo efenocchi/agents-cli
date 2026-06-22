@@ -56,6 +56,22 @@ const DRILLABLE_KINDS = [
 ] as const;
 type DrillableKind = typeof DRILLABLE_KINDS[number];
 
+/**
+ * Singular aliases for the plural drill-down flags. `--plugin code` reads as
+ * "show the one plugin named code" — a required-value flag that always lands in
+ * detail mode, the natural counterpart to `--plugins` (list). `mcp` has no
+ * distinct singular, so it is intentionally absent.
+ */
+const SINGULAR_DRILL_ALIASES: Record<string, DrillableKind> = {
+  command: 'commands',
+  skill: 'skills',
+  hook: 'hooks',
+  rule: 'rules',
+  plugin: 'plugins',
+  workflow: 'workflows',
+  subagent: 'subagents',
+};
+
 const CAPABILITY_NAMES: readonly CapabilityName[] = [
   'hooks', 'mcp', 'skills', 'commands', 'subagents', 'plugins', 'workflows', 'rules', 'allowlist',
 ];
@@ -88,6 +104,14 @@ interface InspectOptions {
   plugins?: boolean | string;
   workflows?: boolean | string;
   subagents?: boolean | string;
+  // Singular aliases — required value, always detail mode (see SINGULAR_DRILL_ALIASES).
+  command?: string;
+  skill?: string;
+  hook?: string;
+  rule?: string;
+  plugin?: string;
+  workflow?: string;
+  subagent?: string;
 }
 
 // ─── Command registration ────────────────────────────────────────────────────
@@ -101,6 +125,9 @@ export function registerInspectCommand(program: Command): void {
 
   for (const kind of DRILLABLE_KINDS) {
     cmd.option(`--${kind} [query]`, `list ${kind}; pass a name (fuzzy) to show detail`);
+  }
+  for (const singular of Object.keys(SINGULAR_DRILL_ALIASES)) {
+    cmd.option(`--${singular} <query>`, `show detail for one ${singular} by name (fuzzy)`);
   }
 
   cmd.action(async (target: string, options: InspectOptions) => {
@@ -179,17 +206,22 @@ function parseTarget(target: string): { agent: AgentId; version: string } {
 }
 
 function pickDrillKind(options: InspectOptions): { kind: DrillableKind; query: boolean | string } | null {
-  const active: Array<{ kind: DrillableKind; query: boolean | string }> = [];
+  const active: Array<{ flag: string; kind: DrillableKind; query: boolean | string }> = [];
   for (const kind of DRILLABLE_KINDS) {
     const value = options[kind];
-    if (value !== undefined) active.push({ kind, query: value });
+    if (value !== undefined) active.push({ flag: `--${kind}`, kind, query: value });
+  }
+  // Singular aliases (`--plugin code`) always carry a name → detail mode.
+  for (const [singular, plural] of Object.entries(SINGULAR_DRILL_ALIASES)) {
+    const value = (options as Record<string, unknown>)[singular];
+    if (typeof value === 'string') active.push({ flag: `--${singular}`, kind: plural, query: value });
   }
   if (active.length === 0) return null;
   if (active.length > 1) {
-    console.error(chalk.red(`Pick at most one drill-down flag. Got: ${active.map(a => '--' + a.kind).join(', ')}`));
+    console.error(chalk.red(`Pick at most one drill-down flag. Got: ${active.map(a => a.flag).join(', ')}`));
     process.exit(1);
   }
-  return active[0];
+  return { kind: active[0].kind, query: active[0].query };
 }
 
 // ─── Repo targets ────────────────────────────────────────────────────────────
