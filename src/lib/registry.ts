@@ -85,6 +85,14 @@ export function removeRegistry(type: RegistryType, name: string): boolean {
   return false;
 }
 
+/**
+ * Cap every registry network call. Without this a slow or unreachable registry
+ * hangs the calling command indefinitely (`agents add`, `agents mcp`, package
+ * resolution) — and makes CI flake when the registry is unreachable. On timeout
+ * the fetch aborts, callers fall back to their git/no-match path.
+ */
+const REGISTRY_FETCH_TIMEOUT_MS = 8000;
+
 async function fetchMcpRegistry(
   url: string,
   query?: string,
@@ -103,7 +111,10 @@ async function fetchMcpRegistry(
     headers['Authorization'] = `Bearer ${apiKey}`;
   }
 
-  const response = await fetch(fullUrl, { headers });
+  const response = await fetch(fullUrl, {
+    headers,
+    signal: AbortSignal.timeout(REGISTRY_FETCH_TIMEOUT_MS),
+  });
   if (!response.ok) {
     throw new Error(`Registry request failed: ${response.status} ${response.statusText}`);
   }
@@ -273,7 +284,10 @@ async function fetchSkillIndex(url: string, apiKey?: string): Promise<SkillIndex
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
 
-  const response = await fetch(url, { headers });
+  const response = await fetch(url, {
+    headers,
+    signal: AbortSignal.timeout(REGISTRY_FETCH_TIMEOUT_MS),
+  });
   if (!response.ok) {
     throw new Error(`Registry request failed: ${response.status} ${response.statusText}`);
   }
