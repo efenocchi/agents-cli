@@ -1,6 +1,6 @@
 ---
 name: run
-description: "Execute a single agent headlessly or interactively. Supports plan/edit/full modes, secrets bundle injection, version pinning, fallback chains, balanced rotation, profile dispatch (Kimi/DeepSeek/etc.), and workflow dispatch by name. Triggers on: 'run claude', 'run codex', 'agents run', 'dispatch an agent', 'headless agent', 'one-off agent task'."
+description: "Execute a single agent headlessly or interactively. Supports plan/edit/auto/skip modes, secrets bundle injection, version pinning, fallback chains, balanced rotation, profile dispatch (Kimi/DeepSeek/etc.), and workflow dispatch by name. Triggers on: 'run claude', 'run codex', 'agents run', 'dispatch an agent', 'headless agent', 'one-off agent task'."
 argument-hint: "<agent|profile|workflow> [prompt]"
 allowed-tools: Bash(agents run*)
 user-invocable: true
@@ -31,18 +31,31 @@ agents run claude "summarize recent git commits"
 
 ## Modes
 
-Permission mode controls what the agent can do. Headless runs MUST set an explicit mode or hang at `ExitPlanMode`.
+Permission mode controls what the agent can do.
 
 | Mode | What it allows |
 |------|----------------|
-| `plan` (default) | Read-only — research, audit, analysis |
-| `edit` | Read + write files |
-| `full` | Writes + all permissions (autonomous) |
+| `plan` (default) | Read-only — research, audit, analysis. No writes, no shell side-effects. |
+| `edit` | Read + write files; prompts for shell / risky operations |
+| `auto` | Smart classifier auto-approves safe ops (incl. commit + push to the current branch) and blocks risky ones (force-push, push to `main`, `git reset --hard`). Claude/copilot only. |
+| `skip` | Bypass every permission prompt (`--dangerously-skip-permissions`). `full` is accepted as a permanent alias. |
 
 ```bash
 agents run claude "fix lint errors in src/" --mode edit
-agents run deploy-bot --mode full "deploy api to staging"
+agents run claude "/code:commit" --mode auto          # run a command unattended, safely
+agents run deploy-bot --mode skip "deploy api to staging"
 ```
+
+**Headless runs need a non-`plan` mode to act.** The default `plan` is read-only, so an
+action command (e.g. `/code:commit`) run headless would otherwise stall forever at
+`ExitPlanMode` with no TTY to approve the plan. Running a slash command headless without
+an explicit `--mode` is rejected up front with a fix; pick `--mode auto` (recommended),
+`edit`, or `skip`. Pass `--mode plan` explicitly only when you genuinely want a read-only run.
+
+Note: `auto` and `skip` cannot be scoped to a directory — they are per-run modes, not
+per-repo. To restrict no-prompt behavior to one repository, use that repo's
+`.claude/settings.json` `permissions.allow`/`deny` rules (file rules are path-anchored;
+deny always wins) rather than a blanket mode.
 
 ## Reasoning effort and model
 
@@ -184,7 +197,7 @@ Emits a unified event stream; ndjson when combined with `--json`.
 
 | Flag | Purpose |
 |------|---------|
-| `--mode plan\|edit\|full` | Permission level (default `plan`) |
+| `--mode plan\|edit\|auto\|skip` | Permission level (default `plan`; `full` = alias for `skip`) |
 | `--effort low\|...\|max\|auto` | Reasoning effort |
 | `--model <id>` | Override model |
 | `--secrets <bundle>` | Inject keychain bundle (repeatable) |
