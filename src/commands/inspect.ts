@@ -37,7 +37,8 @@ import {
   type ResourceEntry,
   type SkillResourceEntry,
 } from '../lib/resources.js';
-import { discoverPlugins, discoverPluginsInDir } from '../lib/plugins.js';
+import { discoverPlugins, discoverPluginsInDir, pluginResourceGroups, type PluginResourceGroup } from '../lib/plugins.js';
+import { PLUGIN_GROUP_COLORS } from './plugins.js';
 import { countSessionsInScope } from '../lib/session/discover.js';
 import type { SessionAgentId } from '../lib/session/types.js';
 import { damerauLevenshtein } from '../lib/fuzzy.js';
@@ -55,6 +56,22 @@ const DRILLABLE_KINDS = [
 ] as const;
 type DrillableKind = typeof DRILLABLE_KINDS[number];
 
+/**
+ * Singular aliases for the plural drill-down flags. `--plugin code` reads as
+ * "show the one plugin named code" — a required-value flag that always lands in
+ * detail mode, the natural counterpart to `--plugins` (list). `mcp` has no
+ * distinct singular, so it is intentionally absent.
+ */
+const SINGULAR_DRILL_ALIASES: Record<string, DrillableKind> = {
+  command: 'commands',
+  skill: 'skills',
+  hook: 'hooks',
+  rule: 'rules',
+  plugin: 'plugins',
+  workflow: 'workflows',
+  subagent: 'subagents',
+};
+
 const CAPABILITY_NAMES: readonly CapabilityName[] = [
   'hooks', 'mcp', 'skills', 'commands', 'subagents', 'plugins', 'workflows', 'rules', 'allowlist',
 ];
@@ -68,8 +85,10 @@ interface ResourceItem {
   linkTarget: string;
   /** One-line description (frontmatter `description:` or first non-frontmatter line). */
   description: string;
-  /** Extra detail rows surfaced in detail mode (e.g. a plugin's bundled skills/commands). */
+  /** Scalar detail rows surfaced in detail mode (e.g. a plugin's version). */
   extra?: Array<[string, string]>;
+  /** For plugins: the resource categories (skills, commands, …) the bundle packages. */
+  groups?: PluginResourceGroup[];
 }
 
 interface InspectOptions {
@@ -85,6 +104,14 @@ interface InspectOptions {
   plugins?: boolean | string;
   workflows?: boolean | string;
   subagents?: boolean | string;
+  // Singular aliases — required value, always detail mode (see SINGULAR_DRILL_ALIASES).
+  command?: string;
+  skill?: string;
+  hook?: string;
+  rule?: string;
+  plugin?: string;
+  workflow?: string;
+  subagent?: string;
 }
 
 // ─── Command registration ────────────────────────────────────────────────────
@@ -98,6 +125,9 @@ export function registerInspectCommand(program: Command): void {
 
   for (const kind of DRILLABLE_KINDS) {
     cmd.option(`--${kind} [query]`, `list ${kind}; pass a name (fuzzy) to show detail`);
+  }
+  for (const singular of Object.keys(SINGULAR_DRILL_ALIASES)) {
+    cmd.option(`--${singular} <query>`, `show detail for one ${singular} by name (fuzzy)`);
   }
 
   cmd.action(async (target: string, options: InspectOptions) => {
@@ -176,17 +206,22 @@ function parseTarget(target: string): { agent: AgentId; version: string } {
 }
 
 function pickDrillKind(options: InspectOptions): { kind: DrillableKind; query: boolean | string } | null {
-  const active: Array<{ kind: DrillableKind; query: boolean | string }> = [];
+  const active: Array<{ flag: string; kind: DrillableKind; query: boolean | string }> = [];
   for (const kind of DRILLABLE_KINDS) {
     const value = options[kind];
-    if (value !== undefined) active.push({ kind, query: value });
+    if (value !== undefined) active.push({ flag: `--${kind}`, kind, query: value });
+  }
+  // Singular aliases (`--plugin code`) always carry a name → detail mode.
+  for (const [singular, plural] of Object.entries(SINGULAR_DRILL_ALIASES)) {
+    const value = (options as Record<string, unknown>)[singular];
+    if (typeof value === 'string') active.push({ flag: `--${singular}`, kind: plural, query: value });
   }
   if (active.length === 0) return null;
   if (active.length > 1) {
-    console.error(chalk.red(`Pick at most one drill-down flag. Got: ${active.map(a => '--' + a.kind).join(', ')}`));
+    console.error(chalk.red(`Pick at most one drill-down flag. Got: ${active.map(a => a.flag).join(', ')}`));
     process.exit(1);
   }
-  return active[0];
+  return { kind: active[0].kind, query: active[0].query };
 }
 
 // ─── Repo targets ────────────────────────────────────────────────────────────
@@ -611,7 +646,7 @@ function renderItemList(header: string, jsonHead: Record<string, unknown>, kind:
       ...jsonHead,
       kind,
       count: items.length,
-      items: items.map(i => ({ name: i.name, source: i.source, path: i.path, description: i.description })),
+      items: items.map(i => ({ name: i.name, source: i.source, path: i.path, description: i.description, ...(i.groups ? { groups: i.groups } : {}) })),
     }, null, 2));
     return;
   }
@@ -630,8 +665,21 @@ function renderItemList(header: string, jsonHead: Record<string, unknown>, kind:
     if (item.description) {
       console.log(`             ${chalk.gray(truncate(item.description, 90))}`);
     }
+    if (item.groups) printGroupRows(item.groups);
   }
   console.log('');
+}
+
+/** Print a plugin's resource breakdown as aligned `label  items` rows under a list entry. */
+function printGroupRows(groups: PluginResourceGroup[]): void {
+  if (groups.length === 0) return;
+  const width = Math.max(...groups.map(g => g.label.length));
+  for (const g of groups) {
+    const colorFn = PLUGIN_GROUP_COLORS[g.label] ?? chalk.white;
+    const label = chalk.gray(g.label.padEnd(width));
+    const value = g.items.map((s) => colorFn(s)).join(chalk.gray(', '));
+    console.log(`             ${label}  ${value}`);
+  }
 }
 
 // ─── Detail mode (fuzzy) ─────────────────────────────────────────────────────
@@ -752,13 +800,6 @@ function pluginItems(): ResourceItem[] {
  */
 function pluginToItem(plugin: DiscoveredPlugin, source: string): ResourceItem {
   const extra: Array<[string, string]> = [];
-  const list = (names: string[]): string =>
-    names.length <= 8 ? names.join(', ') : `${names.slice(0, 8).join(', ')}, +${names.length - 8} more`;
-  if (plugin.skills.length) extra.push(['skills', `${plugin.skills.length}  (${list(plugin.skills)})`]);
-  if (plugin.commands.length) extra.push(['commands', `${plugin.commands.length}  (${list(plugin.commands)})`]);
-  if (plugin.agentDefs.length) extra.push(['subagents', `${plugin.agentDefs.length}  (${list(plugin.agentDefs)})`]);
-  if (plugin.hooks.length) extra.push(['hooks', String(plugin.hooks.length)]);
-  if (plugin.mcpServers.length) extra.push(['mcp', list(plugin.mcpServers)]);
   if (plugin.manifest.version) extra.push(['version', plugin.manifest.version]);
   return {
     name: plugin.name,
@@ -767,6 +808,7 @@ function pluginToItem(plugin: DiscoveredPlugin, source: string): ResourceItem {
     linkTarget: linkTarget(plugin.root),
     description: plugin.manifest.description ?? '',
     extra,
+    groups: pluginResourceGroups(plugin),
   };
 }
 
@@ -837,9 +879,11 @@ function buildDetailRows(item: ResourceItem, kind: DrillableKind): Array<[string
       if (Array.isArray(fm.tools)) rows.push(['tools', fm.tools.join(', ')]);
     }
   }
-  // Plugin bundles carry their nested resources as pre-built rows.
-  if (kind === 'plugins' && item.extra) {
-    rows.push(...item.extra);
+  // Plugin bundles surface their nested resources (skills, commands, …) plus
+  // scalar rows (version).
+  if (kind === 'plugins') {
+    if (item.groups) for (const g of item.groups) rows.push([g.label, g.items.join(', ')]);
+    if (item.extra) rows.push(...item.extra);
   }
   return rows;
 }

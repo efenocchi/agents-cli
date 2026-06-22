@@ -21,6 +21,7 @@ import {
   hasPluginExecSurfaces,
   inspectPluginCapabilities,
   pluginCapabilityLabels,
+  pluginResourceGroups,
 } from './plugins.js';
 import type { DiscoveredPlugin, PluginManifest } from './types.js';
 
@@ -978,5 +979,50 @@ describe('removePluginFromVersion', () => {
     const settings = JSON.parse(fs.readFileSync(path.join(claudeDir, 'settings.json'), 'utf-8'));
     expect(settings.mcpServers['myplugin--server-a']).toBeUndefined();
     expect(settings.mcpServers['other-server']).toBeDefined();
+  });
+});
+
+// ─── pluginResourceGroups ───────────────────────────────────────────────────
+
+describe('pluginResourceGroups', () => {
+  it('returns ordered, non-empty groups with slash-prefixed skills and commands', () => {
+    const plugin = makeDiscoveredPlugin('/tmp/code', { name: 'code', version: '1.0.0', description: 'x' });
+    plugin.skills = ['dispatch', 'verify'];
+    plugin.commands = ['ship'];
+    plugin.agentDefs = ['reviewer'];
+    plugin.hooks = ['pre-commit'];
+    plugin.mcpServers = ['context7'];
+
+    const groups = pluginResourceGroups(plugin);
+
+    expect(groups.map((g) => g.label)).toEqual(['skills', 'commands', 'subagents', 'hooks', 'mcp']);
+    expect(groups[0].items).toEqual(['/code:dispatch', '/code:verify']);
+    expect(groups[1].items).toEqual(['/code:ship']);
+    expect(groups[2].items).toEqual(['reviewer']);
+  });
+
+  it('omits empty categories', () => {
+    const plugin = makeDiscoveredPlugin('/tmp/only-skills', { name: 'only-skills', version: '1.0.0', description: 'x' });
+    plugin.skills = ['a'];
+
+    expect(pluginResourceGroups(plugin).map((g) => g.label)).toEqual(['skills']);
+  });
+
+  it('appends a settings group only when the plugin merges settings, always last', () => {
+    const base = makeDiscoveredPlugin('/tmp/s', { name: 's', version: '1.0.0', description: 'x' });
+    base.scripts = ['build.sh'];
+    expect(pluginResourceGroups(base).map((g) => g.label)).toEqual(['scripts']);
+
+    const withSettings = makeDiscoveredPlugin('/tmp/s2', { name: 's2', version: '1.0.0', description: 'x' });
+    withSettings.scripts = ['build.sh'];
+    withSettings.hasSettings = true;
+    const groups = pluginResourceGroups(withSettings);
+    expect(groups.map((g) => g.label)).toEqual(['scripts', 'settings']);
+    expect(groups[groups.length - 1].items).toEqual(['settings.json']);
+  });
+
+  it('returns an empty array for a plugin packaging nothing', () => {
+    const plugin = makeDiscoveredPlugin('/tmp/empty', { name: 'empty', version: '1.0.0', description: 'x' });
+    expect(pluginResourceGroups(plugin)).toEqual([]);
   });
 });

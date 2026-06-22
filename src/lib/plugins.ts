@@ -143,6 +143,37 @@ export function buildDiscoveredPlugin(
   };
 }
 
+/** One category of resources a plugin packages, for display breakdowns. */
+export interface PluginResourceGroup {
+  /** Category key: 'skills' | 'commands' | 'subagents' | 'hooks' | 'mcp' | 'lsp' | 'monitors' | 'bin' | 'scripts' | 'settings'. */
+  label: string;
+  /** Display names — slash-prefixed for skills/commands (e.g. `/code:dispatch`), raw names otherwise. */
+  items: string[];
+}
+
+/**
+ * Ordered, non-empty resource groups a plugin packages. Single source of truth
+ * for the breakdown shown by the plugin picker, `agents inspect --plugins`, and
+ * its detail view. Empty categories are omitted; `settings` appears only when
+ * the plugin merges non-permission settings.
+ */
+export function pluginResourceGroups(plugin: DiscoveredPlugin): PluginResourceGroup[] {
+  const groups: PluginResourceGroup[] = [
+    { label: 'skills', items: plugin.skills.map((s) => `/${plugin.name}:${s}`) },
+    { label: 'commands', items: plugin.commands.map((c) => `/${plugin.name}:${c}`) },
+    { label: 'subagents', items: plugin.agentDefs },
+    { label: 'hooks', items: plugin.hooks },
+    { label: 'mcp', items: plugin.mcpServers },
+    { label: 'lsp', items: plugin.lspServers },
+    { label: 'monitors', items: plugin.monitors },
+    { label: 'bin', items: plugin.bin },
+    { label: 'scripts', items: plugin.scripts },
+  ];
+  const out = groups.filter((g) => g.items.length > 0);
+  if (plugin.hasSettings) out.push({ label: 'settings', items: ['settings.json'] });
+  return out;
+}
+
 export function inspectPluginCapabilities(pluginRoot: string): PluginCapabilities {
   const manifest = loadPluginManifest(pluginRoot);
   const plugin = manifest ? buildDiscoveredPlugin(pluginRoot, manifest) : null;
