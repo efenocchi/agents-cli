@@ -182,7 +182,7 @@ export function captureProcessStartTime(pid: number): string | null {
 }
 
 /** Agent types the team runner supports. */
-const TEAM_AGENT_TYPES: AgentType[] = ['codex', 'cursor', 'gemini', 'claude', 'opencode', 'grok', 'antigravity', 'kimi'];
+const TEAM_AGENT_TYPES: AgentType[] = ['codex', 'cursor', 'gemini', 'claude', 'opencode', 'grok', 'antigravity', 'kimi', 'droid'];
 
 /**
  * Reasoning-intensity knob. Passed through to `agents run --effort`, which

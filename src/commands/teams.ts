@@ -71,6 +71,7 @@ const AGENT_NAMES: Record<AgentType, string> = {
   grok: 'Grok',
   antigravity: 'Antigravity',
   kimi: 'Kimi',
+  droid: 'Droid',
 };
 
 const VALID_AGENTS = Object.keys(AGENT_NAMES) as AgentType[];

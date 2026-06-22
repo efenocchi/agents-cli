@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**Factory AI Droid (first-class support)**
+
+- Add `droid` as a first-class supported agent (AgentId + full registry entry for Factory AI's `droid` CLI, config in `~/.factory/`). Installs via the official script (`curl -fsSL https://app.factory.ai/cli | sh`); the binary is resolved through the standard install-script path and isolated per version via the `~/.factory` config symlink (Droid has no `*_HOME` override).
+- Resource sync wired for the four resource types Droid supports natively: **MCP** (`~/.factory/mcp.json`), **rules** (native `AGENTS.md`), **subagents** (custom droids flattened to `~/.factory/droids/*.md`, with the unsupported `color` frontmatter key stripped), and **commands** (`~/.factory/commands/`). Skills/plugins/workflows have no Droid equivalent and are disabled; hooks/permissions are deferred.
+- `agents run droid` and `agents teams add … droid` work end-to-end: headless `droid exec` with mode mapping (plan → read-only, edit → `--auto low`, auto → `--auto high`, skip → `--skip-permissions-unsafe`), `-o stream-json` output, `-m` model selection, and `-r` reasoning effort. Routine/daemon jobs (`buildJobCommand`) support Droid too.
+- Known limitation: `agents teams` renders Droid events through the generic normalizer pending a verified `droid exec -o stream-json` event schema; structured tool/file categorization will follow. Session reading and Factory cloud dispatch remain follow-ups.
+
 **`agents upgrade` now refreshes the macOS Keychain helper**
 
 - Upgrading runs `npm install -g … --ignore-scripts`, so the postinstall that installs the signed Keychain helper never fired — a user upgrading away from a broken build (e.g. the entitlement-less 1.20.4 helper that failed `SecItemAdd` with `errSecMissingEntitlement -34018`) kept the broken helper until the lazy staleness check in `getKeychainHelperPath()` happened to repair it on their next secret operation. `installResolvedPackage` now force-refreshes the helper (`ensureKeychainHelperInstalled({ forceReinstall: true })`) on darwin after the install, so both the explicit `agents upgrade` and the auto-update prompt land the fixed helper immediately. Best-effort and non-fatal: an upgrade never fails because the helper could not be reinstalled, and `agents helper install --force` remains the manual path.

@@ -9,7 +9,7 @@
 import { extractFileOpsFromBash } from './file_ops.js';
 
 /** Supported agent CLI types for team spawning. */
-export type AgentType = 'codex' | 'gemini' | 'cursor' | 'claude' | 'opencode' | 'grok' | 'antigravity' | 'kimi';
+export type AgentType = 'codex' | 'gemini' | 'cursor' | 'claude' | 'opencode' | 'grok' | 'antigravity' | 'kimi' | 'droid';
 
 const claudeToolUseMap = new Map<string, { tool: string; command?: string; path?: string }>();
 
@@ -31,6 +31,12 @@ export function normalizeEvents(agentType: AgentType, raw: any): any[] {
     return normalizeAntigravity(raw);
   }
 
+  // droid (Factory AI) intentionally falls through to the generic normalizer
+  // below: its `-o stream-json` JSONL event schema is not yet verified against
+  // a live run (the documented `debug` format differs from stream-json). Events
+  // still stream and render; structured tool/file categorization will be added
+  // once a real `droid exec -o stream-json` sample is captured. Do NOT guess the
+  // schema here — a wrong discriminator silently mislabels every event.
   const timestamp = new Date().toISOString();
   return [{
     type: raw.type || 'unknown',

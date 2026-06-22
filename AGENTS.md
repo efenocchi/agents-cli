@@ -1,6 +1,6 @@
 # agents-cli
 
-CLI for managing AI coding agent versions, config, sessions, and cloud dispatch (Claude, Codex, Gemini, Cursor, OpenCode, OpenClaw, Grok Build).
+CLI for managing AI coding agent versions, config, sessions, and cloud dispatch (Claude, Codex, Gemini, Cursor, OpenCode, OpenClaw, Grok Build, Droid).
 
 > Phoenix Labs OSS (MIT). **NOT part of the Rush brand** — see [§Brand identity](#brand-identity) before touching assets, demos, or website.
 
@@ -73,6 +73,7 @@ See [`docs/00-concepts.md`](docs/00-concepts.md) for the full mental model and r
 | Cursor | `commands/` (md) | `.cursorrules` |
 | OpenCode | `commands/` (md) | `OPENCODE.md` |
 | Grok | skills + `.grok/` (hooks, plugins, agents, `config.toml`) | `AGENTS.md` + `~/.grok/memory/` |
+| Droid | `commands/` (md) + `.factory/` (`mcp.json`, `droids/`) | `AGENTS.md` (native) |
 
 ## Source layout
 

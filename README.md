@@ -29,6 +29,8 @@
   <a href="https://github.com/NousResearch/hermes-agent" title="Hermes Agent"><img src="assets/harnesses/hermes.png" height="32" alt="Hermes Agent" /></a>
   &nbsp;&nbsp;&nbsp;&nbsp;
   <a href="https://x.ai" title="Grok Build (xAI)"><strong>Grok</strong></a>
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://factory.ai" title="Factory AI Droid"><strong>Droid</strong></a>
 </p>
 
 https://agents-cli.sh/demo.mp4

@@ -860,5 +860,10 @@ export function buildReasoningFlags(agent: AgentId, level: string): string[] {
     const codexLevel = (normalized === 'xhigh' || normalized === 'max') ? 'high' : normalized;
     return ['-c', `model_reasoning_effort=${codexLevel}`];
   }
+  if (agent === 'droid') {
+    // Droid: `-r off|none|low|medium|high`. xhigh/max clamp to high.
+    const droidLevel = (normalized === 'xhigh' || normalized === 'max') ? 'high' : normalized;
+    return ['-r', droidLevel];
+  }
   return [];
 }

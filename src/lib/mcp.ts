@@ -418,6 +418,40 @@ function installMcpToKimiConfig(server: InstalledMcpServer, versionHome: string)
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
 }
 
+/**
+ * Install MCP server to Factory AI Droid config (`~/.factory/mcp.json`).
+ * Droid uses the standard `mcpServers` JSON shape, same as Kimi/Claude.
+ */
+function installMcpToFactoryConfig(server: InstalledMcpServer, versionHome: string): void {
+  const configPath = path.join(versionHome, '.factory', 'mcp.json');
+
+  let config: Record<string, unknown> = {};
+  if (fs.existsSync(configPath)) {
+    config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+  }
+
+  if (!config.mcpServers || typeof config.mcpServers !== 'object') {
+    config.mcpServers = {};
+  }
+
+  const mcpServers = config.mcpServers as Record<string, unknown>;
+
+  if (server.config.transport === 'stdio') {
+    mcpServers[server.name] = {
+      command: server.config.command,
+      args: server.config.args || [],
+      env: server.config.env || {},
+    };
+  } else {
+    mcpServers[server.name] = {
+      url: server.config.url,
+    };
+  }
+
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+}
+
 function installMcpToOpenCodeConfig(server: InstalledMcpServer, versionHome: string): void {
   const configPath = path.join(versionHome, '.opencode', 'opencode.jsonc');
 
@@ -510,6 +544,9 @@ export function installMcpServers(
         applied.push(server.name);
       } else if (agentId === 'kimi') {
         installMcpToKimiConfig(server, versionHome);
+        applied.push(server.name);
+      } else if (agentId === 'droid') {
+        installMcpToFactoryConfig(server, versionHome);
         applied.push(server.name);
       }
     } catch (err) {

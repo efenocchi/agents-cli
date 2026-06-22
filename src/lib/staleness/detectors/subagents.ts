@@ -1,5 +1,6 @@
 /**
  * Subagents detector. Claude: flat .md files under `<agentDir>/agents/`.
+ * Droid: flat .md files under `<versionHome>/.factory/droids/`.
  * OpenClaw: subdirectories containing AGENTS.md under `<versionHome>/.openclaw/`.
  * Mirrors versions.ts:521-539.
  */
@@ -24,6 +25,20 @@ function buildClaudeDetector(): ResourceDetector {
   };
 }
 
+function buildDroidDetector(): ResourceDetector {
+  return {
+    kind: 'subagents',
+    agent: 'droid',
+    list({ versionHome }: DetectArgs): string[] {
+      const droidsDir = path.join(versionHome, '.factory', 'droids');
+      if (!fs.existsSync(droidsDir)) return [];
+      return fs.readdirSync(droidsDir)
+        .filter(f => f.endsWith('.md'))
+        .map(f => f.replace('.md', ''));
+    },
+  };
+}
+
 function buildOpenclawDetector(): ResourceDetector {
   return {
     kind: 'subagents',
@@ -40,6 +55,7 @@ function buildOpenclawDetector(): ResourceDetector {
 
 const handlers: Partial<Record<AgentId, () => ResourceDetector>> = {
   claude: buildClaudeDetector,
+  droid: buildDroidDetector,
   openclaw: buildOpenclawDetector,
 };
 

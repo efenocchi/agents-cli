@@ -263,6 +263,46 @@ export function transformSubagentForClaude(subagentDir: string): string {
 }
 
 /**
+ * Transform a subagent into a Factory AI Droid "custom droid" .md file.
+ *
+ * Mirrors transformSubagentForClaude (flatten frontmatter + body + appended
+ * .md sections), but emits only frontmatter keys Factory recognizes
+ * (name, description, model). Factory has no `color` field, so it is dropped.
+ * See https://docs.factory.ai/cli/configuration/custom-droids.
+ */
+export function transformSubagentForDroid(subagentDir: string): string {
+  const agentMd = path.join(subagentDir, 'AGENT.md');
+  const frontmatter = parseSubagentFrontmatter(agentMd);
+  const body = getSubagentBody(agentMd);
+
+  if (!frontmatter) {
+    throw new Error(`Invalid AGENT.md in ${subagentDir}`);
+  }
+
+  const frontmatterYaml = yaml.stringify({
+    name: frontmatter.name,
+    description: frontmatter.description,
+    ...(frontmatter.model && { model: frontmatter.model }),
+  }).trim();
+
+  let result = `---\n${frontmatterYaml}\n---\n\n${body}`;
+
+  const files = fs.readdirSync(subagentDir)
+    .filter(f => f.endsWith('.md') && f !== 'AGENT.md')
+    .sort();
+
+  for (const file of files) {
+    const filePath = path.join(subagentDir, file);
+    const content = fs.readFileSync(filePath, 'utf-8').trim();
+    const sectionName = file.replace('.md', '');
+    const title = sectionName.charAt(0).toUpperCase() + sectionName.slice(1).toLowerCase();
+    result += `\n\n## ${title}\n\n${content}`;
+  }
+
+  return result;
+}
+
+/**
  * Sync a subagent to an OpenClaw workspace
  * Copies full directory, renames AGENT.md to AGENTS.md
  */

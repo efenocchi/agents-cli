@@ -507,6 +507,44 @@ export const AGENTS: Record<AgentId, AgentConfig> = {
       rulesImports: false,
     },
   },
+  // Factory AI Droid CLI (`droid`) — agentic coding CLI from factory.ai.
+  // Install: `curl -fsSL https://app.factory.ai/cli | sh` (no npm package).
+  // Binary is NOT in node_modules/.bin — resolved via resolveDroidBinary().
+  // Config: `~/.factory/` (settings.json, mcp.json, droids/, commands/).
+  // Memory: native AGENTS.md. Subagents = custom droids (top-level .md files
+  // in ~/.factory/droids/). Config isolation rides the ~/.factory symlink
+  // switch (no FACTORY_HOME env var exists). Headless: `droid exec "<prompt>"`
+  // with --auto low|medium|high, -o stream-json, -m <model>, -r <effort>.
+  droid: {
+    id: 'droid',
+    name: 'Droid',
+    color: 'yellowBright',
+    cliCommand: 'droid',
+    npmPackage: '',
+    installScript: 'curl -fsSL https://app.factory.ai/cli | sh',
+    configDir: path.join(HOME, '.factory'),
+    commandsDir: path.join(HOME, '.factory', 'commands'),
+    commandsSubdir: 'commands',
+    skillsDir: '', // no skills concept
+    hooksDir: 'hooks',
+    instructionsFile: 'AGENTS.md',
+    format: 'markdown',
+    variableSyntax: '$ARGUMENTS',
+    supportsHooks: false,
+    capabilities: {
+      hooks: false,
+      mcp: true,
+      allowlist: false,
+      skills: false,
+      commands: true,
+      plugins: false,
+      subagents: true,
+      rules: { file: 'AGENTS.md' },
+      workflows: false,
+      modes: ['plan', 'edit', 'auto', 'skip'],
+      rulesImports: false,
+    },
+  },
 };
 
 /** All registered agent IDs derived from the AGENTS registry. */
@@ -1519,6 +1557,9 @@ export function getUserMcpConfigPath(agentId: AgentId): string {
     case 'grok':
       // grok mcp.json — exact field schema verified at first install
       return path.join(agent.configDir, 'mcp.json');
+    case 'droid':
+      // Factory AI Droid stores MCPs in ~/.factory/mcp.json
+      return path.join(agent.configDir, 'mcp.json');
     default:
       // Gemini and others use settings.json
       return path.join(agent.configDir, 'settings.json');
@@ -1554,6 +1595,8 @@ export function getMcpConfigPathForHome(agentId: AgentId, home: string): string 
       return path.join(home, '.gemini', 'antigravity-cli', 'mcp_config.json');
     case 'grok':
       return path.join(home, '.grok', 'config.toml');
+    case 'droid':
+      return path.join(home, '.factory', 'mcp.json');
     default:
       return path.join(home, agentConfigDirName(agentId), 'settings.json');
   }
@@ -1591,6 +1634,8 @@ function getProjectMcpConfigPath(agentId: AgentId, cwd: string = process.cwd()):
       return path.join(cwd, '.gemini', 'antigravity-cli', 'mcp_config.json');
     case 'grok':
       return path.join(cwd, '.grok', 'config.toml');
+    case 'droid':
+      return path.join(cwd, '.factory', 'mcp.json');
     default:
       return path.join(cwd, `.${agentId}`, 'settings.json');
   }

@@ -412,6 +412,23 @@ export const AGENT_COMMANDS: Record<AgentId, AgentCommandTemplate> = {
     jsonFlags: ['--output-format', 'stream-json'],
     modelFlag: '--model',
   },
+  // Factory AI Droid (`droid exec` for headless, `droid` for TUI). Flags from
+  // docs.factory.ai CLI reference: prompt is positional; --auto low|medium|high
+  // escalates autonomy (default is read-only); --skip-permissions-unsafe drops
+  // all guardrails; -o stream-json streams JSONL events; -m selects the model.
+  // The `exec` subcommand is dropped for interactive runs (see buildExecCommand).
+  droid: {
+    base: ['droid', 'exec'],
+    promptFlag: 'positional',
+    modeFlags: {
+      plan: [],                          // droid's default exec mode is read-only
+      edit: ['--auto', 'low'],           // create/edit files, non-destructive
+      auto: ['--auto', 'high'],          // full autonomy
+      skip: ['--skip-permissions-unsafe'],
+    },
+    jsonFlags: ['-o', 'stream-json'],
+    modelFlag: '-m',
+  },
 };
 
 /** Assemble the full CLI argument array for an agent invocation. */
@@ -420,9 +437,10 @@ export function buildExecCommand(options: ExecOptions): string[] {
   const cmd: string[] = [...template.base];
   const interactive = options.interactive === true || options.prompt === undefined;
 
-  // For Codex, 'exec' is the headless subcommand -- drop it for interactive mode
-  // so we run 'codex' (TUI) instead of 'codex exec' (one-shot)
-  if (options.agent === 'codex' && interactive && cmd[1] === 'exec') {
+  // For Codex and Droid, 'exec' is the headless subcommand -- drop it for
+  // interactive mode so we run the TUI ('codex' / 'droid') instead of the
+  // one-shot 'codex exec' / 'droid exec'.
+  if ((options.agent === 'codex' || options.agent === 'droid') && interactive && cmd[1] === 'exec') {
     cmd.splice(1, 1);
   }
 

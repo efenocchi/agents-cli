@@ -37,6 +37,7 @@ const AGENT_COMMANDS: Record<string, string[]> = {
   codex: ['codex', 'exec', '--sandbox', 'workspace-write', '{prompt}', '--json'],
   gemini: ['gemini', '{prompt}', '--output-format', 'stream-json'],
   kimi: ['kimi', '--prompt', '{prompt}', '--output-format', 'stream-json'],
+  droid: ['droid', 'exec', '{prompt}', '-o', 'stream-json'],
 };
 
 /** Build the full CLI argv for executing a job, applying mode, model, and permission flags. */
@@ -119,6 +120,19 @@ export function buildJobCommand(config: JobConfig, resolvedPrompt: string): stri
       cmd.push('--auto');
     } else if (mode === 'skip') {
       cmd.push('--yolo');
+    }
+
+    appendModelAndReasoning(cmd, config);
+  }
+
+  if (config.agent === 'droid') {
+    // droid exec defaults to read-only (plan). Escalate autonomy per mode.
+    if (mode === 'edit') {
+      cmd.push('--auto', 'low');
+    } else if (mode === 'auto') {
+      cmd.push('--auto', 'high');
+    } else if (mode === 'skip') {
+      cmd.push('--skip-permissions-unsafe');
     }
 
     appendModelAndReasoning(cmd, config);
