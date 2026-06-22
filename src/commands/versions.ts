@@ -38,6 +38,7 @@ import {
   listInstalledVersions,
   isVersionInstalled,
   isLatestInstalled,
+  isOldestInstalled,
   getGlobalDefault,
   setGlobalDefault,
   getVersionHomePath,
@@ -87,18 +88,6 @@ function fixSessionFilePaths(agent: AgentId, version: string, oldVersionDir: str
   if (stamps.length === 0) return;
   const trashPath = path.join(trashAgentDir, stamps[0]);
   updateSessionFilePaths(oldVersionDir, trashPath);
-}
-
-/**
- * Helper to get actual installed version for an agent.
- * Returns the latest installed version, or throws if none installed.
- */
-async function getInstalledVersionForAgent(agent: AgentId): Promise<string> {
-  const versions = listInstalledVersions(agent);
-  if (versions.length > 0) {
-    return versions[versions.length - 1];
-  }
-  throw new Error(`No versions of ${agent} installed`);
 }
 
 function formatAccountHint(info: AccountInfo, usage: UsageSnapshot | null): string {
@@ -173,7 +162,7 @@ async function versionPruneAction(
     const { agent, version } = parsed;
     const agentConfig = AGENTS[agent];
 
-    if (version === 'latest' || !spec.includes('@')) {
+    if (version === 'latest' || version === 'oldest' || !spec.includes('@')) {
       const versions = listInstalledVersions(agent);
       if (versions.length === 0) {
         console.log(chalk.gray(`No versions of ${agentLabel(agentConfig.id)} installed`));
@@ -307,6 +296,9 @@ export function registerVersionsCommands(program: Command): void {
       # Install the latest version of an agent
       agents add claude@latest
 
+      # Install the oldest published version of an agent
+      agents add claude@oldest
+
       # Install a specific version (reproducibility)
       agents add claude@2.1.112
 
@@ -343,7 +335,7 @@ export function registerVersionsCommands(program: Command): void {
           continue;
         }
 
-        // Check if already installed (handle 'latest' specially)
+        // Check if already installed (resolve 'latest'/'oldest' against npm first)
         let alreadyInstalled = false;
         let installedAsVersion = version;
         if (version === 'latest') {
@@ -351,6 +343,12 @@ export function registerVersionsCommands(program: Command): void {
           if (latestCheck.installed && latestCheck.version) {
             alreadyInstalled = true;
             installedAsVersion = latestCheck.version;
+          }
+        } else if (version === 'oldest') {
+          const oldestCheck = await isOldestInstalled(agent);
+          if (oldestCheck.installed && oldestCheck.version) {
+            alreadyInstalled = true;
+            installedAsVersion = oldestCheck.version;
           }
         } else {
           alreadyInstalled = isVersionInstalled(agent, version);
@@ -378,6 +376,9 @@ export function registerVersionsCommands(program: Command): void {
             }
 
             const installedVersion = result.installedVersion || version;
+            // Track the concrete version so a `--project` pin records it instead
+            // of the `latest`/`oldest` alias.
+            installedAsVersion = installedVersion;
 
             // Seed the fresh version home with user settings from the current
             // default version (settings.json, keybindings, codex config/auth).
@@ -528,7 +529,9 @@ export function registerVersionsCommands(program: Command): void {
             : createDefaultManifest();
 
           manifest.agents = manifest.agents || {};
-          manifest.agents[agent] = version === 'latest' ? (await getInstalledVersionForAgent(agent)) : version;
+          manifest.agents[agent] = (version === 'latest' || version === 'oldest')
+            ? installedAsVersion
+            : version;
 
           writeManifest(process.cwd(), manifest);
           console.log(chalk.green(`  Pinned ${agentLabel(agentConfig.id)}@${version} in .agents/agents.yaml`));
@@ -585,7 +588,7 @@ export function registerVersionsCommands(program: Command): void {
             return;
           }
           agent = parsed.agent;
-          version = parsed.version === 'latest' ? undefined : parsed.version;
+          version = (parsed.version === 'latest' || parsed.version === 'oldest') ? undefined : parsed.version;
         } else {
           const agentLower = agentArg.toLowerCase();
           if (!AGENTS[agentLower as AgentId]) {

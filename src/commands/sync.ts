@@ -93,7 +93,7 @@ async function runSync(agentSpec: string | undefined, opts: SyncOpts): Promise<v
       return;
     }
     agentId = parsed.agent;
-    if (parsed.version !== 'latest') version = parsed.version;
+    if (parsed.version !== 'latest' && parsed.version !== 'oldest') version = parsed.version;
   }
 
   if (opts.agent) {

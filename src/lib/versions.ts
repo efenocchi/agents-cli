@@ -930,6 +930,26 @@ export async function getLatestNpmVersion(agent: AgentId): Promise<string | null
 }
 
 /**
+ * Get the oldest published version from npm for an agent.
+ */
+export async function getOldestNpmVersion(agent: AgentId): Promise<string | null> {
+  const agentConfig = AGENTS[agent];
+  if (!agentConfig.npmPackage) return null;
+
+  try {
+    const { stdout } = await execFileAsync('npm', ['view', agentConfig.npmPackage, 'versions', '--json'], { shell: process.platform === 'win32' });
+    const parsed = JSON.parse(stdout.trim());
+    // `npm view ... versions --json` returns an array (multiple versions) or a
+    // bare string (single published version). Normalize to an array.
+    const versions: string[] = Array.isArray(parsed) ? parsed : [parsed];
+    const sorted = versions.filter((v) => VERSION_RE.test(v)).sort(compareVersions);
+    return sorted[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Check if 'latest' version is already installed (by resolving to actual version).
  */
 export async function isLatestInstalled(agent: AgentId): Promise<{ installed: boolean; version: string | null }> {
@@ -938,6 +958,17 @@ export async function isLatestInstalled(agent: AgentId): Promise<{ installed: bo
     return { installed: false, version: null };
   }
   return { installed: isVersionInstalled(agent, latestVersion), version: latestVersion };
+}
+
+/**
+ * Check if 'oldest' published version is already installed (by resolving to actual version).
+ */
+export async function isOldestInstalled(agent: AgentId): Promise<{ installed: boolean; version: string | null }> {
+  const oldestVersion = await getOldestNpmVersion(agent);
+  if (!oldestVersion) {
+    return { installed: false, version: null };
+  }
+  return { installed: isVersionInstalled(agent, oldestVersion), version: oldestVersion };
 }
 
 /**
@@ -1093,6 +1124,21 @@ export async function installVersion(
     createVersionedAlias(agent, installedVersion);
     emit('version.install', { agent, version: installedVersion });
     return { success: true, installedVersion };
+  }
+
+  // Resolve the `oldest` alias to a concrete npm version up front so the rest
+  // of the install path treats it as an ordinary pinned install. (`latest`
+  // keeps its bare-package-name + post-install-rename handling below.)
+  if (version === 'oldest') {
+    const oldest = await getOldestNpmVersion(agent);
+    if (!oldest) {
+      return {
+        success: false,
+        installedVersion: version,
+        error: `Could not resolve the oldest published version for ${agentConfig.name} from npm.`,
+      };
+    }
+    version = oldest;
   }
 
   ensureAgentsDir();
@@ -1339,6 +1385,7 @@ export function resolveVersion(agent: AgentId, projectPath?: string): string | n
  *
  *   undefined / "" / "default"  -> undefined  (caller falls back to project pin or global default)
  *   "latest"                    -> highest installed version (process.exit if none installed)
+ *   "oldest"                    -> lowest installed version (process.exit if none installed)
  *   "x.y.z" (installed)         -> "x.y.z"
  *   "x.y.z" (not installed)     -> process.exit with installed-list hint
  *
@@ -1350,14 +1397,14 @@ export function resolveVersion(agent: AgentId, projectPath?: string): string | n
 export function resolveVersionAlias(agent: AgentId, raw: string | undefined | null): string | undefined {
   if (!raw || raw === 'default') return undefined;
 
-  if (raw === 'latest') {
+  if (raw === 'latest' || raw === 'oldest') {
     const installed = listInstalledVersions(agent);
     if (installed.length === 0) {
       console.error(chalk.red(`No ${agent} versions installed.`));
       console.error(chalk.gray(`Install one: agents versions install ${agent}`));
       process.exit(1);
     }
-    return installed[installed.length - 1];
+    return raw === 'oldest' ? installed[0] : installed[installed.length - 1];
   }
 
   if (!isVersionInstalled(agent, raw)) {
@@ -1374,15 +1421,16 @@ export function resolveVersionAlias(agent: AgentId, raw: string | undefined | nu
 
 /**
  * Loose variant of resolveVersionAlias for record-filter contexts (sessions,
- * team history). Same `default`/`latest` semantics, but explicit versions
- * pass through unchanged so historical records of uninstalled versions remain
- * queryable.
+ * team history). Same `default`/`latest`/`oldest` semantics, but explicit
+ * versions pass through unchanged so historical records of uninstalled versions
+ * remain queryable.
  */
 export function resolveVersionAliasLoose(agent: AgentId, raw: string | undefined | null): string | undefined {
   if (!raw || raw === 'default') return undefined;
-  if (raw === 'latest') {
+  if (raw === 'latest' || raw === 'oldest') {
     const installed = listInstalledVersions(agent);
-    return installed.length > 0 ? installed[installed.length - 1] : undefined;
+    if (installed.length === 0) return undefined;
+    return raw === 'oldest' ? installed[0] : installed[installed.length - 1];
   }
   return raw;
 }

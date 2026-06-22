@@ -153,6 +153,8 @@ import {
   resolveAgentVersionTargets,
   resolveInstalledAgentTargets,
   resolveConfiguredAgentTargets,
+  resolveVersionAlias,
+  resolveVersionAliasLoose,
   compareVersions,
   getNewResources,
   hasNewResources,
@@ -228,6 +230,11 @@ describe('parseAgentSpec', () => {
     expect(result).toEqual({ agent: 'gemini', version: 'latest' });
   });
 
+  it('handles explicit oldest', () => {
+    const result = parseAgentSpec('gemini@oldest');
+    expect(result).toEqual({ agent: 'gemini', version: 'oldest' });
+  });
+
   it('normalizes agent name to lowercase', () => {
     const result = parseAgentSpec('CLAUDE@1.0.0');
     expect(result).toEqual({ agent: 'claude', version: '1.0.0' });
@@ -252,6 +259,62 @@ describe('parseAgentSpec', () => {
       expect(result).not.toBeNull();
       expect(result!.agent).toBe(agent);
     }
+  });
+});
+
+describe('resolveVersionAlias', () => {
+  it('resolves "latest" to the highest installed version', () => {
+    installManagedVersion('claude', '2.0.0');
+    installManagedVersion('claude', '2.1.0');
+    installManagedVersion('claude', '2.0.5');
+
+    expect(resolveVersionAlias('claude', 'latest')).toBe('2.1.0');
+  });
+
+  it('resolves "oldest" to the lowest installed version', () => {
+    installManagedVersion('claude', '2.0.0');
+    installManagedVersion('claude', '2.1.0');
+    installManagedVersion('claude', '2.0.5');
+
+    expect(resolveVersionAlias('claude', 'oldest')).toBe('2.0.0');
+  });
+
+  it('returns undefined for default/empty', () => {
+    expect(resolveVersionAlias('claude', 'default')).toBeUndefined();
+    expect(resolveVersionAlias('claude', '')).toBeUndefined();
+    expect(resolveVersionAlias('claude', undefined)).toBeUndefined();
+  });
+
+  it('passes an installed explicit version through unchanged', () => {
+    installManagedVersion('codex', '0.1.0');
+    installManagedVersion('codex', '0.2.0');
+
+    expect(resolveVersionAlias('codex', '0.1.0')).toBe('0.1.0');
+  });
+});
+
+describe('resolveVersionAliasLoose', () => {
+  it('resolves "oldest" to the lowest installed version', () => {
+    installManagedVersion('codex', '0.1.0');
+    installManagedVersion('codex', '0.2.0');
+
+    expect(resolveVersionAliasLoose('codex', 'oldest')).toBe('0.1.0');
+  });
+
+  it('resolves "latest" to the highest installed version', () => {
+    installManagedVersion('codex', '0.1.0');
+    installManagedVersion('codex', '0.2.0');
+
+    expect(resolveVersionAliasLoose('codex', 'latest')).toBe('0.2.0');
+  });
+
+  it('returns undefined for "oldest"/"latest" when nothing is installed', () => {
+    expect(resolveVersionAliasLoose('codex', 'oldest')).toBeUndefined();
+    expect(resolveVersionAliasLoose('codex', 'latest')).toBeUndefined();
+  });
+
+  it('passes uninstalled explicit versions through unchanged', () => {
+    expect(resolveVersionAliasLoose('codex', '9.9.9')).toBe('9.9.9');
   });
 });
 

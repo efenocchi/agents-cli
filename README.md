@@ -88,6 +88,7 @@ Think `requirements.txt` for CLI coding agents, on steroids. A shim reads `agent
 ```bash
 agents add claude@2.0.65     # Install a specific version
 agents add codex@latest       # Install latest
+agents add codex@oldest       # Install the oldest published version
 agents view                   # See everything installed
 ```
 

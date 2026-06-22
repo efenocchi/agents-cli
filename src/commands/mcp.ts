@@ -157,8 +157,9 @@ function parseMcpAgentTargets(value: string): {
       continue;
     }
 
-    const resolvedVersion = versionToken === 'latest'
-      ? installedVersions[installedVersions.length - 1]
+    const resolvedVersion =
+      versionToken === 'latest' ? installedVersions[installedVersions.length - 1]
+      : versionToken === 'oldest' ? installedVersions[0]
       : versionToken;
 
     if (!installedVersions.includes(resolvedVersion)) {
