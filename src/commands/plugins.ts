@@ -32,6 +32,7 @@ import {
   pluginCapabilityLabels,
   parseInstallSpec,
   syncPluginToVersion,
+  pluginResourceGroups,
   type PluginCapabilities,
 } from '../lib/plugins.js';
 import {
@@ -862,6 +863,34 @@ function buildPluginRows(plugins: DiscoveredPlugin[]): ResourceRow[] {
   return rows;
 }
 
+/** Per-category color for a plugin resource breakdown (shared with `agents inspect`). */
+export const PLUGIN_GROUP_COLORS: Record<string, (s: string) => string> = {
+  skills: chalk.cyan,
+  commands: chalk.cyan,
+  subagents: chalk.magenta,
+  hooks: chalk.yellow,
+  mcp: chalk.green,
+  lsp: chalk.green,
+  monitors: chalk.blue,
+  bin: chalk.white,
+  scripts: chalk.white,
+  settings: chalk.gray,
+};
+
+/** Human-readable section header per category, used by the picker detail pane. */
+const PLUGIN_GROUP_TITLES: Record<string, string> = {
+  skills: 'Skills',
+  commands: 'Commands',
+  subagents: 'Subagents',
+  hooks: 'Hooks',
+  mcp: 'MCP Servers',
+  lsp: 'LSP Servers',
+  monitors: 'Monitors',
+  bin: 'Bin',
+  scripts: 'Scripts',
+  settings: 'Settings',
+};
+
 /** Build the multi-line detail pane shown when a plugin is selected in the picker. */
 function formatPluginDetail(plugin: DiscoveredPlugin, targets: SyncTarget[]): string {
   const lines: string[] = [];
@@ -883,24 +912,11 @@ function formatPluginDetail(plugin: DiscoveredPlugin, targets: SyncTarget[]): st
   }
   lines.push('  ' + chalk.gray(formatPath(plugin.root)));
 
-  const section = (label: string, items: string[], colorFn: (s: string) => string) => {
-    if (items.length === 0) return;
+  for (const group of pluginResourceGroups(plugin)) {
+    const colorFn = PLUGIN_GROUP_COLORS[group.label] ?? chalk.white;
     lines.push('');
-    lines.push(chalk.bold(`  ${label}`));
-    lines.push('  ' + items.map(colorFn).join(chalk.gray(', ')));
-  };
-
-  section('Skills', plugin.skills.map((s) => `/${plugin.name}:${s}`), chalk.cyan);
-  section('Commands', plugin.commands.map((c) => `/${plugin.name}:${c}`), chalk.cyan);
-  section('Subagents', plugin.agentDefs, chalk.magenta);
-  section('Hooks', plugin.hooks, chalk.yellow);
-  section('MCP Servers', plugin.mcpServers, chalk.green);
-  section('LSP Servers', plugin.lspServers, chalk.green);
-  section('Monitors', plugin.monitors, chalk.blue);
-  section('Bin', plugin.bin, chalk.white);
-  section('Scripts', plugin.scripts, chalk.white);
-  if (plugin.hasSettings) {
-    section('Settings', ['settings.json'], chalk.gray);
+    lines.push(chalk.bold(`  ${PLUGIN_GROUP_TITLES[group.label] ?? group.label}`));
+    lines.push('  ' + group.items.map((s) => colorFn(s)).join(chalk.gray(', ')));
   }
 
   if (targets.length > 0) {
