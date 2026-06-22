@@ -42,6 +42,38 @@ export function normalizeMode(input: string | null | undefined): Mode {
 }
 
 /**
+ * Detect the headless-plan stall footgun.
+ *
+ * A slash command (e.g. `/code:commit`) run headless under the IMPLICIT default
+ * `plan` mode hangs forever: plan is read-only, so the agent calls ExitPlanMode
+ * to start working, and in a headless run there is no TTY to approve it. The
+ * process just sits there. Callers use this to fail fast with a fix instead.
+ *
+ * Returns the offending command token (e.g. `/code:commit`) when the run should
+ * be blocked, else null. Guards are deliberately narrow:
+ *   - interactive runs / no prompt        -> not headless, never blocks
+ *   - explicit --mode (modeIsDefault false) -> respected; `--mode plan` is a
+ *     legitimate read-only command run and must not be blocked
+ *   - resolved mode is not `plan`          -> only plan stalls at ExitPlanMode
+ *   - prompt is not a slash command        -> natural-language read-only prompts
+ *     ("summarize commits") are a valid default-plan use and must not be blocked
+ */
+export function headlessPlanStallCommand(args: {
+  prompt: string | undefined;
+  interactive: boolean | undefined;
+  mode: string;
+  modeIsDefault: boolean;
+}): string | null {
+  const { prompt, interactive, mode, modeIsDefault } = args;
+  if (interactive === true || prompt === undefined) return null;
+  if (!modeIsDefault) return null;
+  if (normalizeMode(mode) !== 'plan') return null;
+  const trimmed = prompt.trimStart();
+  if (!trimmed.startsWith('/')) return null;
+  return trimmed.split(/\s+/)[0];
+}
+
+/**
  * Resolve a requested mode against an agent's capability table.
  *
  * - `auto` on an agent without auto support silently degrades to `edit`

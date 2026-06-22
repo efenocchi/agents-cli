@@ -149,7 +149,7 @@ export function registerRunCommand(program: Command): void {
 
   runCmd.action(async (agentSpec: string, prompt: string | undefined, options: ExecCommandActionOptions) => {
       const [
-        { buildExecCommand, parseExecEnv, execAgent, runWithFallback, normalizeMode, resolveMode, defaultModeFor },
+        { buildExecCommand, parseExecEnv, execAgent, runWithFallback, normalizeMode, resolveMode, defaultModeFor, headlessPlanStallCommand },
         { ALL_AGENT_IDS },
         { profileExists, resolveProfileForRun },
         { readAndResolveBundleEnv, describeBundle },
@@ -381,6 +381,30 @@ export function registerRunCommand(program: Command): void {
           console.error(chalk.red((err as Error).message));
           process.exit(1);
         }
+      }
+
+      // Fail fast on the headless-plan stall footgun: a slash command run
+      // headless under the implicit default 'plan' mode hangs forever at
+      // ExitPlanMode (no TTY to approve the plan). Tell the user how to fix it
+      // instead of leaving them staring at a frozen process. Explicit
+      // `--mode plan` is respected for genuine read-only command runs.
+      const stallCmd = headlessPlanStallCommand({
+        prompt,
+        interactive: options.interactive,
+        mode,
+        modeIsDefault,
+      });
+      if (stallCmd) {
+        console.error(
+          chalk.red(`Refusing to run ${stallCmd} headless in read-only 'plan' mode — it would hang at ExitPlanMode (no TTY to approve the plan).`)
+        );
+        console.error(
+          chalk.yellow(`Re-run with an explicit mode: --mode auto (recommended — auto-approves safe ops, blocks risky ones), --mode edit, or --mode full.`)
+        );
+        console.error(
+          chalk.gray(`Pass --mode plan explicitly if you really want a read-only run.`)
+        );
+        process.exit(1);
       }
 
       const effort = options.effort as ExecEffort;
