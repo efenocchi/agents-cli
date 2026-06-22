@@ -37,7 +37,8 @@ import {
   type ResourceEntry,
   type SkillResourceEntry,
 } from '../lib/resources.js';
-import { discoverPlugins, discoverPluginsInDir } from '../lib/plugins.js';
+import { discoverPlugins, discoverPluginsInDir, pluginResourceGroups, type PluginResourceGroup } from '../lib/plugins.js';
+import { PLUGIN_GROUP_COLORS } from './plugins.js';
 import { countSessionsInScope } from '../lib/session/discover.js';
 import type { SessionAgentId } from '../lib/session/types.js';
 import { damerauLevenshtein } from '../lib/fuzzy.js';
@@ -68,8 +69,10 @@ interface ResourceItem {
   linkTarget: string;
   /** One-line description (frontmatter `description:` or first non-frontmatter line). */
   description: string;
-  /** Extra detail rows surfaced in detail mode (e.g. a plugin's bundled skills/commands). */
+  /** Scalar detail rows surfaced in detail mode (e.g. a plugin's version). */
   extra?: Array<[string, string]>;
+  /** For plugins: the resource categories (skills, commands, …) the bundle packages. */
+  groups?: PluginResourceGroup[];
 }
 
 interface InspectOptions {
@@ -611,7 +614,7 @@ function renderItemList(header: string, jsonHead: Record<string, unknown>, kind:
       ...jsonHead,
       kind,
       count: items.length,
-      items: items.map(i => ({ name: i.name, source: i.source, path: i.path, description: i.description })),
+      items: items.map(i => ({ name: i.name, source: i.source, path: i.path, description: i.description, ...(i.groups ? { groups: i.groups } : {}) })),
     }, null, 2));
     return;
   }
@@ -630,8 +633,21 @@ function renderItemList(header: string, jsonHead: Record<string, unknown>, kind:
     if (item.description) {
       console.log(`             ${chalk.gray(truncate(item.description, 90))}`);
     }
+    if (item.groups) printGroupRows(item.groups);
   }
   console.log('');
+}
+
+/** Print a plugin's resource breakdown as aligned `label  items` rows under a list entry. */
+function printGroupRows(groups: PluginResourceGroup[]): void {
+  if (groups.length === 0) return;
+  const width = Math.max(...groups.map(g => g.label.length));
+  for (const g of groups) {
+    const colorFn = PLUGIN_GROUP_COLORS[g.label] ?? chalk.white;
+    const label = chalk.gray(g.label.padEnd(width));
+    const value = g.items.map((s) => colorFn(s)).join(chalk.gray(', '));
+    console.log(`             ${label}  ${value}`);
+  }
 }
 
 // ─── Detail mode (fuzzy) ─────────────────────────────────────────────────────
@@ -752,13 +768,6 @@ function pluginItems(): ResourceItem[] {
  */
 function pluginToItem(plugin: DiscoveredPlugin, source: string): ResourceItem {
   const extra: Array<[string, string]> = [];
-  const list = (names: string[]): string =>
-    names.length <= 8 ? names.join(', ') : `${names.slice(0, 8).join(', ')}, +${names.length - 8} more`;
-  if (plugin.skills.length) extra.push(['skills', `${plugin.skills.length}  (${list(plugin.skills)})`]);
-  if (plugin.commands.length) extra.push(['commands', `${plugin.commands.length}  (${list(plugin.commands)})`]);
-  if (plugin.agentDefs.length) extra.push(['subagents', `${plugin.agentDefs.length}  (${list(plugin.agentDefs)})`]);
-  if (plugin.hooks.length) extra.push(['hooks', String(plugin.hooks.length)]);
-  if (plugin.mcpServers.length) extra.push(['mcp', list(plugin.mcpServers)]);
   if (plugin.manifest.version) extra.push(['version', plugin.manifest.version]);
   return {
     name: plugin.name,
@@ -767,6 +776,7 @@ function pluginToItem(plugin: DiscoveredPlugin, source: string): ResourceItem {
     linkTarget: linkTarget(plugin.root),
     description: plugin.manifest.description ?? '',
     extra,
+    groups: pluginResourceGroups(plugin),
   };
 }
 
@@ -837,9 +847,11 @@ function buildDetailRows(item: ResourceItem, kind: DrillableKind): Array<[string
       if (Array.isArray(fm.tools)) rows.push(['tools', fm.tools.join(', ')]);
     }
   }
-  // Plugin bundles carry their nested resources as pre-built rows.
-  if (kind === 'plugins' && item.extra) {
-    rows.push(...item.extra);
+  // Plugin bundles surface their nested resources (skills, commands, …) plus
+  // scalar rows (version).
+  if (kind === 'plugins') {
+    if (item.groups) for (const g of item.groups) rows.push([g.label, g.items.join(', ')]);
+    if (item.extra) rows.push(...item.extra);
   }
   return rows;
 }
