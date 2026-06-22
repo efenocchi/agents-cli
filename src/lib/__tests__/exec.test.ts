@@ -10,6 +10,7 @@ import {
   normalizeMode,
   resolveMode,
   defaultModeFor,
+  headlessPlanStallCommand,
   type ExecOptions,
 } from '../exec.js';
 import type { AgentId, Mode } from '../types.js';
@@ -839,5 +840,57 @@ describe('defaultModeFor', () => {
     for (const agent of ALL_AGENTS) {
       expect(defaultModeFor(agent)).toBe(AGENTS[agent].capabilities.modes[0]);
     }
+  });
+});
+
+describe('headlessPlanStallCommand', () => {
+  // The footgun: `ag run claude "/code:commit"` with no --mode defaults to
+  // read-only plan, then hangs forever at ExitPlanMode in a headless run.
+  it('blocks a slash command run headless under implicit-default plan', () => {
+    expect(
+      headlessPlanStallCommand({ prompt: '/code:commit', interactive: undefined, mode: 'plan', modeIsDefault: true })
+    ).toBe('/code:commit');
+  });
+
+  it('returns the bare command token, dropping arguments', () => {
+    expect(
+      headlessPlanStallCommand({ prompt: '/code:loop RUSH-1 RUSH-2', interactive: undefined, mode: 'plan', modeIsDefault: true })
+    ).toBe('/code:loop');
+  });
+
+  it('does not block an EXPLICIT --mode plan (modeIsDefault false) — read-only command runs are valid', () => {
+    expect(
+      headlessPlanStallCommand({ prompt: '/code-review', interactive: undefined, mode: 'plan', modeIsDefault: false })
+    ).toBeNull();
+  });
+
+  it('does not block a natural-language prompt under default plan (valid research run)', () => {
+    expect(
+      headlessPlanStallCommand({ prompt: 'summarize recent git commits', interactive: undefined, mode: 'plan', modeIsDefault: true })
+    ).toBeNull();
+  });
+
+  it('does not block interactive runs', () => {
+    expect(
+      headlessPlanStallCommand({ prompt: '/code:commit', interactive: true, mode: 'plan', modeIsDefault: true })
+    ).toBeNull();
+  });
+
+  it('does not block when no prompt (interactive TUI)', () => {
+    expect(
+      headlessPlanStallCommand({ prompt: undefined, interactive: undefined, mode: 'plan', modeIsDefault: true })
+    ).toBeNull();
+  });
+
+  it.each(['edit', 'auto', 'skip', 'full'])('does not block under non-plan mode %s', (mode) => {
+    expect(
+      headlessPlanStallCommand({ prompt: '/code:commit', interactive: undefined, mode, modeIsDefault: true })
+    ).toBeNull();
+  });
+
+  it('tolerates leading whitespace before the slash command', () => {
+    expect(
+      headlessPlanStallCommand({ prompt: '  /deploy staging', interactive: undefined, mode: 'plan', modeIsDefault: true })
+    ).toBe('/deploy');
   });
 });
