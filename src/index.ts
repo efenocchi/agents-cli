@@ -104,6 +104,7 @@ import { registerBrowserCommand } from './commands/browser.js';
 import { registerComputerCommand } from './commands/computer.js';
 import { registerProfilesCommands } from './commands/profiles.js';
 import { registerSecretsCommands } from './commands/secrets.js';
+import { registerWalletCommands } from './commands/wallet.js';
 import { registerHelperCommand } from './commands/helper.js';
 import { registerFactoryCommands } from './commands/factory.js';
 import { registerUsageCommand } from './commands/usage.js';
@@ -731,6 +732,7 @@ program
 
 registerProfilesCommands(program);
 registerSecretsCommands(program);
+registerWalletCommands(program);
 registerHelperCommand(program);
 registerBetaCommands(program);
 registerSyncCommand(program);
