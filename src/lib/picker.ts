@@ -30,6 +30,7 @@ import {
   Separator,
 } from '@inquirer/core';
 import chalk from 'chalk';
+import { stripVTControlCharacters } from 'node:util';
 
 /** Configuration for the interactive picker prompt. */
 export interface PickerConfig<T> {
@@ -53,6 +54,95 @@ export interface PickedItem<T> {
 interface Choice<T> {
   value: T;
   label: string;
+}
+
+const DEFAULT_TERMINAL_ROWS = 24;
+const DEFAULT_TERMINAL_WIDTH = 80;
+
+function terminalWidth(): number {
+  return Math.max(1, process.stdout.columns || DEFAULT_TERMINAL_WIDTH);
+}
+
+function terminalRows(): number {
+  return Math.max(1, process.stdout.rows || DEFAULT_TERMINAL_ROWS);
+}
+
+function renderedRows(text: string, width: number): number {
+  const normalizedWidth = Math.max(1, width);
+  return text.split('\n').reduce((rows, line) => {
+    const visible = stripVTControlCharacters(line).length;
+    return rows + Math.max(1, Math.ceil(visible / normalizedWidth));
+  }, 0);
+}
+
+function truncateAnsiLine(line: string, maxVisibleWidth: number): string {
+  if (maxVisibleWidth <= 0) return '';
+
+  const targetWidth = Math.max(0, maxVisibleWidth - 1);
+  const ansiPattern = /\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))/y;
+  let out = '';
+  let visible = 0;
+
+  for (let i = 0; i < line.length;) {
+    ansiPattern.lastIndex = i;
+    const ansi = ansiPattern.exec(line);
+    if (ansi) {
+      out += ansi[0];
+      i = ansiPattern.lastIndex;
+      continue;
+    }
+
+    const char = line[i];
+    if (visible >= targetWidth) break;
+    out += char;
+    visible += 1;
+    i += char.length;
+  }
+
+  return out + '\x1b[0m' + chalk.gray('…');
+}
+
+function takePreviewRows(preview: string, rowBudget: number, width: number): string[] {
+  const lines = preview.split('\n');
+  const out: string[] = [];
+  let used = 0;
+
+  for (const line of lines) {
+    const lineRows = renderedRows(line, width);
+    if (used + lineRows <= rowBudget) {
+      out.push(line);
+      used += lineRows;
+      continue;
+    }
+
+    const remainingRows = rowBudget - used;
+    if (remainingRows > 0) {
+      out.push(truncateAnsiLine(line, remainingRows * width));
+    }
+    break;
+  }
+
+  return out;
+}
+
+function previewTruncatedMarker(width: number): string {
+  const full = '... preview truncated to fit terminal';
+  const short = '... truncated';
+  const text = full.length <= width ? full : short;
+  if (text.length <= width) return chalk.gray(text);
+  return chalk.gray(text.slice(0, Math.max(0, width - 1)) + '…');
+}
+
+/** Clip a picker preview so the full prompt can fit in the terminal viewport. */
+export function limitPreviewHeight(preview: string, maxRows: number, width: number): string {
+  const normalizedRows = Math.max(0, maxRows);
+  if (normalizedRows === 0) return '';
+  if (renderedRows(preview, width) <= normalizedRows) return preview;
+  if (normalizedRows === 1) return previewTruncatedMarker(width);
+
+  const lines = takePreviewRows(preview, normalizedRows - 1, width);
+  lines.push(previewTruncatedMarker(width));
+  return lines.join('\n');
 }
 
 /** Show an interactive fuzzy-filter picker and return the selected item, or null on cancel. */
@@ -142,22 +232,34 @@ export function itemPicker<T>(config: PickerConfig<T>): Promise<PickedItem<T> | 
       loop: false,
     });
 
-    const parts: string[] = [header, page];
-    if (results.length === 0) {
-      parts.push(chalk.gray(`  ${cfg.emptyMessage ?? 'No matches.'}`));
-    }
-
-    if (previewOpen && selected && cfg.buildPreview) {
-      parts.push(chalk.gray('─'.repeat(Math.min(process.stdout.columns || 80, 80))));
-      parts.push(cfg.buildPreview(selected.value));
-    }
-
     const enter = cfg.enterHint ?? 'select';
     const help = previewOpen
       ? chalk.gray(`↑↓ navigate · space: close preview · ⏎ ${enter} · esc: cancel`)
       : chalk.gray(
           `↑↓ navigate${hasPreview ? ' · space: preview' : ''} · ⏎ ${enter} · esc: cancel`
         );
+
+    const parts: string[] = [header, page];
+    if (results.length === 0) {
+      parts.push(chalk.gray(`  ${cfg.emptyMessage ?? 'No matches.'}`));
+    }
+
+    if (previewOpen && selected && cfg.buildPreview) {
+      const width = terminalWidth();
+      const separator = chalk.gray('─'.repeat(Math.min(width, 80)));
+      const fixedRows =
+        renderedRows(header, width) +
+        renderedRows(parts.slice(1).join('\n'), width) +
+        renderedRows(separator, width) +
+        renderedRows(help, width);
+      const availablePreviewRows = terminalRows() - fixedRows;
+      const preview = limitPreviewHeight(cfg.buildPreview(selected.value), availablePreviewRows, width);
+      if (preview) {
+        parts.push(separator);
+        parts.push(preview);
+      }
+    }
+
     parts.push(help);
 
     return [header, parts.slice(1).join('\n')];
