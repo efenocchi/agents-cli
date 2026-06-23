@@ -1709,8 +1709,10 @@ export function addShimsToPath(
  * Register the shims dir on the Windows User PATH via the .NET environment API,
  * which writes the registry AND broadcasts WM_SETTINGCHANGE — the correct analog
  * of editing a shell rc file (no `setx` truncation, no manual step). Idempotent:
- * a no-op when the dir is already present. The shims dir is passed via an env var
- * so it is never interpolated into the PowerShell script text.
+ * a no-op when the shims dir is already first in the User PATH. Moves it to the
+ * front when it exists but is in the wrong position (e.g. appended by an old
+ * install) so it overrides any npm/global installs that appear later. The shims
+ * dir is passed via an env var so it is never interpolated into the script text.
  */
 function addShimsToWindowsUserPath(shimsDir: string): ShimPathResult {
   const script = [
@@ -1718,8 +1720,11 @@ function addShimsToWindowsUserPath(shimsDir: string): ShimPathResult {
     "$u = [Environment]::GetEnvironmentVariable('Path','User')",
     "if ($null -eq $u) { $u = '' }",
     "$parts = @($u -split ';' | Where-Object { $_ -ne '' })",
-    "if ($parts -contains $d) { 'present' } else {",
-    "  [Environment]::SetEnvironmentVariable('Path', (($parts + $d) -join ';'), 'User')",
+    // Already first — nothing to do
+    "if ($parts.Count -gt 0 -and $parts[0] -eq $d) { 'present' } else {",
+    // Remove any existing occurrence then prepend, matching POSIX `export PATH="${shimsDir}:$PATH"`
+    "  $newParts = @($d) + @($parts | Where-Object { $_ -ne $d })",
+    "  [Environment]::SetEnvironmentVariable('Path', ($newParts -join ';'), 'User')",
     "  'added'",
     '}',
   ].join('\n');

@@ -1272,7 +1272,15 @@ export function softDeleteVersionDir(agent: AgentId, version: string): string | 
 
   try {
     fs.mkdirSync(trashAgentDir, { recursive: true, mode: 0o700 });
-    fs.renameSync(versionDir, trashDest);
+    try {
+      fs.renameSync(versionDir, trashDest);
+    } catch (renameErr) {
+      // On Windows, rename fails with EPERM/EACCES when any file in the tree
+      // is locked by a running process. Fall back to recursive copy + delete.
+      if ((renameErr as NodeJS.ErrnoException).code !== 'EPERM' && (renameErr as NodeJS.ErrnoException).code !== 'EACCES') throw renameErr;
+      fs.cpSync(versionDir, trashDest, { recursive: true });
+      fs.rmSync(versionDir, { recursive: true, force: true });
+    }
     return trashDest;
   } catch {
     return null;

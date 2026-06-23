@@ -639,16 +639,7 @@ async function showInstalledVersions(filterAgentId?: AgentId): Promise<void> {
     console.log();
   }
 
-  // Show shims path status at the end (only for full list with managed versions)
-  if (versionManaged.length > 0 && !filterAgentId) {
-    const shimsDir = getShimsDir();
-    if (isShimsInPath()) {
-      console.log(chalk.gray(`Shims: ${shimsDir} (in PATH)`));
-    } else {
-      console.log(chalk.yellow(`Shims: ${shimsDir} (not in PATH)`));
-      console.log(chalk.gray('Add to PATH for automatic version switching'));
-    }
-  }
+
 
   // Check for new resources when viewing a specific agent
   if (filterAgentId && versionManaged.length > 0) {

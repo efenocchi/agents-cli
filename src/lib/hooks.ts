@@ -9,6 +9,7 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import * as yaml from 'yaml';
 import * as TOML from 'smol-toml';
@@ -56,9 +57,40 @@ function getManagedHookPrefixes(): string[] {
   ];
 }
 
+/**
+ * Convert an absolute path under HOME to a portable ~/... form with forward
+ * slashes. Hook commands stored this way work on both macOS and Windows:
+ * absolute Windows paths break in bash because backslashes are stripped as
+ * escape characters, whereas ~/... paths expand correctly via the ~/.claude
+ * symlink/junction on both platforms.
+ */
+function toPortableCommand(absPath: string): string {
+  const home = os.homedir();
+  const normalized = absPath.split(path.sep).join('/');
+  const homeNorm = home.split(path.sep).join('/');
+  if (normalized.startsWith(homeNorm + '/')) {
+    return '~/' + normalized.slice(homeNorm.length + 1);
+  }
+  return normalized;
+}
+
 function isManagedHookCommand(command: string, prefixes: string[]): boolean {
+  // Expand ~/... so tilde-form portable commands can be matched against
+  // absolute managed prefixes.
+  let expanded = command;
+  if (command.startsWith('~/')) {
+    expanded = path.join(os.homedir(), command.slice(2));
+  }
+  // Resolve the directory through symlinks/junctions (e.g. ~/.claude on
+  // Windows is a junction to the versioned home dir where prefixes live).
+  // Resolve the dir, not the full path — the file may not exist after removal.
+  const dir = path.dirname(expanded);
+  let resolvedDir = dir;
+  try { resolvedDir = fs.realpathSync(dir); } catch { /* absent or broken link */ }
+  const resolved = path.join(resolvedDir, path.basename(expanded));
+
   for (const prefix of prefixes) {
-    if (command.startsWith(prefix)) return true;
+    if (resolved.startsWith(prefix)) return true;
   }
   return false;
 }
@@ -89,9 +121,9 @@ function resolveHookCommand(
     // No caching opted in — make sure a previously generated shim from an
     // earlier `cache:` config is gone so the JSONL doesn't keep claiming hits.
     removeHookShim(name);
-    return scriptPath;
+    return toPortableCommand(scriptPath);
   }
-  return generateHookShim({ name, scriptPath, cache });
+  return toPortableCommand(generateHookShim({ name, scriptPath, cache }));
 }
 
 /**
@@ -1478,8 +1510,7 @@ function registerHooksForKimi(
   const filteredHooks = hooksArray.filter((h) => {
     const cmd = typeof h.command === 'string' ? h.command : '';
     if (!cmd) return true;
-    const isManaged = managedPrefixes.some((p) => cmd.startsWith(p));
-    if (!isManaged) return true;
+    if (!isManagedHookCommand(cmd, managedPrefixes)) return true;
     return currentManifestPaths.has(cmd);
   });
 

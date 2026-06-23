@@ -138,7 +138,18 @@ function warnIfShimShadowed(agent: AgentId): void {
 
   console.log(chalk.yellow(`  Warning: ${AGENTS[agent].cliCommand} currently resolves to ${shadowedBy}`));
   console.log(chalk.gray(`  Managed shim: ${getShimPath(agent)}`));
-  console.log(chalk.gray(`  ${getPathSetupInstructions().split('\n').join('\n  ')}`));
+
+  const result = addShimsToPath();
+  if (!result.success) {
+    console.log(chalk.gray(`  ${getPathSetupInstructions().split('\n').join('\n  ')}`));
+    return;
+  }
+  if (result.alreadyPresent) {
+    console.log(chalk.gray(`  Shim PATH entry already set — ${AGENTS[agent].cliCommand} is shadowed by another binary. Remove or reorder it so ${getShimPath(agent)} takes priority.`));
+    return;
+  }
+  console.log(chalk.green(`  Added shim directory to ${result.location}.`));
+  console.log(chalk.gray(`  ${result.reloadHint}`));
 }
 
 type VersionPruneVerb = 'prune' | 'remove';
@@ -200,7 +211,11 @@ async function versionPruneAction(
 
         for (const v of toRemove) {
           const versionDir = getVersionDir(agent, v);
-          removeVersion(agent, v);
+          const removed = removeVersion(agent, v);
+          if (!removed) {
+            console.log(chalk.red(`Failed to move ${agentLabel(agentConfig.id)}@${v} to trash — a file may be locked by a running process. Close any active sessions and try again.`));
+            continue;
+          }
           fixSessionFilePaths(agent, v, versionDir);
           console.log(chalk.green(`Moved ${agentLabel(agentConfig.id)}@${v} to trash`));
           moved.push({ agent, version: v });
@@ -226,7 +241,11 @@ async function versionPruneAction(
       console.log(chalk.gray(`${agentLabel(agentConfig.id)}@${version} not installed`));
     } else {
       const versionDir = getVersionDir(agent, version);
-      removeVersion(agent, version);
+      const removed = removeVersion(agent, version);
+      if (!removed) {
+        console.log(chalk.red(`Failed to move ${agentLabel(agentConfig.id)}@${version} to trash — a file may be locked by a running process. Close any active sessions and try again.`));
+        continue;
+      }
       fixSessionFilePaths(agent, version, versionDir);
       console.log(chalk.green(`Moved ${agentLabel(agentConfig.id)}@${version} to trash`));
       moved.push({ agent, version });
