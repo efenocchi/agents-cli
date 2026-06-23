@@ -4,7 +4,7 @@ import * as path from 'path';
 import { IS_WINDOWS, ipcEndpoint } from '../platform/index.js';
 import { getHelpersDir } from '../state.js';
 import { BrowserService } from './service.js';
-import { startDaemon } from '../daemon.js';
+import { startDaemon, stopDaemon } from '../daemon.js';
 import { getCliVersion } from '../version.js';
 import type { IPCRequest, IPCResponse, RefNodeJson } from './types.js';
 
@@ -522,45 +522,61 @@ export class BrowserIPCServer {
   }
 }
 
-let versionCheckedThisProcess = false;
+let versionReconciledThisProcess = false;
 
 /**
- * Check the daemon's version against ours and warn loudly when they
- * differ. Fires at most once per CLI process — successive calls in the
- * same `agents browser ...` invocation are cheap. The whole reason this
- * code exists: a launchd-managed registry daemon kept serving stale code
- * to a dev-build CLI for an entire session and nothing surfaced it.
+ * Decide whether a running daemon is stale and must be restarted. A daemon
+ * is stale when it reports a concrete version that differs from this CLI's.
+ * `undefined`/`'unknown'` means the daemon is too old to answer the `version`
+ * action reliably — don't churn it on that ambiguous signal.
  */
-async function maybeWarnVersionMismatch(): Promise<void> {
-  if (versionCheckedThisProcess) return;
-  versionCheckedThisProcess = true;
+export function shouldRestartStaleDaemon(
+  daemonVersion: string | undefined,
+  clientVersion: string
+): boolean {
+  if (!daemonVersion || daemonVersion === 'unknown') return false;
+  return daemonVersion !== clientVersion;
+}
+
+/**
+ * Reconcile the running daemon's version with ours. If the daemon is serving
+ * stale code, stop and restart it so this request — and the rest of the
+ * session — runs the current build. Runs at most once per CLI process. The
+ * whole reason this exists: a launchd-managed daemon kept serving stale code
+ * to a dev-build CLI for an entire session and nothing surfaced it (#291).
+ */
+async function reconcileDaemonVersion(socketPath: string): Promise<void> {
+  if (versionReconciledThisProcess) return;
+  versionReconciledThisProcess = true;
+
+  let daemon: string | undefined;
   try {
-    const resp = await sendRawIPCRequest({ action: 'version' });
-    const daemon = resp.version;
-    const client = getCliVersion();
-    if (!daemon || daemon === 'unknown' || daemon === client) return;
-    process.stderr.write(
-      `\nwarning: browser daemon is on ${daemon} but this CLI is on ${client}.\n` +
-        `         Run \`agents daemon restart\` to load the current code.\n\n`
-    );
+    const resp = await sendRawIPCRequest({ action: 'version' }, { autoStartDaemon: false });
+    daemon = resp.version;
   } catch {
-    // daemon might be an older build that doesn't speak 'version' — that's
-    // itself a hint, but a noisy one. Stay silent on this path.
+    // Daemon unreachable or too old to speak 'version' — leave it alone.
+    return;
   }
+
+  const client = getCliVersion();
+  if (!shouldRestartStaleDaemon(daemon, client)) return;
+
+  process.stderr.write(
+    `\nbrowser daemon was on ${daemon}, this CLI is on ${client} — restarting it to load current code.\n\n`
+  );
+  stopDaemon();
+  startDaemon();
+  if (!(await isDaemonReachable())) {
+    await waitForSocket(socketPath, 6000);
+  }
+  await new Promise((r) => setTimeout(r, 300));
 }
 
 export async function sendIPCRequest(
   request: IPCRequest,
   opts: IPCRequestOptions = {}
 ): Promise<IPCResponse> {
-  const result = await sendRawIPCRequest(request, opts);
-  // Run the version check after the user's request returns — keeps the
-  // critical path zero-overhead and ensures `start` doesn't get blocked
-  // on a daemon-restart warning that the user hasn't read yet.
-  if (request.action !== 'version') {
-    maybeWarnVersionMismatch().catch(() => {});
-  }
-  return result;
+  return sendRawIPCRequest(request, opts);
 }
 
 async function sendRawIPCRequest(
@@ -587,6 +603,13 @@ async function sendRawIPCRequest(
       throw new Error('Failed to start browser daemon');
     }
     await new Promise((r) => setTimeout(r, 300));
+  }
+
+  // Before serving a real request, make sure the daemon isn't running stale
+  // code. Skips the internal `version` probe (avoids recursion) and callers
+  // that opt out of auto-start. No-ops once reconciled or when versions match.
+  if (request.action !== 'version' && autoStartDaemon) {
+    await reconcileDaemonVersion(socketPath);
   }
 
   return new Promise((resolve, reject) => {

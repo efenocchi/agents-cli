@@ -6,6 +6,7 @@ import {
   formatBrowserDaemonNotRunningError,
   getSocketPath,
   sendIPCRequest,
+  shouldRestartStaleDaemon,
 } from './ipc.js';
 import { getHelpersDir } from '../state.js';
 import { startDaemon } from '../daemon.js';
@@ -22,6 +23,7 @@ vi.mock('../state.js', () => ({
 
 vi.mock('../daemon.js', () => ({
   startDaemon: vi.fn(),
+  stopDaemon: vi.fn(),
 }));
 
 afterEach(() => {
@@ -44,5 +46,22 @@ describe('sendIPCRequest', () => {
       sendIPCRequest({ action: 'status' }, { autoStartDaemon: false })
     ).rejects.toThrow(formatBrowserDaemonNotRunningError());
     expect(startDaemon).not.toHaveBeenCalled();
+  });
+});
+
+describe('shouldRestartStaleDaemon', () => {
+  it('restarts when the daemon reports a different concrete version', () => {
+    expect(shouldRestartStaleDaemon('1.2.0', '1.3.0')).toBe(true);
+    expect(shouldRestartStaleDaemon('0.0.0-dev.abc', '0.0.0-dev.def')).toBe(true);
+  });
+
+  it('does not restart when versions match', () => {
+    expect(shouldRestartStaleDaemon('1.3.0', '1.3.0')).toBe(false);
+  });
+
+  it('does not restart on an ambiguous daemon version', () => {
+    expect(shouldRestartStaleDaemon(undefined, '1.3.0')).toBe(false);
+    expect(shouldRestartStaleDaemon('', '1.3.0')).toBe(false);
+    expect(shouldRestartStaleDaemon('unknown', '1.3.0')).toBe(false);
   });
 });
