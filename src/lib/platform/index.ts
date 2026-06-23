@@ -20,3 +20,4 @@ export * from './paths.js';
 export * from './exec.js';
 export * from './process.js';
 export * from './ipc.js';
+export * from './winpath.js';

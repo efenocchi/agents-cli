@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**Windows: `agents` is discoverable right after `npm i -g`**
+
+- On a global Windows install, postinstall now prepends npm's global-bin dir (where `agents.cmd`/`agents.ps1` live) to the **User PATH** via the .NET environment API. Node's installer normally adds it, but winget / portable / nvm-windows setups often don't — and then `npm i -g @phnx-labs/agents-cli` succeeds yet `agents` is "not recognized". The shims dir (claude/codex/…) is still left to `agents setup`, which the user can now run because `agents` resolves.
+- Postinstall also detects a `Restricted`/`AllSigned` PowerShell execution policy (which blocks the generated `.ps1` launchers, so even an on-PATH `agents` fails in PowerShell) and prints the one-line fix (`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`). The policy is a security setting, so it is never changed silently — only surfaced.
+- Refactor: the Windows User-PATH prepend logic moved from `shims.ts` into a new `src/lib/platform/winpath.ts` leaf module (`prependToWindowsUserPath`, `getEffectiveExecutionPolicy`, `blocksLocalScripts`, `npmGlobalBinFromEntry`); `addShimsToWindowsUserPath` now delegates to it. Pure helpers are unit-tested.
+
 **Factory AI Droid (first-class support)**
 
 - Add `droid` as a first-class supported agent (AgentId + full registry entry for Factory AI's `droid` CLI, config in `~/.factory/`). Installs via the official script (`curl -fsSL https://app.factory.ai/cli | sh`); the binary is resolved through the standard install-script path and isolated per version via the `~/.factory` config symlink (Droid has no `*_HOME` override).

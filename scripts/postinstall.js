@@ -154,17 +154,45 @@ function isAlreadyConfigured(rcFile) {
 }
 
 async function main() {
-  // Windows has no shell rc files to edit. Write the `.cmd` shorthands here; the
-  // shims dir gets registered on the User PATH by `agents setup` (via the native
-  // registry API), so we point the user there instead of mutating PATH from an
-  // npm lifecycle script. The primary `agents` command is already on PATH via
-  // npm's global bin and works immediately.
+  // Windows has no shell rc files to edit. Write the `.cmd` shorthands here, then
+  // make sure npm's global-bin dir is on the User PATH so the `agents` command
+  // itself resolves: Node's installer normally adds it, but winget / portable /
+  // nvm-windows setups often don't — and then `npm i -g` succeeds yet `agents`
+  // is "not recognized". The shims dir (claude/codex/...) is still left to
+  // `agents setup`, which the user can now run because `agents` is discoverable.
   if (process.platform === 'win32') {
     console.log(`\nagents-cli installed.`);
     const written = writeAliasShims();
     console.log(`  Installed shorthands: ${written.join(', ')}`);
-    console.log(`\nNext: run  agents setup  — it finishes setup and adds the shims dir to your PATH`);
-    console.log(`(so the bare shorthands ${ALIASES.join(', ')} and versioned aliases work in a new terminal).`);
+
+    // Best-effort: import the platform leaf module from the just-installed dist.
+    // If it's missing or PowerShell is unavailable we degrade to plain guidance.
+    try {
+      const { prependToWindowsUserPath, getEffectiveExecutionPolicy, blocksLocalScripts, npmGlobalBinFromEntry } =
+        await import('../dist/lib/platform/winpath.js');
+
+      const npmBinDir = npmGlobalBinFromEntry(AGENTS_BIN);
+      const pathResult = prependToWindowsUserPath(npmBinDir);
+      if (pathResult.success && !pathResult.alreadyPresent) {
+        console.log(`  Added npm's global bin to your user PATH so 'agents' resolves:\n    ${npmBinDir}`);
+      } else if (!pathResult.success) {
+        console.log(`  Could not update PATH automatically. Add this to your user PATH manually:\n    ${npmBinDir}`);
+      }
+
+      // .ps1 launchers (npm.ps1, agents.ps1) are blocked under Restricted/AllSigned;
+      // we can't safely weaken a security setting from an installer, so guide instead.
+      const policy = getEffectiveExecutionPolicy();
+      if (blocksLocalScripts(policy)) {
+        console.log(`\n  PowerShell execution policy is '${policy}', which blocks the 'agents' launcher (a .ps1).`);
+        console.log(`  Allow local scripts for your user:`);
+        console.log(`    Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`);
+      }
+    } catch {
+      /* dist or PowerShell unavailable — skip; `agents setup` still wires shims */
+    }
+
+    console.log(`\nNext: open a new terminal, then run  agents setup`);
+    console.log(`(adds the shims dir so bare ${ALIASES.join(', ')} and versioned aliases work).`);
   }
   // Opt-in: AGENTS_INIT_SHELL=1 npm install -g @phnx-labs/agents-cli
   else if (process.env.AGENTS_INIT_SHELL === '1') {

@@ -11,11 +11,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { confirm, select } from '@inquirer/prompts';
 import type { AgentId } from './types.js';
-import { IS_WINDOWS } from './platform/index.js';
+import { IS_WINDOWS, prependToWindowsUserPath } from './platform/index.js';
 import { getShimsDir, getVersionsDir, getBackupsDir, ensureAgentsDir } from './state.js';
 export { getShimsDir };
 import { AGENTS } from './agents.js';
@@ -1715,34 +1714,16 @@ export function addShimsToPath(
  * dir is passed via an env var so it is never interpolated into the script text.
  */
 function addShimsToWindowsUserPath(shimsDir: string): ShimPathResult {
-  const script = [
-    '$d = $env:AGENTS_SHIMS_DIR',
-    "$u = [Environment]::GetEnvironmentVariable('Path','User')",
-    "if ($null -eq $u) { $u = '' }",
-    "$parts = @($u -split ';' | Where-Object { $_ -ne '' })",
-    // Already first — nothing to do
-    "if ($parts.Count -gt 0 -and $parts[0] -eq $d) { 'present' } else {",
-    // Remove any existing occurrence then prepend, matching POSIX `export PATH="${shimsDir}:$PATH"`
-    "  $newParts = @($d) + @($parts | Where-Object { $_ -ne $d })",
-    "  [Environment]::SetEnvironmentVariable('Path', ($newParts -join ';'), 'User')",
-    "  'added'",
-    '}',
-  ].join('\n');
-  try {
-    const out = execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], {
-      encoding: 'utf-8',
-      env: { ...process.env, AGENTS_SHIMS_DIR: shimsDir },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }).trim();
-    return {
-      success: true,
-      alreadyPresent: out.includes('present'),
-      location: 'your user PATH',
-      reloadHint: 'Open a new terminal for the change to take effect.',
-    };
-  } catch (err) {
-    return { success: false, error: `Could not update the Windows user PATH: ${(err as Error).message}` };
+  const r = prependToWindowsUserPath(shimsDir);
+  if (!r.success) {
+    return { success: false, error: r.error };
   }
+  return {
+    success: true,
+    alreadyPresent: r.alreadyPresent,
+    location: 'your user PATH',
+    reloadHint: 'Open a new terminal for the change to take effect.',
+  };
 }
 
 export function listAgentsWithInstalledVersions(): AgentId[] {
