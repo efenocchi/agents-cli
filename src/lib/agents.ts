@@ -84,7 +84,7 @@ function saveCliVersionCache(): void {
  * dispatcher) showed up under `agents view`'s "Not Managed by Agents CLI"
  * section, even though the user had nothing to import.
  */
-function findInPath(command: string): string | null {
+export function findInPath(command: string): string | null {
   const pathEnv = process.env.PATH || '';
   const pathExt = process.platform === 'win32' ? (process.env.PATHEXT || '').split(';') : [''];
   const shimsDir = getShimsDir();
