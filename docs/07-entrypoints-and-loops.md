@@ -2,7 +2,7 @@
 
 The unifying model behind plugins, workflows, routines, and loops: two axes — one for packaging, one for invocation.
 
-> **Status: design direction.** The resources-vs-entrypoints split (see [00-concepts.md](00-concepts.md)) is current. The unification below — plugins packaging workflows, per-routine plugin scoping, unified `run` dispatch, and the `loop` block — is proposed and only partly implemented. The [Today vs. proposed](#today-vs-proposed) table marks each item.
+> **Status: design direction.** The resources-vs-entrypoints split (see [00-concepts.md](00-concepts.md)) is current. The unification below — plugins packaging workflows, per-routine plugin scoping, unified `run` dispatch — is proposed and only partly implemented. **The `loop` block ships** (`agents run --loop` + `--resume-checkpoint`, issue #332): the driver, the four guard fields, and harness-level checkpoint/resume are live. The [Today vs. proposed](#today-vs-proposed) table marks each item.
 
 ---
 
@@ -109,6 +109,43 @@ Rule of thumb: omit qualifiers until there is a collision; qualify `type` when t
 
 Without `loop:`, a routine fires its entrypoint once per cadence — the current behavior. With `loop:`, each fire runs the entrypoint until the condition is met or a guard trips. Exit reasons mirror the teams supervisor (`condition-met | budget | stalled | max | signal`).
 
+### Running a loop today (`agents run --loop`)
+
+The loop driver ships as additive flags on `agents run` (issue #332). The CLI verb is **`agents run --loop`** — not a separate `agents loop` command.
+
+```bash
+# Re-inject a prompt back-to-back, up to 5 turns, stopping early on the signal,
+# with a 100k-token hard cap enforced OUTSIDE the agent.
+agents run claude "drive the migration to green" \
+  --loop --until signal --max-iterations 5 --budget 100000 --interval 0 --mode skip
+```
+
+| Flag | Maps to | Meaning |
+|------|---------|---------|
+| `--loop` | activate | Re-inject the prompt/entrypoint each iteration until a stop condition. |
+| `--max-iterations <n>` | `max_iterations` | Hard cap on iterations (`stoppedBy: max`). |
+| `--budget <tokens>` | `budget` | Cumulative-token hard cap (`stoppedBy: budget`), enforced outside the agent. |
+| `--until signal` | `until` | Read `<runDir>/loop-signal.json` each turn; absent or `continue:false` stops (`stoppedBy: condition-met`, fail-closed). |
+| `--interval <dur>` | `interval` | Delay between iterations (`0` back-to-back, `30m` paces). Units `w/d/h/m` — `30s` and bare numbers are rejected at config build, never silently run full-speed. |
+| `--resume-checkpoint <file>` | resume | Continue a killed run from its `checkpoint.json`. |
+
+**Each iteration** spawns one headless turn (`--json` stream) and **pins its own fresh `--session-id`** — `--session-id` *creates* a session, so re-passing one errors `Session ID already in use`. To carry conversation memory forward, iteration 2+ injects the established `/continue <prior session id>` directive (the same mechanism the rate-limit fallback chain uses) ahead of the re-injected entrypoint, so the agent recalls the prior turn before doing this iteration's work. Cross-iteration continuity applies to **claude only**; other agents run each iteration as an independent fresh conversation (the driver warns when `--loop` is paired with a non-claude agent). The driver exposes the signal path to the entrypoint via the `AGENTS_LOOP_SIGNAL` env var (plus `AGENTS_RUN_DIR` and `AGENTS_LOOP_ITERATION`) — the agent writes its `{continue, reason}` vote there; the driver, OUTSIDE the agent, decides whether to continue.
+
+A workflow may declare a `loop:` block in its WORKFLOW.md frontmatter; `agents run <workflow>` then honors it **without** a `--loop` flag. CLI flags override the workflow's declared fields one-by-one.
+
+### Checkpoint / resume
+
+The driver writes `<runsDir>/<runId>/checkpoint.json` **after every iteration** (atomic temp+rename) and inside the SIGINT/SIGTERM handler. The checkpoint records `{ id, agent, version, prompt, sessionId, iteration, loop, loopSignal, cumulativeTokens }` — the harness state a kill would otherwise destroy. `sessionId` is the **last completed iteration's** session id; resume threads the *conversation* forward by `/continue`-ing from it, while the rest of the checkpoint resumes the *harness* (iteration count, prompt chain, token tally).
+
+```bash
+# A SIGTERM/timeout/machine-sleep killed the run mid-loop. Continue from the
+# last completed iteration — same runId, /continue from the last session,
+# carried token count.
+agents run claude --resume-checkpoint ~/.agents/.history/runs/<runId>/checkpoint.json --max-iterations 10
+```
+
+Resume reuses the checkpoint's loop config but lets the resume command **raise** the bounds field-by-field (e.g. a higher `--max-iterations`) so "continue, run more" is one gesture.
+
 ---
 
 ## Today vs. proposed
@@ -124,7 +161,8 @@ Without `loop:`, a routine fires its entrypoint once per cadence — the current
 | Workflow frontmatter `model` / `tools` / `mcpServers` / `allowedAgents` enforced | yes (Claude) — `model` → `--model`, `tools` → `--tools` (restricts available tools), `mcpServers` → ephemeral `--mcp-config` + `--strict-mcp-config` (only named servers), `allowedAgents` → only listed subagent definitions copied into the run; unenforceable declarations warn, never silently drop | yes |
 | `run` target qualifiers | n/a — auto-detect (agent > profile > workflow) | `[<type>:]<name>[@<source>]` |
 | Loop a workflow on a *cadence* | yes — routine with `workflow:` | — |
-| Loop an entrypoint *until a condition* | no | `loop:` block / `agents loop <entrypoint>` |
+| Loop an entrypoint *until a condition* | **shipped** — `agents run --loop` + workflow `loop:` frontmatter (issue #332) | — |
+| Harness checkpoint / resume a killed loop | **shipped** — `checkpoint.json` after every iteration; `agents run --resume-checkpoint <file>` | — |
 
 ---
 

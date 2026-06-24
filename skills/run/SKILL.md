@@ -172,6 +172,33 @@ agents run claude "generate sales report" --timeout 30m
 agents run claude "..." --timeout 2h30m
 ```
 
+## Autonomous loop (`--loop`) + checkpoint/resume
+
+`--loop` re-injects the prompt each iteration until a stop condition. The driver is deterministic; the agent inside stays free to spawn subagents. Every guard runs OUTSIDE the agent — the agent cannot vote past a kill-switch.
+
+```bash
+# Re-inject up to 5 turns, stop early on the agent's signal, 100k-token hard cap.
+agents run claude "drive the migration to green" \
+  --loop --until signal --max-iterations 5 --budget 100000 --interval 0 --mode skip
+```
+
+| Loop flag | Stop reason | Meaning |
+|-----------|-------------|---------|
+| `--max-iterations <n>` | `max` | Hard cap on iterations. |
+| `--budget <tokens>` | `budget` | Cumulative-token cap, enforced outside the agent (exit 7). |
+| `--until signal` | `condition-met` | Reads `<runDir>/loop-signal.json` `{continue,reason}` each turn; absent or `continue:false` stops (fail-closed). |
+| `--interval <dur>` | — | Delay between turns (`0` back-to-back, `30m` paces; units `w/d/h/m`, `30s`/bare numbers rejected). |
+
+Each iteration pins its **own fresh `--session-id`** (`--session-id` *creates* a session — re-passing one errors `Session ID already in use`). To carry memory forward, iteration 2+ prepends `/continue <prior session id>` to the re-injected prompt so the agent recalls the prior turn first. Continuity is **claude-only**; other agents loop as independent fresh conversations (the driver warns). The driver hands the entrypoint `AGENTS_LOOP_SIGNAL` (path to write its `{continue, reason}` vote), `AGENTS_RUN_DIR`, and `AGENTS_LOOP_ITERATION`.
+
+**Checkpoint/resume.** A `checkpoint.json` is written under `~/.agents/.history/runs/<runId>/` after every iteration (and on SIGINT/SIGTERM). Resume a killed run:
+
+```bash
+agents run claude --resume-checkpoint ~/.agents/.history/runs/<runId>/checkpoint.json --max-iterations 10
+```
+
+Resume continues from the last completed iteration with the same runId, prompt, and carried token count; the first resumed iteration `/continue`s from the checkpoint's recorded session id (the last completed iteration's). CLI loop flags on a resume RAISE the checkpoint's bounds (e.g. a higher `--max-iterations`), so "continue, run more" is one command.
+
 ## Budget guardrails (pre-flight estimate + hard kill)
 
 When a `budget:` block is configured in `agents.yaml` (project > user), every
@@ -244,6 +271,12 @@ Emits a unified event stream; ndjson when combined with `--json`.
 | `--verbose` | Detailed logs |
 | `--timeout 30m` | Kill after duration |
 | `--session-id <id>` | Resume conversation (Claude) |
+| `--loop` | Re-inject the prompt until a stop condition |
+| `--max-iterations <n>` | Loop iteration hard cap (`stoppedBy: max`) |
+| `--budget <tokens>` | Loop cumulative-token cap (`stoppedBy: budget`) |
+| `--until signal` | Loop stops on `loop-signal.json` `{continue:false}` / absent (fail-closed) |
+| `--interval <dur>` | Loop delay between iterations (`0` back-to-back) |
+| `--resume-checkpoint <file>` | Resume a killed loop from its `checkpoint.json` |
 | `--fallback codex,gemini` | Rate-limit fallback chain |
 | `-b, --balanced` | Shortcut for `--strategy balanced` |
 | `--strategy pinned\|available\|balanced` | Version selection |
