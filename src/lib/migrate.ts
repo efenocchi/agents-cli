@@ -674,7 +674,16 @@ export function repairSelfReferentialBinShims(
   versionsRoot: string = path.join(HISTORY_DIR, 'versions'),
   shimsDir: string = path.resolve(CACHE_DIR, 'shims')
 ): void {
+  // Normalize the shims dir through realpath so the prefix check below survives
+  // a symlinked ~/.agents (or macOS's /tmp -> /private/tmp): fs.realpathSync on
+  // the link target resolves those symlinks, so the dir we compare against must
+  // too, or every loop would read as "points at a real binary" and be skipped.
   shimsDir = path.resolve(shimsDir);
+  try {
+    shimsDir = fs.realpathSync(shimsDir);
+  } catch {
+    /* shims dir absent — leave the resolved path; nothing will match it */
+  }
   let agents: string[];
   try {
     agents = fs.readdirSync(versionsRoot);

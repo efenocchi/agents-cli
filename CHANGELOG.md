@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+**`agents inspect` summary: expanded detail for hooks, plugins, and MCP**
+
+- The bare `agents inspect <agent>` / `agents inspect <repo>` summary no longer collapses everything to a count table. Simple kinds (commands, skills, rules, subagents, workflows) keep a count line but now preview a few names; the rich kinds get their own expanded sections: **hooks** show their events + `matches:` predicates + cache (`PreToolUse(Bash) · git_dirty · prompt~"deploy" (5m cache)`), **plugins** show version + bundle contents (`v2.1.0  skills:6 commands:5 hooks:2 mcp:1`), and **MCP** show transport + url/command. Drill-down flags (`--hooks`, `--plugins`, `--mcp`) and `--brief` are unchanged; `--json` gains the structured detail additively (existing keys retained).
+- Hook detail joins installed hooks to the manifest by **script basename** (installed hooks are named after their script file while the manifest keys on the logical name), and the repo Hooks section uses the grouped hook reader so a script + its data file collapse to one clean entry.
+
+**Plugin hooks were misreported — fixed**
+
+- `discoverPluginHooks` read the **top-level** keys of a plugin's `hooks/hooks.json`, so the official `{ description, hooks: { SessionStart: [...] } }` format surfaced as `description, hooks` instead of the real events. It now reads the `hooks` wrapper when present (falling back to top-level keys for the flat format), so `agents inspect --plugin <name>` and the plugin row show the actual lifecycle events (e.g. `SessionStart, PreToolUse, …`).
+
+**`agents doctor` / `agents prune`: precise orphan-hooks detection**
+
+- Orphan-hook detection now flags hook scripts present in a version home that **no `agents.yaml`/`hooks.yaml` entry registers** — i.e. scripts that sync to disk but are never wired to a lifecycle event, so they never fire. This replaces the source-diff heuristic, which compared only against the user hooks dir and so **false-flagged valid system-sourced, registered hooks** (e.g. `03-linear-inject`, `04-capture`) as orphans — meaning `agents prune cleanup` could have deleted live hooks. Doctor's Orphans section and `prune cleanup hooks` now share this single manifest-based definition. `parseHookManifest` gained a silent (`{ warn: false }`) option so the diagnostic doesn't emit shadow/override warnings.
+
+**Regression coverage: resource sync from extras repos**
+
+- Added end-to-end regression tests (`src/lib/__tests__/extras-sync.test.ts`) locking in two behaviors for repos registered via `agents repo add` (`~/.agents-<alias>/`): a top-level `commands/<name>.md` is written into the agent's version home on `agents sync`, and plugins under `plugins/<name>/` are synthesized into a registered `agents-<alias>` marketplace on launch. Both already work in `main`; the tests exercise the real sync path (no mocking, isolated `$HOME`) so the extras-repo behavior can't silently regress (#313, #314).
+
 **Windows: `agents` is discoverable right after `npm i -g`**
 
 - On a global Windows install, postinstall now prepends npm's global-bin dir (where `agents.cmd`/`agents.ps1` live) to the **User PATH** via the .NET environment API. Node's installer normally adds it, but winget / portable / nvm-windows setups often don't — and then `npm i -g @phnx-labs/agents-cli` succeeds yet `agents` is "not recognized". The shims dir (claude/codex/…) is still left to `agents setup`, which the user can now run because `agents` resolves.

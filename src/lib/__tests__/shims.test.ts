@@ -89,8 +89,8 @@ describe('addShimsToPath', () => {
 });
 
 describe('SHIM_SCHEMA_VERSION', () => {
-  it('is 18 (overridable AGENTS_USER_DIR for routines sandbox)', () => {
-    expect(SHIM_SCHEMA_VERSION).toBe(18);
+  it('is 19 (droid binary resolution branch in dispatcher)', () => {
+    expect(SHIM_SCHEMA_VERSION).toBe(19);
   });
 });
 
