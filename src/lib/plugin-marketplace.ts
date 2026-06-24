@@ -267,20 +267,29 @@ export function validateClaudePluginManifest(manifest: unknown): string[] {
     const value = m[field];
     if (value === undefined || value === null) continue;
 
+    // How-to-fix written so a human OR a coding agent reading stderr can act
+    // without further investigation. Deleting the field is the recommended fix:
+    // Claude auto-discovers skills/commands/agents from their directories, which
+    // is why every well-formed plugin omits these fields entirely.
+    const fix =
+      `Fix: delete the "${field}" field from plugin.json (recommended — Claude ` +
+      `auto-discovers from the ${field}/ directory), or rewrite every entry as a ` +
+      `"./"-relative path (e.g. "./${field}/<name>").`;
+
     const entries = Array.isArray(value) ? value : [value];
     for (const entry of entries) {
       if (typeof entry !== 'string') {
         warnings.push(
-          `plugin.json field "${field}" must contain relative paths starting with "./" ` +
-          `(e.g. "./${field}/<name>"); found a non-string value. Claude Code will reject the whole plugin.`
+          `field "${field}" must be a "./"-relative path string or an array of them; ` +
+          `found a non-string entry. Claude Code silently rejects the ENTIRE plugin. ${fix}`
         );
         break;
       }
       if (!entry.startsWith('./')) {
         warnings.push(
-          `plugin.json field "${field}" entry "${entry}" must be a relative path starting with "./" ` +
-          `(e.g. "./${field}/${entry}"). Claude Code rejects the entire plugin otherwise — ` +
-          `remove the field to auto-discover from ${field}/, or use relative paths.`
+          `field "${field}" entry "${entry}" must be a relative path starting with "./" ` +
+          `(e.g. "./${field}/${entry}"), not a bare name. Claude Code silently rejects the ` +
+          `ENTIRE plugin — no commands or skills load. ${fix}`
         );
         break;
       }
@@ -327,7 +336,12 @@ export function syncMarketplaceManifest(spec: MarketplaceSpec, agent: AgentId, v
     }
 
     for (const warning of validateClaudePluginManifest(manifest)) {
-      process.stderr.write(`agents-cli: plugin '${manifest.name ?? entry.name}': ${warning}\n`);
+      // Reference the plugin by name, not the marketplace-copy path: that copy is
+      // regenerated from source on every sync, so editing it gets stomped. The fix
+      // belongs in the plugin's SOURCE .claude-plugin/plugin.json.
+      process.stderr.write(
+        `agents-cli: plugin '${manifest.name ?? entry.name}' has a Claude-invalid manifest — ${warning}\n`
+      );
     }
 
     entries.push({

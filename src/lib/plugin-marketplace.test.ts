@@ -264,6 +264,10 @@ describe('syncMarketplaceManifest', () => {
     expect(out).toContain("plugin 'badplug'");
     expect(out).toContain('"skills"');
     expect(out).toContain('"./');
+    // Carries actionable fix text, not just a complaint.
+    expect(out).toContain('Fix:');
+    expect(out).toContain('delete the "skills" field');
+    // The valid neighbour never warns.
     expect(out).not.toContain('goodplug');
   });
 });
@@ -464,6 +468,9 @@ describe('validateClaudePluginManifest', () => {
     expect(warnings[0]).toContain('"skills"');
     expect(warnings[0]).toContain('"dispatch"');
     expect(warnings[0]).toContain('"./');
+    // Must tell the reader (human or agent) exactly how to fix it.
+    expect(warnings[0]).toContain('Fix:');
+    expect(warnings[0]).toContain('delete the "skills" field');
   });
 
   it('passes skills given as proper relative "./" paths', () => {
