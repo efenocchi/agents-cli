@@ -235,6 +235,31 @@ export async function runDaemon(): Promise<void> {
     monitorRunningJobs();
   }, 60_000);
 
+  // Cross-machine session sync: push this machine's transcripts to R2 and pull
+  // every other machine's, ~every 90s. Skipped silently when the r2.backups
+  // bundle is absent. An overlap guard prevents a slow cycle from stacking.
+  let syncing = false;
+  const runSessionSync = async () => {
+    if (syncing) return;
+    syncing = true;
+    try {
+      const { isSyncConfigured } = await import('./session/sync/config.js');
+      if (!isSyncConfigured()) return;
+      const { syncSessions } = await import('./session/sync/sync.js');
+      const r = await syncSessions();
+      if (r.pushed || r.pulled || r.errors.length) {
+        log('INFO', `sessions sync: pushed ${r.pushed}, pulled ${r.pulled}, merged ${r.merged}` +
+          (r.errors.length ? `, ${r.errors.length} error(s): ${r.errors[0]}` : ''));
+      }
+    } catch (err) {
+      log('ERROR', `sessions sync failed: ${(err as Error).message}`);
+    } finally {
+      syncing = false;
+    }
+  };
+  const syncInterval = setInterval(() => { void runSessionSync(); }, 90_000);
+  void runSessionSync(); // kick once at startup
+
   const handleReload = () => {
     log('INFO', 'Reloading jobs (SIGHUP)');
     scheduler.reloadAll();
@@ -247,6 +272,7 @@ export async function runDaemon(): Promise<void> {
     scheduler.stopAll();
     await browserIPC.stop();
     clearInterval(monitorInterval);
+    clearInterval(syncInterval);
     removeDaemonPid();
     process.exit(0);
   };
