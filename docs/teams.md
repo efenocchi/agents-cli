@@ -281,6 +281,32 @@ agents teams status my-team --json --verbose
 agents teams list --json
 ```
 
+## Budget Guardrails
+
+Teammates **inherit the project's budget caps** (see
+[docs/06-observability.md](./06-observability.md#budget-guardrails-agents-budget)).
+Before each teammate launches, its estimated cost is projected onto current
+spend; under `on_exceed: block`, a teammate that would breach `per_run`,
+`per_day`, `per_agent`, or `per_project` is **refused** and the spawn fails with
+a `[budget] BLOCKED teammate …` error. Because the caps aggregate across
+vendors, a Claude teammate and a Codex teammate draw down the *same*
+`per_project` / `per_day` pool — one budget governs the whole team regardless of
+which CLIs it uses.
+
+Teammate budgeting is **pre-flight only** in v1: a teammate is estimated and
+blocked *before* it spawns, but there is **no live mid-run hard-cap kill** for
+teammates (they spawn through the teams runner, not the headless `agents run`
+kill path). The live mid-run kill applies to local headless `agents run` today;
+extending it to teams is a planned follow-up.
+
+Set caps in the project's `agents.yaml`:
+
+```yaml
+budget:
+  per_project: 100.00   # the whole team shares this
+  on_exceed: block
+```
+
 ## Demo
 
 <video autoplay loop muted playsinline width="100%" src="../assets/videos/teams.mp4"></video>
