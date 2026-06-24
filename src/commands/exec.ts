@@ -16,6 +16,7 @@ import type { RotateResult } from '../lib/rotate.js';
 import { AGENTS } from '../lib/agents.js';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 
 interface ExecCommandActionOptions {
   mode: ExecMode;
@@ -156,8 +157,10 @@ export function registerRunCommand(program: Command): void {
         { getConfiguredRunStrategy, normalizeRunStrategy, resolveRunVersion, RUN_STRATEGIES },
         { getGlobalDefault, getVersionHomePath, resolveVersion, resolveVersionAlias },
         { buildDiscoveredPlugin, loadPluginManifest, syncPluginToVersion },
-        { parseWorkflowFrontmatter, resolveWorkflowRef },
+        { parseWorkflowFrontmatter, resolveWorkflowRef, resolveAllowedSubagents },
         { resolveRunDefaults },
+        { getMcpServersByName, buildWorkflowMcpConfig },
+        { supports },
       ] = await Promise.all([
         import('../lib/exec.js'),
         import('../lib/agents.js'),
@@ -168,6 +171,8 @@ export function registerRunCommand(program: Command): void {
         import('../lib/plugins.js'),
         import('../lib/workflows.js'),
         import('../lib/run-defaults.js'),
+        import('../lib/mcp.js'),
+        import('../lib/capabilities.js'),
       ]);
       const isValidAgent = (agent: string): agent is AgentId => ALL_AGENT_IDS.includes(agent as AgentId);
 
@@ -178,6 +183,9 @@ export function registerRunCommand(program: Command): void {
       let profileEnv: Record<string, string> | undefined;
       let fromProfile = false;
       let workflowModel: string | undefined;
+      // WORKFLOW.md capability scoping, translated to Claude headless flags below.
+      let workflowToolsRestrict: string[] | undefined;
+      let workflowMcpConfigPath: string | undefined;
       const cwd = options.cwd ?? process.cwd();
 
       if (isValidAgent(rawAgent)) {
@@ -215,12 +223,42 @@ export function registerRunCommand(program: Command): void {
         const versionHome = getVersionHomePath('claude', resolvedVersion ?? getGlobalDefault('claude') ?? '');
         const claudeAgentsDir = path.join(versionHome, '.claude', 'agents');
 
-        // Copy subagents/*.md into ~/.claude/agents/ so Claude's Agent tool finds them.
+        // Copy subagents/*.md into ~/.claude/agents/ so Claude's Agent tool finds
+        // them. allowedAgents enforcement (issue #324): when the workflow declares
+        // `allowedAgents:`, copy ONLY those subagent files (matched by filename
+        // stem, e.g. security.md -> "security"). A subagent whose definition isn't
+        // on disk can't be dispatched — this is the actual, fail-closed mechanism.
+        // (Claude's `--agents` flag DEFINES custom agents; it does not restrict
+        // which subagents may be dispatched, so it is not used here.)
         const subagentsDir = path.join(workflowDir, 'subagents');
+        const allowedAgents = workflowFrontmatter?.allowedAgents;
         if (fs.existsSync(subagentsDir)) {
           fs.mkdirSync(claudeAgentsDir, { recursive: true });
-          for (const file of fs.readdirSync(subagentsDir).filter(f => f.endsWith('.md'))) {
+          // Fail-closed subagent scoping (issue #324). resolveAllowedSubagents
+          // distinguishes "allowedAgents absent" (undefined -> copy all) from
+          // "present but empty" (=> copy ZERO). An explicit `allowedAgents: []`
+          // must mean "allow none", never silently widen to "allow all".
+          const allFiles = fs.readdirSync(subagentsDir).filter(f => f.endsWith('.md'));
+          const { allowedStems, missing } = resolveAllowedSubagents(allFiles, allowedAgents);
+          const allowStemSet = new Set(allowedStems);
+          let copied = 0;
+          let skipped = 0;
+          for (const file of allFiles) {
+            const stem = file.replace(/\.md$/, '');
+            if (!allowStemSet.has(stem)) {
+              skipped++;
+              continue;
+            }
             fs.copyFileSync(path.join(subagentsDir, file), path.join(claudeAgentsDir, file));
+            copied++;
+          }
+          if (allowedAgents !== undefined) {
+            // Surface any allowedAgents entry with no matching subagent file, and
+            // report how many were filtered out, so the scope is auditable.
+            if (missing.length > 0) {
+              process.stderr.write(chalk.yellow(`[workflow] allowedAgents not found in subagents/: ${missing.join(', ')}\n`));
+            }
+            process.stderr.write(chalk.gray(`[workflow] subagents restricted to allowedAgents: copied ${copied}, withheld ${skipped}\n`));
           }
         }
 
@@ -280,8 +318,65 @@ export function registerRunCommand(program: Command): void {
           }
         }
 
+        // Capability scoping: translate WORKFLOW.md `tools:` / `mcpServers:` into
+        // the Claude headless flags that ACTUALLY restrict the run (verified
+        // against `claude --help`): tools -> `--tools` (restricts the available
+        // built-in tool set), mcpServers -> `--mcp-config` + `--strict-mcp-config`
+        // (loads ONLY the named servers). `allowedAgents:` is enforced separately,
+        // above, by copying only the allowed subagent definition files. Gated
+        // behind the `allowlist` capability — if the resolved agent lacks it, warn
+        // loudly rather than silently dropping the declaration (issue #324).
+        const scopeVersion = resolveVersionAlias('claude', version) ?? getGlobalDefault('claude') ?? undefined;
+        const allowlist = supports('claude', 'allowlist', scopeVersion);
+        const tools = workflowFrontmatter?.tools;
+        const mcpServerNames = workflowFrontmatter?.mcpServers;
+        const hasScoping = (tools && tools.length > 0)
+          || (mcpServerNames && mcpServerNames.length > 0)
+          || (allowedAgents && allowedAgents.length > 0);
+
+        if (hasScoping && !allowlist.ok) {
+          process.stderr.write(chalk.yellow(
+            `[workflow] tools/mcpServers declared but unenforceable on claude${scopeVersion ? `@${scopeVersion}` : ''} (allowlist ${allowlist.reason ?? 'unsupported'}) — running unscoped\n`,
+          ));
+        } else if (hasScoping) {
+          if (tools && tools.length > 0) {
+            workflowToolsRestrict = tools;
+            process.stderr.write(chalk.gray(`[workflow] restricting available tools to: ${tools.join(', ')} (Write/Bash/Edit unavailable unless listed)\n`));
+          }
+          if (mcpServerNames && mcpServerNames.length > 0) {
+            const servers = getMcpServersByName(mcpServerNames, { cwd });
+            const found = new Set(servers.map(s => s.name));
+            const missing = mcpServerNames.filter(n => !found.has(n));
+            if (missing.length > 0) {
+              process.stderr.write(chalk.yellow(`[workflow] mcpServers not found in registry, skipped: ${missing.join(', ')}\n`));
+            }
+            // Fail-closed: `mcpServers:` was declared, so the run MUST be scoped to
+            // a config — never fall through to the user's ambient MCP set. When
+            // zero declared names resolve to installed servers, write a locked-down
+            // empty config (`{ "mcpServers": {} }`); with `--strict-mcp-config` the
+            // run gets NO MCP servers, which is LESS access than ambient (issue #324).
+            const mcpConfig = buildWorkflowMcpConfig(servers);
+            const configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-workflow-mcp-'));
+            workflowMcpConfigPath = path.join(configDir, 'mcp-config.json');
+            // 0o600: the config embeds server `env` which can carry tokens.
+            // Cleaned up after the run (finally block below).
+            fs.writeFileSync(workflowMcpConfigPath, mcpConfig, { mode: 0o600 });
+            if (servers.length > 0) {
+              process.stderr.write(chalk.gray(`[workflow] scoping MCP servers to ONLY: ${servers.map(s => s.name).join(', ')}\n`));
+            } else {
+              process.stderr.write(chalk.yellow(`[workflow] no declared mcpServers resolved — scoping run to NO MCP servers (fail-closed)\n`));
+            }
+          }
+        }
+
+        // Count the subagents THIS workflow made available (after allowedAgents
+        // filtering), not every file in the shared agents dir. Same fail-closed
+        // semantics as the copy above: `allowedAgents: []` -> 0.
         const subagentCount = fs.existsSync(subagentsDir)
-          ? fs.readdirSync(subagentsDir).filter(f => f.endsWith('.md')).length
+          ? resolveAllowedSubagents(
+              fs.readdirSync(subagentsDir).filter(f => f.endsWith('.md')),
+              allowedAgents,
+            ).allowedStems.length
           : 0;
         process.stderr.write(chalk.gray(`Workflow '${rawAgent}' → claude (${subagentCount} subagents)\n`));
       } else {
@@ -472,6 +567,8 @@ export function registerRunCommand(program: Command): void {
         verbose: options.verbose,
         timeout: options.timeout,
         env,
+        toolsRestrict: workflowToolsRestrict,
+        mcpConfigPath: workflowMcpConfigPath,
       };
 
       if (options.interactive && options.headless) {
@@ -557,6 +654,18 @@ export function registerRunCommand(program: Command): void {
         process.stderr.write(chalk.gray(`Running: ${cmd.join(' ')}\n\n`));
       }
 
+      // Remove the ephemeral mcp-config (and its temp dir) after the run. It is
+      // written at mode 0o600 but still embeds server `env` (possibly tokens),
+      // so it must not linger in tmp. Synchronous so it completes before exit.
+      const cleanupWorkflowMcpConfig = () => {
+        if (!workflowMcpConfigPath) return;
+        try {
+          fs.rmSync(path.dirname(workflowMcpConfigPath), { recursive: true, force: true });
+        } catch {
+          // best-effort: nothing actionable if the temp dir is already gone.
+        }
+      };
+
       try {
         let exitCode: number;
         if (fallback.length > 0) {
@@ -565,8 +674,10 @@ export function registerRunCommand(program: Command): void {
         } else {
           exitCode = await execAgent(execOptions);
         }
+        cleanupWorkflowMcpConfig();
         process.exit(exitCode);
       } catch (err) {
+        cleanupWorkflowMcpConfig();
         console.error(chalk.red(`Failed to execute ${agent}: ${(err as Error).message}`));
         process.exit(1);
       }

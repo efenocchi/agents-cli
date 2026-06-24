@@ -167,18 +167,44 @@ agents workflows remove code-review      # remove (interactive picker if no name
 name: <string>              # display name (also used for `view` output)
 description: <string>       # one-line summary shown in `list`
 model: <string>             # claude-opus-4-7, claude-sonnet-4-6, etc.
-tools:                      # tool allowlist for the orchestrator
+tools:                      # available-tool restriction — ENFORCED (Claude, --tools)
   - Read
   - Bash
 skills:                     # extra skills to load for this run
   - debug
-mcpServers:                 # MCP servers to enable
+mcpServers:                 # MCP servers to enable — ENFORCED (Claude, --strict-mcp-config)
   - github
-allowedAgents:              # restrict which agents can run this workflow
-  - claude                  # (only claude supports workflows today)
+allowedAgents:              # subagents the orchestrator may dispatch to — ENFORCED (Claude, file filter)
+  - security
+  - correctness
 ```
 
 All fields are optional. A workflow with no frontmatter beyond `---` fences still works — the Markdown body alone is enough.
+
+### Scoping & security (enforced at run time, Claude)
+
+These fields are not just displayed — on Claude they translate to headless flags that actually scope the run:
+
+| Frontmatter | Claude flag | Effect |
+|---|---|---|
+| `tools: [Read, Grep]` | `--tools Read Grep` (+ matching `--allowedTools`) | Read-only sandbox — `Write`, `Bash`, and `Edit` are unavailable in the session |
+| `mcpServers: [github]` | `--mcp-config <ephemeral json>` + `--strict-mcp-config` | ONLY the named registry servers load (the config flag alone would merely add them) |
+| `mcpServers: [missing]` (none installed) | `--mcp-config <empty {}>` + `--strict-mcp-config` | **Fail-closed:** declaring `mcpServers` with no installed match scopes the run to NO MCP servers — never the user's full ambient set |
+| `allowedAgents: [security]` | copies only `security.md` into the run's agents dir | Unlisted subagents have no definition on disk, so the orchestrator can't dispatch them. (A subagent left over from a prior unrestricted run can persist in the shared dir — not removed here.) |
+| `allowedAgents: []` (explicit empty) | copies NO subagent files | **Fail-closed:** allow none. Omitting the field entirely copies all subagents; an empty list copies zero |
+
+Read-only review example — this workflow can read and search but cannot write files or shell out:
+
+```yaml
+name: ro-review
+description: read-only review
+tools:
+  - Read
+  - Grep
+  - Glob
+```
+
+If you run a workflow declaring these fields on an agent without the tool-allowlist capability (`allowlist` in `src/lib/agents.ts` — today only Claude), the run proceeds *unscoped* and prints a `declared but unenforceable on <agent>` warning. The boundary is never silently dropped.
 
 ## "What else can I do?"
 

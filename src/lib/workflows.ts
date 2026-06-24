@@ -74,19 +74,56 @@ export function parseWorkflowFrontmatter(workflowDir: string): WorkflowFrontmatt
     const parsed = yaml.parse(frontmatter);
     if (!parsed || typeof parsed !== 'object') return null;
 
+    // Capability-scoping fields are wired into the run (see src/commands/exec.ts);
+    // coerce to string arrays defensively so a malformed `tools: foo` (scalar) or
+    // `tools: [Read, 3]` (mixed) never reaches buildExecCommand as a bad shape.
+    const asStringArray = (v: unknown): string[] | undefined =>
+      Array.isArray(v) && v.every((x) => typeof x === 'string') ? v : undefined;
+
     return {
       name: parsed.name || '',
       description: parsed.description || '',
       model: parsed.model,
-      tools: parsed.tools,
-      skills: parsed.skills,
-      mcpServers: parsed.mcpServers,
-      allowedAgents: parsed.allowedAgents,
-      secrets: parsed.secrets,
+      tools: asStringArray(parsed.tools),
+      skills: asStringArray(parsed.skills),
+      mcpServers: asStringArray(parsed.mcpServers),
+      allowedAgents: asStringArray(parsed.allowedAgents),
+      secrets: asStringArray(parsed.secrets),
     };
   } catch {
     return null;
   }
+}
+
+/**
+ * Decide which subagent .md stems a workflow may use, given the discovered
+ * subagent files and the parsed `allowedAgents` frontmatter. This is the
+ * fail-closed security boundary for issue #324:
+ *
+ *   - `allowedAgents === undefined` (field absent)  -> NO restriction; allow all.
+ *   - `allowedAgents === []`        (present, empty) -> allow ZERO; copy none.
+ *   - `allowedAgents = [a, b]`                       -> allow only those stems.
+ *
+ * An explicit empty array must NEVER widen to "allow all" — that would copy
+ * every subagent definition into the run, granting MORE access than declared.
+ *
+ * `available` are the .md filenames found in subagents/ (e.g. `security.md`).
+ * Returns the stems to copy and any allowedAgents entries with no matching file.
+ */
+export function resolveAllowedSubagents(
+  available: string[],
+  allowedAgents: string[] | undefined,
+): { allowedStems: string[]; missing: string[] } {
+  const stems = available.filter(f => f.endsWith('.md')).map(f => f.replace(/\.md$/, ''));
+  if (allowedAgents === undefined) {
+    return { allowedStems: stems, missing: [] };
+  }
+  const allow = new Set(allowedAgents);
+  const present = new Set(stems);
+  return {
+    allowedStems: stems.filter(s => allow.has(s)),
+    missing: allowedAgents.filter(a => !present.has(a)),
+  };
 }
 
 /** Count subagent .md files in a workflow's subagents/ directory. */
