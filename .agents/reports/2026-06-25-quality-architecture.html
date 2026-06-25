@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>agents-cli — Code Quality &amp; Architecture Report</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+:root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2330;--bd:#30363d;--fg:#e6edf3;--mut:#8b949e;--acc:#58a6ff;--hi:#f85149;--med:#d29922;--lo:#3fb950;--chip:#21262d}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:32px 24px 120px}
+h1{font-size:30px;margin:0 0 4px}
+h2{font-size:22px;margin:48px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--bd)}
+h3{font-size:17px;margin:28px 0 10px;color:var(--acc)}
+.sub{color:var(--mut);margin:0 0 24px}
+code{background:var(--chip);padding:1px 6px;border-radius:5px;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#ffa657}
+pre{background:#010409;border:1px solid var(--bd);border-radius:8px;padding:14px 16px;overflow:auto;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin:18px 0}
+.card{background:var(--panel);border:1px solid var(--bd);border-radius:10px;padding:16px}
+.card .n{font-size:30px;font-weight:700}
+.card .l{color:var(--mut);font-size:13px}
+.verdict{background:var(--panel);border:1px solid var(--bd);border-left:4px solid var(--acc);border-radius:10px;padding:20px 22px;margin:18px 0}
+.mermaid{background:var(--panel);border:1px solid var(--bd);border-radius:10px;padding:18px;margin:16px 0;text-align:center}
+table{border-collapse:collapse;width:100%;margin:14px 0;font-size:13.5px}
+th,td{border:1px solid var(--bd);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:var(--panel2);color:var(--fg)}
+tr:nth-child(even) td{background:#11161e}
+.f{background:var(--panel);border:1px solid var(--bd);border-radius:10px;margin:12px 0;overflow:hidden}
+.f summary{cursor:pointer;padding:12px 16px;display:flex;align-items:center;gap:10px;list-style:none;font-weight:600}
+.f summary::-webkit-details-marker{display:none}
+.f[open] summary{border-bottom:1px solid var(--bd)}
+.f .body{padding:14px 16px}
+.badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;text-transform:uppercase;letter-spacing:.04em}
+.b-hi{background:rgba(248,81,73,.15);color:var(--hi);border:1px solid rgba(248,81,73,.4)}
+.b-med{background:rgba(210,153,34,.15);color:var(--med);border:1px solid rgba(210,153,34,.4)}
+.b-lo{background:rgba(63,185,80,.15);color:var(--lo);border:1px solid rgba(63,185,80,.4)}
+.loc{color:var(--mut);font:12px ui-monospace,Menlo,monospace}
+.fix{color:var(--lo);font-size:13px;margin-top:8px}
+.fix b{color:var(--fg)}
+.tag{display:inline-block;background:var(--chip);color:var(--mut);font-size:11px;padding:2px 8px;border-radius:5px;margin-right:6px}
+ul{margin:8px 0}
+li{margin:4px 0}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin:10px 0;font-size:13px;color:var(--mut)}
+.swatch{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:5px;vertical-align:middle}
+a{color:var(--acc)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>agents-cli — Code Quality &amp; Architecture</h1>
+<p class="sub">Corpus scan · 276 source files · ~142k LOC · 73 commands · 109 lib modules + 16 subsystems · run 2026-06-25</p>
+
+<div class="grid">
+  <div class="card"><div class="n" style="color:var(--lo)">PASS</div><div class="l"><code>tsc --noEmit</code> exit 0 — zero type errors project-wide</div></div>
+  <div class="card"><div class="n">231</div><div class="l">test files / 289 source files — strong ~1:1.3 coverage ratio</div></div>
+  <div class="card"><div class="n" style="color:var(--hi)">40+</div><div class="l">confirmed duplicate-implementation clusters</div></div>
+  <div class="card"><div class="n" style="color:var(--med)">8</div><div class="l">copies that have already <b>drifted into bugs</b></div></div>
+</div>
+
+<div class="verdict">
+<b>Verdict — is it messy?</b> Not structurally. The architecture is clean and consistent: a single commander program, a uniform <code>register&lt;X&gt;Command()</code> convention, well-separated <code>lib/</code> subsystems, a clear shared-core gravity (<code>state</code>/<code>versions</code>/<code>agents</code>/<code>types</code>), and it typechecks with zero errors plus 231 test files. <b>But your instinct about duplication is correct and then some.</b> Because the code grew area-by-area, the same low-level behaviors were re-implemented independently dozens of times — formatters, atomic writes, tilde expansion, version comparison, JSON parsing, process-liveness checks. The danger isn't aesthetics: <b>several copies have silently diverged, and the divergent ones are bugs today</b> (e.g. a buggy second copy of <code>extractClaudeUserText</code>, three NaN-broken <code>compareVersions</code> that drive the upgrade gate and prune-keeper selection, four <code>formatBytes</code> that disagree on the same file size). Reliability-wise the biggest theme is <b>non-atomic config writes + read-side error-swallowing</b> forming a corrupt-on-crash → silent-wipe loop over irreplaceable user state. The fixes are cheap and highly leveraged: ~5 shared helpers collapse the majority of findings at the source.</div>
+
+<h2>1 · Architecture at a glance</h2>
+
+<h3>1.1 Command registration — commander.js + manual registrars</h3>
+<p>Not a switch, not a plugin registry. <code>src/index.ts:149</code> creates one <code>Command()</code>; ~50 <code>register&lt;X&gt;Command(program)</code> calls wire every command in a static block (<code>index.ts:672-823</code>). The SQLite/cloud-heavy trio is lazy-imported on demand.</p>
+<div class="mermaid">
+flowchart TD
+  A["src/index.ts:149<br/>const program = new Command()"] --> B["static block index.ts:672-823<br/>~50 register&lt;X&gt;Command(program)"]
+  A --> C["registerLazyCommands() index.ts:896<br/>dynamic import on demand"]
+  B --> B1["commands/view.ts<br/>registerViewCommand"]
+  B --> B2["commands/exec.ts<br/>registerRunCommand"]
+  B --> B3["commands/secrets.ts<br/>registerSecretsCommands"]
+  B --> B4["commands/hooks.ts · versions.ts<br/>routines.ts · browser.ts · …"]
+  C --> C1["commands/sessions.ts"]
+  C --> C2["commands/teams.ts"]
+  C --> C3["commands/cloud.ts"]
+  A --> D["deprecated aliases<br/>memory→rules · perms→permissions<br/>exec→run · jobs/cron→routines"]
+  A --> E["typo auto-correct<br/>program.on('command:*') index.ts:848"]
+  A --> F["await program.parseAsync() index.ts:1004"]
+</div>
+
+<h3>1.2 Shared-core gravity — who everything depends on</h3>
+<p>Importer counts via <code>grep -rln</code>. Four modules form the foundation; a second ring of subsystem hubs sits behind the commands that own them.</p>
+<div class="mermaid">
+flowchart LR
+  subgraph CORE["Shared core (foundation)"]
+    V["lib/versions.ts<br/>35 importers"]
+    AG["lib/agents.ts<br/>34 importers"]
+    T["lib/types.ts<br/>31 importers"]
+    ST["lib/state.ts<br/>28 importers — path SoT + agents.yaml"]
+    CAP["lib/capabilities.ts<br/>16 — per-agent write gate"]
+  end
+  subgraph RING["Subsystem hubs"]
+    SEC["lib/secrets · 14"]
+    SES["lib/session · 13"]
+    HK["lib/hooks · 6"]
+    PL["lib/platform · 6"]
+    STL["lib/staleness · 6"]
+    TM["lib/teams · 6"]
+  end
+  FS["lib/fs-atomic.ts<br/>atomicWriteFileSync · withFileLock"] --> ST
+  EX["lib/exec.ts<br/>spawn + fallback + secrets"] --> V & AG & ST
+  RING --> CORE
+</div>
+
+<h3>1.3 Command → lib dependency graph</h3>
+<p>The healthy pattern: each command depends on (a) its own subsystem dir, (b) the shared core, (c) <code>lib/help</code>. Edges below are real imports (verbatim line numbers in the findings agents' output).</p>
+<div class="legend">
+  <span><span class="swatch" style="background:#1f6feb"></span>command</span>
+  <span><span class="swatch" style="background:#8957e5"></span>owned subsystem</span>
+  <span><span class="swatch" style="background:#3fb950"></span>shared core</span>
+</div>
+<div class="mermaid">
+flowchart LR
+  classDef cmd fill:#0d2a52,stroke:#1f6feb,color:#cfe1ff;
+  classDef sub fill:#2a1a4a,stroke:#8957e5,color:#e2d5ff;
+  classDef core fill:#0f2e1a,stroke:#3fb950,color:#caffd9;
+
+  teams["commands/teams"]:::cmd
+  sessions["commands/sessions"]:::cmd
+  browser["commands/browser"]:::cmd
+  secrets["commands/secrets"]:::cmd
+  exec["commands/exec"]:::cmd
+
+  Lteams["lib/teams/*"]:::sub
+  Lses["lib/session/*"]:::sub
+  Lbr["lib/browser/*"]:::sub
+  Lsec["lib/secrets/*"]:::sub
+  Lexec["lib/exec"]:::sub
+
+  Cstate["lib/state"]:::core
+  Cver["lib/versions"]:::core
+  Cag["lib/agents"]:::core
+  Ctypes["lib/types"]:::core
+
+  teams --> Lteams & Lexec & Cver & Ctypes & Lses
+  sessions --> Lses & Cag & Cver & Ctypes
+  browser --> Lbr
+  secrets --> Lsec
+  exec --> Lexec & Cver & Cag & Ctypes
+  Lexec --> Cstate & Cver & Cag
+  Lses --> Cstate
+</div>
+
+<h3>1.4 lib/ subsystem map</h3>
+<table>
+<tr><th>Subsystem</th><th>Entry</th><th>Role</th></tr>
+<tr><td>session</td><td><code>session/discover.ts</code> + <code>db.ts</code></td><td>Incremental scan/parse of Claude/Codex/Gemini/OpenCode/OpenClaw sessions; SQLite + FTS5 index</td></tr>
+<tr><td>teams</td><td><code>teams/index.ts</code></td><td>Multi-agent orchestration — lifecycle, spawn/stop/status, worktree isolation, persistence</td></tr>
+<tr><td>browser</td><td><code>browser/index.ts</code></td><td>Chrome profiles, CDP, launch, IPC service for browser automation</td></tr>
+<tr><td>secrets</td><td><code>secrets/index.ts</code></td><td>Cross-platform vault — macOS signed helper + Touch ID, Linux libsecret</td></tr>
+<tr><td>platform</td><td><code>platform/index.ts</code></td><td>The single place OS-divergent behavior is decided (paths, exec, process liveness)</td></tr>
+<tr><td>cloud</td><td><code>cloud/registry.ts</code></td><td>Provider impls (Rush/Codex/Factory) built lazily from <code>cloud:</code> in agents.yaml</td></tr>
+<tr><td>staleness</td><td><code>staleness/index.ts</code></td><td>Snapshots resource state, detects drift to trigger re-sync</td></tr>
+<tr><td>hooks</td><td><code>hooks/match.ts</code></td><td>Hook <code>matches:</code> predicate evaluator</td></tr>
+<tr><td>rules</td><td><code>rules/compile.ts</code></td><td>Compiles <code>@-import</code> directives into one flat file for agents lacking native import</td></tr>
+<tr><td>pricing / budget</td><td><code>pricing/index.ts</code> · <code>budget/enforce.ts</code></td><td>Model-pricing table + cost calc; spend watcher that fires <code>onBreach</code> on cap crossing</td></tr>
+<tr><td>resources</td><td><code>resources/index.ts</code></td><td>Typed registry of per-agent resource kinds (commands/hooks/skills/rules/mcp/…)</td></tr>
+<tr><td>acp · tmux · wallet</td><td>respective <code>index.ts</code></td><td>Leaf subsystems (1 importer each): ACP runner, tmux integration, device-local card vault</td></tr>
+</table>
+
+<h3>1.5 Two real data-flows</h3>
+<div class="mermaid">
+sequenceDiagram
+  participant U as agents sessions
+  participant S as commands/sessions.ts:492
+  participant D as lib/session/discover.ts:147
+  participant DB as lib/session/db.ts
+  U->>S: sessionsAction()
+  S->>D: discoverSessions(scope)
+  D->>D: tryClaimScan(pid) :154
+  par incremental scanners
+    D->>DB: scanClaude/Codex/Gemini/OpenCode/OpenClaw
+    DB->>DB: upsertSessionsBatch() :537 (metadata + FTS5)
+  end
+  D->>DB: querySessions() :744 (+ liveness filter)
+  DB-->>S: Meta[]
+  S->>U: printSessionTable() :566 (inline chalk — NOT render.ts)
+  Note over S: parse.ts / render.ts fire only when ONE session is opened
+</div>
+<div class="mermaid">
+sequenceDiagram
+  participant U as agents teams start --watch
+  participant T as commands/teams.ts:1341
+  participant SUP as lib/teams/supervisor.ts:52
+  participant M as lib/teams/agents.ts
+  U->>T: start action
+  T->>SUP: runSupervisor(mgr)
+  loop per wave
+    SUP->>M: rescanFromDisk() :71
+    SUP->>M: startReady(team) :72
+    M->>M: launchProcess() :1276 buildCommand() :1425
+    M->>M: spawn('/bin/sh',['-c',wrapped],{detached:true}).unref() :1317
+    Note over M: launches "agents run <target> --headless --json"<br/>(recursive CLI self-invocation → reuses lib/exec stack)
+  end
+</div>
+
+<h2>2 · Duplication findings</h2>
+<p class="sub">There is <b>no shared <code>src/lib/format.ts</code> and no command framework</b> — each area re-implements primitives. Below: the clusters that matter, HIGH = a copy has already drifted into a bug.</p>
+
+<details class="f" open><summary><span class="badge b-hi">High</span> <code>extractClaudeUserText</code> — buggy second copy</summary>
+<div class="body">
+<p>Two copies; the <code>active.ts</code> one is missing the <code>isMeta</code> / <code>isLocalCommandMessage</code> / <code>[Request interrupted</code> guards, so it emits wrong topic text (meta lines, command wrappers).</p>
+<p class="loc">src/lib/session/active.ts:188 &nbsp;vs&nbsp; src/lib/session/discover.ts:1775</p>
+<div class="fix"><b>Fix:</b> export discover.ts's version, import it in active.ts.</div>
+</div></details>
+
+<details class="f" open><summary><span class="badge b-hi">High</span> <code>compareVersions</code> — 3 copies, all NaN-broken on prerelease</summary>
+<div class="body">
+<p><code>Number('0-dev') → NaN</code>, every NaN comparison is false → versions sort equal. This repo's own dev builds are <code>0.0.0-dev.&lt;sha&gt;</code>. Drives the upgrade gate (<code>index.ts:787</code>), <code>@latest</code>/<code>@oldest</code> resolution, and <b>prune keeper selection</b> (<code>view.ts:1261</code> — can move the wrong version to trash).</p>
+<p class="loc">src/index.ts:242 &nbsp;·&nbsp; src/lib/versions.ts:1503 &nbsp;·&nbsp; src/commands/view.ts:141</p>
+<div class="fix"><b>Fix:</b> one shared real-semver comparator in <code>lib/</code>.</div>
+</div></details>
+
+<details class="f" open><summary><span class="badge b-hi">High</span> <code>formatBytes</code> — 4 implementations that disagree on the same file</summary>
+<div class="body">
+<p>sessions stops at MB (no GB), prune uses 2 decimals, inspect does KB/MB/GB/TB, browser handles <code>undefined</code>. A 1 GB file prints differently in three commands.</p>
+<p class="loc">sessions.ts:143 · inspect.ts:385 (most complete) · prune.ts:197 · browser.ts:1838</p>
+<div class="fix"><b>Fix:</b> one <code>formatBytes</code> in a new <code>src/lib/format.ts</code> based on inspect.ts's version.</div>
+</div></details>
+
+<details class="f" open><summary><span class="badge b-hi">High</span> <code>truncate()</code> — 12 definitions, 2 are bugs</summary>
+<div class="body">
+<p>No shared truncate. <code>cloud.ts:33</code> appends <code>'...'</code> (3 chars — overflows the width budget); <code>sessions.ts:1560</code> appends a single <code>'.'</code> (reads as a sentence end). The other 9 correctly use <code>'…'</code> — a 9-vs-2 split confirms the odd two are bugs.</p>
+<p class="loc">cloud.ts:33 · sessions.ts:1560 · cost.ts:187 · +9 more (teams, mcp, inspect, …)</p>
+<div class="fix"><b>Fix:</b> one exported <code>truncate(s,max)</code> using <code>'…'</code>; delete all 12.</div>
+</div></details>
+
+<details class="f" open><summary><span class="badge b-hi">High</span> <code>formatAge</code> — 4 copies, 4 different input contracts</summary>
+<div class="body">
+<p>Same name takes seconds (tmux), epoch-ms+"ago" (browser-picker), epoch-ms but <b>drops the minutes remainder</b> (browser.ts:1829 → "3h ago" never "3h 12m ago"), and ms-duration (pty).</p>
+<p class="loc">tmux.ts:446 · browser-picker.ts:36 · browser.ts:1829 · pty.ts:435</p>
+<div class="fix"><b>Fix:</b> split into <code>formatAge(epochMs)</code> and <code>formatCompactDuration(ms)</code> in the shared format lib.</div>
+</div></details>
+
+<details class="f"><summary><span class="badge b-hi">High</span> Inline <code>process.kill(pid,0)</code> liveness checks bypass canonical <code>isAlive()</code></summary>
+<div class="body">
+<p>Canonical <code>platform/process.ts:37</code> reimplemented 5×; the <code>active.ts</code> copy's EPERM handling is actually <i>more</i> correct and should be upstreamed.</p>
+<p class="loc">platform/process.ts:37 (canonical) · session/db.ts:281 · session/active.ts:90 · runner.ts:470 · teams/agents.ts:824 · browser/runtime-state.ts:169</p>
+<div class="fix"><b>Fix:</b> upstream EPERM handling into <code>isAlive</code>, route all callers through it.</div>
+</div></details>
+
+<details class="f"><summary><span class="badge b-hi">High</span> <code>runner.ts</code> re-implements <code>exec.ts</code>'s command table — covers only 5 of 14 agents</summary>
+<div class="body">
+<p><code>runner.ts:35-142</code> parallels <code>exec.ts:331-519</code> (<code>AGENT_COMMANDS</code>/<code>buildExecCommand</code>) but is missing 9 agents (cursor, opencode, openclaw, copilot, amp, kiro, goose, roo, antigravity/grok). It already imports <code>normalizeMode</code> from exec.ts.</p>
+<p class="loc">src/lib/runner.ts:35 &nbsp;vs&nbsp; src/lib/exec.ts:331</p>
+<div class="fix"><b>Fix:</b> delete <code>buildJobCommand</code>, call <code>buildExecCommand</code> (loop.ts:196 already does).</div>
+</div></details>
+
+<details class="f"><summary><span class="badge b-med">Med</span> Primitives re-implemented across many files (no canonical home)</summary>
+<div class="body">
+<ul>
+<li><b>Tilde <code>~/</code> expansion</b> ×5, one buggy (<code>secrets/index.ts:353</code> → <code>~/foo</code> resolves to absolute <code>/foo</code>); two use Windows-unset <code>process.env.HOME</code>. <span class="loc">rules/compile.ts:38 · browser/service.ts:238 · secrets/index.ts:353 · runner.ts:85 · workflows.ts:201</span></li>
+<li><b>YAML frontmatter parse block</b> ×6 (two byte-identical). <span class="loc">skills.ts:113 · resources/skills.ts:63 · commands.ts:160 · resources/commands.ts:51 · subagents.ts:32,64</span></li>
+<li><b><code>normalizeContent</code> (CRLF strip)</b> ×5 identical. <span class="loc">skills.ts:332 · commands.ts:615 · rules/rules.ts:88 · hooks.ts:323 · doctor-diff.ts:113</span></li>
+<li><b>Ad-hoc <code>~/.agents/*</code> path building</b> bypassing <code>state.ts</code> getters ×6. <span class="loc">events.ts:23 · migrate.ts:15 · project-launch.ts:148 · secrets/bundles.ts:778 · secrets/linux.ts:54 · browser/domain-skills.ts:37</span></li>
+<li><b><code>slugify</code></b> ×3 · <b><code>sleep()</code></b> ×3 + ~7 inline · <b>ISO-timestamp run-id stamp</b> ×11 · <b>ANSI-strip regex</b> ×3 (diverging coverage) · <b><code>readJSON</code>+try/catch</b> ×10 (no shared helper) · <b><code>visibleWidth</code>/<code>padVisible</code></b> ×3 (repo.ts:118 missing <code>\x1b</code> anchor → strips real text).</li>
+</ul>
+<div class="fix"><b>Fix:</b> create <code>src/lib/format.ts</code> (formatBytes/Age/Duration, truncate, visibleWidth) and <code>src/lib/strings.ts</code> + extend <code>fs-atomic.ts</code> (readJSONSync, writeJSONFileSync); add <code>expandTilde</code> to <code>platform/paths.ts</code>.</div>
+</div></details>
+
+<details class="f"><summary><span class="badge b-med">Med</span> Commands layer: <code>die()</code> ×4 · <code>isJsonMode</code> ×2 (+5 commands miss TTY detect) · <code>agent@version</code> parsing ×8 (3 error strings)</summary>
+<div class="body">
+<ul>
+<li><b><code>die()</code></b> identical in <code>cloud.ts:18 · teams.ts:92 · factory.ts:15 · worktree.ts:32</code>; others inline it; <code>browser.ts</code> omits <code>chalk.red</code> entirely (inconsistent error UX).</li>
+<li><b><code>isJsonMode</code></b> (TTY-aware) only in teams/cloud; <code>sessions · inspect · view · wallet · cost</code> use raw <code>if(opts.json)</code> → <code>agents sessions | jq</code> gets human text. <code>browser.ts</code> declares <code>--json</code> but never consumes it.</li>
+<li><b><code>agent@version</code> arg parse</b> copied 8+ times with 3 divergent error messages for one failure.</li>
+</ul>
+<div class="fix"><b>Fix:</b> export <code>die</code>, <code>isJsonMode</code>, <code>truncate</code>, <code>parseAgentVersionArg</code> from <code>commands/utils.ts</code>; add <code>JSON_OPTION</code>/<code>MODE_OPTION</code> constants + an <code>output()</code> helper.</div>
+</div></details>
+
+<h2>3 · Reliability findings</h2>
+<p class="sub">Dominant theme: non-atomic config writes + read-side error-swallowing = corrupt-on-crash → silent-wipe of irreplaceable user state. Two shared helpers close most of it.</p>
+
+<details class="f" open><summary><span class="badge b-hi">High</span> Non-atomic config writes everywhere → corruption on crash</summary>
+<div class="body">
+<p>Every config writer does read-modify-write directly onto the live file (<code>permissions.ts</code>, <code>hooks.ts</code>, <code>shims.ts</code> over <code>.claude.json</code>/<code>settings.json</code>, <code>migrate.ts</code> over <code>agents.yaml</code>, browser task state). A crash/SIGINT/full-disk mid-write truncates the file.</p>
+<p class="loc">permissions.ts:1019,1069,1119,1200,1339 · hooks.ts:1078,1203,1430,1602 · shims.ts:1087,1182,1989 · migrate.ts:303,363,1477 · browser/service.ts:2162,2208</p>
+<div class="fix"><b>Fix:</b> one shared <code>atomicWriteJson(path,obj)</code> = write <code>path+'.tmp'</code> then <code>renameSync</code>. Replace all sites. (Closes most of §3.)</div>
+</div></details>
+
+<details class="f" open><summary><span class="badge b-hi">High</span> Read side swallows parse errors → indistinguishable from "file absent" → silent wipe</summary>
+<div class="body">
+<p><code>permissions.ts:873-951</code> return <code>null</code> on <code>JSON.parse</code> failure; a corrupted <code>settings.json</code> then reads as "no permissions," and <code>applyClaudePermissions({merge:true})</code> finds nothing to merge and replaces. <code>parseHookManifest</code> (<code>hooks.ts:784,802</code>) swallows manifest errors → one bad indent in <code>agents.yaml</code> makes all hooks vanish, then the GC loop de-registers every managed hook.</p>
+<div class="fix"><b>Fix:</b> propagate a distinct error on parse failure; never let a downstream merge/GC run against a file that failed to parse.</div>
+</div></details>
+
+<details class="f" open><summary><span class="badge b-hi">High</span> <code>mergeSqliteDb</code> hard-deletes the source DB on ANY failure — irreplaceable session loss</summary>
+<div class="body">
+<p><code>migrate.ts:1085-1092</code> — bare <code>catch</code> swallows every failure (lock, disk full, SQL error) then <code>fs.unlinkSync(src)</code>. A failed ATTACH-merge means rows may not have landed in dest. Compounded by SQL injection via string-interpolated ATTACH at <code>migrate.ts:1039</code>.</p>
+<div class="fix"><b>Fix:</b> on merge failure, quarantine <code>src</code> to <code>.history/trash/</code> instead of unlinking; parameterize the ATTACH.</div>
+</div></details>
+
+<details class="f"><summary><span class="badge b-hi">High</span> Non-atomic symlink retarget can destroy <code>~/.{agent}</code></summary>
+<div class="body">
+<p><code>shims.ts:933-935</code> — <code>unlinkSync</code> then <code>mkdirSync</code> then <code>symlinkSync</code>; between unlink and symlink the dir doesn't exist (the hot path runs <code>agents sync</code> constantly), and if <code>symlinkSync</code> throws the dir is gone with no rollback. <code>switchHomeFileSymlinks</code> already does this atomically; two siblings don't.</p>
+<p class="loc">shims.ts:887,995,1132</p>
+<div class="fix"><b>Fix:</b> shared <code>atomicRetargetSymlink</code> (temp-symlink + rename) used by all three.</div>
+</div></details>
+
+<details class="f"><summary><span class="badge b-hi">High</span> Subprocess calls without timeout → CLI hangs indefinitely</summary>
+<div class="body">
+<ul>
+<li><code>agents.ts:1190,1241,1265</code> — <code>mcp list/add/remove</code> no timeout (a hung <code>mcp list</code> stalls batch ops across N agents).</li>
+<li><code>versions.ts:933,948,1198,1528</code> — <code>npm view</code>/<code>npm install</code>/<code>--version</code> no timeout.</li>
+<li><code>discover.ts:1101-1148</code> — both openclaw execs no timeout (vs OpenCode's 5000ms).</li>
+<li><code>sessions.ts:827-853</code> — <code>spawn(resume)</code> no watchdog and <b>ignores the exit code</b> (<code>() => resolve()</code> discards <code>code</code>).</li>
+</ul>
+<div class="fix"><b>Fix:</b> add <code>timeout</code> to all execFile/exec calls; capture and propagate child exit codes.</div>
+</div></details>
+
+<details class="f"><summary><span class="badge b-med">Med</span> Large mixed-responsibility functions (refactor candidates)</summary>
+<div class="body">
+<ul>
+<li><code>service.ts:309-438</code> <code>start()</code> (~130 lines) — profile lookup + health-check + <b>unbounded fork spin-wait</b> (<code>while(forkingProfiles.has) await sleep(50)</code>, no deadline) + window + state + tabs.</li>
+<li><code>permissions.ts:1163-1382</code> <code>applyPermissionsToVersion</code> (~220 lines) — 7 agents' convert+parse+merge+2 writes in one try; partial success leaves config mutated but returns <code>{success:false}</code>.</li>
+<li><code>shims.ts:251-565</code> <code>generateShimScript</code> (~315 lines of embedded bash, untestable); <code>migrate.ts:1634-1690</code> <code>runMigration</code> — ~30 sequential migrators, one async reject strands later repairs.</li>
+</ul>
+<div class="fix"><b>Fix:</b> extract sub-steps; add a deadline to the fork spin-wait; isolate each migrator (try/catch per step) so one failure doesn't strand the rest.</div>
+</div></details>
+
+<details class="f"><summary><span class="badge b-med">Med</span> Fragile parsing of structured data + divergent permission parsers</summary>
+<div class="body">
+<ul>
+<li><code>migrate.ts:603-616</code> &amp; <code>permissions.ts:291-340</code> regex-parse <code>agents.yaml</code> despite the YAML parser being imported (breaks on non-2-space indent / quoted values).</li>
+<li><code>discover.ts:1106-1149</code> regex-scrapes openclaw's human-formatted table for session metadata — any cosmetic output change yields wrong data (then swallowed).</li>
+<li>Two divergent JSONC strippers (<code>permissions.ts:789</code> vs <code>:1525</code>) and two canonical-permission regexes (<code>:465</code> vs <code>:621</code>) — a rule registered for one agent is silently dropped for another.</li>
+</ul>
+<div class="fix"><b>Fix:</b> use <code>yaml.parse</code> and openclaw <code>--json</code>; one JSONC parser and one permission-pattern parser shared across converters.</div>
+</div></details>
+
+<h2>4 · Recommended fix order (highest leverage first)</h2>
+<table>
+<tr><th>#</th><th>Action</th><th>Closes</th></tr>
+<tr><td>1</td><td>Two shared helpers: <code>atomicWriteJson</code> + <code>atomicRetargetSymlink</code></td><td>Non-atomic writes, symlink retarget, browser state corruption</td></tr>
+<tr><td>2</td><td>Read side: distinguish corruption from absence (throw, don't return null)</td><td>The silent-wipe loop (pairs with #1)</td></tr>
+<tr><td>3</td><td>DB merge quarantine + parameterized ATTACH</td><td>Irreplaceable session-history loss + SQL injection</td></tr>
+<tr><td>4</td><td>Add timeouts + capture exit codes on all subprocess calls</td><td>CLI hangs, false-success, transient-failure poisoning</td></tr>
+<tr><td>5</td><td>One shared real-semver <code>compareVersions</code></td><td>3 NaN-broken copies; de-risks upgrade gate + prune</td></tr>
+<tr><td>6</td><td>New <code>src/lib/format.ts</code> (bytes/age/duration/truncate/visibleWidth)</td><td>~6 duplication clusters + 6 confirmed formatter bugs</td></tr>
+<tr><td>7</td><td>Extend <code>commands/utils.ts</code> (die, isJsonMode, parseAgentVersionArg) + <code>strings.ts</code> (slugify, normalizeContent, expandTilde)</td><td>Commands-layer copy-paste + JSON/TTY inconsistency</td></tr>
+<tr><td>8</td><td>Collapse <code>AgentId</code> to one definition; route <code>runner.ts</code> through <code>exec.ts</code></td><td>Add-an-agent drift; 9 missing agents in runner</td></tr>
+</table>
+
+<p class="sub" style="margin-top:40px">Read-only diagnostic — no code was modified. Generated by <code>/code:quality</code> + 4 deep-analysis subagents. tsc clean · 231 test files · 40+ duplication clusters · 8 already-drifted bugs.</p>
+
+</div>
+<script>
+mermaid.initialize({startOnLoad:true,theme:'dark',themeVariables:{fontSize:'13px',primaryColor:'#161b22',primaryBorderColor:'#30363d',lineColor:'#8b949e',primaryTextColor:'#e6edf3'}});
+</script>
+</body>
+</html>
