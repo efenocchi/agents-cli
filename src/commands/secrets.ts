@@ -12,6 +12,7 @@ import * as fs from 'fs';
 import { spawnSync } from 'child_process';
 import {
   bundleExists,
+  bundleTier,
   deleteBundle,
   describeBundle,
   keychainItemsForBundle,
@@ -19,6 +20,7 @@ import {
   listBundles,
   migrateLegacyBundles,
   parseDotenv,
+  readAndResolveBundleEnv,
   readBundle,
   renameBundle,
   rotateBundleSecret,
@@ -28,6 +30,7 @@ import {
   validateSecretType,
   writeBundle,
   type SecretsBundle,
+  type SecretsTier,
   type VarMeta,
 } from '../lib/secrets/bundles.js';
 import {
@@ -48,6 +51,15 @@ import {
   listVaults,
   type OpVault,
 } from '../lib/onepassword.js';
+import {
+  DEFAULT_TTL_MS,
+  agentLoad,
+  agentLock,
+  agentStatus,
+  ensureAgentRunning,
+  runSecretsAgent,
+} from '../lib/secrets/agent.js';
+import { parseDuration } from '../lib/hooks/cache.js';
 import { registerCommandGroups, setHelpSections } from '../lib/help.js';
 import { isInteractiveTerminal, isPromptCancelled } from './utils.js';
 import { registerSecretsSyncCommands } from './secrets-sync.js';
@@ -429,7 +441,15 @@ export function registerSecretsCommands(program: Command): void {
       never touch disk in plaintext. Every item is device-local and gated by Touch ID
       or device passcode; cross-machine sync is handled by 'agents secrets push/pull'.
 
+      Touch ID noise: macOS pops a prompt per bundle per process, so concurrent
+      agents each re-prompt. 'agents secrets unlock <bundle>' holds the resolved
+      bundle in a local agent after one prompt; later runs read it silently until
+      it expires (default 24h), you 'lock' it, or the screen locks. Nothing on disk.
+
       See also:
+        agents secrets unlock <bundle>                 hold a bundle after one Touch ID
+        agents secrets lock                            wipe held bundles (re-prompt next read)
+        agents secrets status                          show held bundles + when they lock
         agents secrets rotate <bundle> <key>           rotate value, preserve metadata
         agents secrets import <bundle> --from .env     bulk import from .env
         agents secrets import <bundle> --from-1password --vault <name>
@@ -441,6 +461,7 @@ export function registerSecretsCommands(program: Command): void {
   registerCommandGroups(cmd, [
     { title: 'Bundle commands', names: ['list', 'view', 'create', 'rename', 'describe', 'delete'] },
     { title: 'Secret commands', names: ['add', 'rotate', 'remove', 'import', 'export'] },
+    { title: 'Agent commands', names: ['unlock', 'lock', 'status', 'tier'] },
     { title: 'Raw item commands', names: ['get', 'set'] },
     { title: 'Sync commands', names: ['push', 'pull', 'remote-list'] },
     { title: 'Utilities', names: ['exec', 'generate', 'migrate-acl'] },
@@ -479,6 +500,7 @@ export function registerSecretsCommands(program: Command): void {
         console.log(chalk.bold(bundle.name));
         if (bundle.description) console.log(chalk.gray(safePrint(bundle.description)));
         if (bundle.allow_exec) console.log(chalk.yellow('allow_exec: true'));
+        if (bundleTier(bundle) === 'session') console.log(chalk.gray('tier: session (secrets-agent eligible)'));
         if (bundle.created_at) console.log(chalk.gray(`created_at: ${bundle.created_at} (${humanAge(bundle.created_at)})`));
         if (bundle.updated_at) console.log(chalk.gray(`updated_at: ${bundle.updated_at} (${humanAge(bundle.updated_at)})`));
         if (bundle.last_used) console.log(chalk.gray(`last_used:  ${bundle.last_used} (${humanAge(bundle.last_used)})`));
@@ -588,11 +610,13 @@ export function registerSecretsCommands(program: Command): void {
     .description('Create an empty bundle')
     .option('--description <text>', 'Free-form description')
     .option('--allow-exec', 'Allow exec: refs in this bundle (off by default)')
+    .option('--tier <tier>', 'secrets-agent tier: biometry (default) or session', 'biometry')
     .option('--force', 'Overwrite an existing bundle')
-    .action(async (name: string | undefined, opts: { description?: string; allowExec?: boolean; force?: boolean }) => {
+    .action(async (name: string | undefined, opts: { description?: string; allowExec?: boolean; tier?: string; force?: boolean }) => {
       try {
         const resolvedName = name ?? (await promptBundleName());
         validateBundleName(resolvedName);
+        const tier = parseTierOpt(opts.tier);
         if (bundleExists(resolvedName) && !opts.force) {
           console.error(chalk.red(`Bundle '${resolvedName}' already exists. Use --force to overwrite.`));
           process.exit(1);
@@ -601,10 +625,11 @@ export function registerSecretsCommands(program: Command): void {
           name: resolvedName,
           description: opts.description,
           allow_exec: opts.allowExec,
+          tier,
           vars: {},
         };
         writeBundle(bundle);
-        console.log(chalk.green(`Bundle '${resolvedName}' created.`));
+        console.log(chalk.green(`Bundle '${resolvedName}' created${tier === 'session' ? ' (tier: session)' : ''}.`));
         console.log(chalk.gray(`Try: agents secrets add ${resolvedName} MY_KEY`));
       } catch (err) {
         if (isPromptCancelled(err)) return;
@@ -1252,8 +1277,151 @@ Examples:
       }
     });
 
+  cmd
+    .command('unlock [names...]')
+    .description('Hold a bundle in the secrets-agent after one Touch ID, so concurrent runs read it without re-prompting (macOS).')
+    .option('--ttl <duration>', 'How long to hold it (e.g. 30m, 8h). Default 24h.')
+    .option('--all', 'Unlock every configured bundle')
+    .action(async (names: string[], opts: { ttl?: string; all?: boolean }) => {
+      if (process.platform !== 'darwin') {
+        console.error(chalk.red('secrets-agent is macOS-only (no biometry prompt to deduplicate elsewhere).'));
+        process.exit(1);
+      }
+      let targets = opts.all ? listBundles().map((b) => b.name) : names;
+      if (!targets || targets.length === 0) {
+        console.error(chalk.red('Specify one or more bundle names, or --all.'));
+        process.exit(1);
+      }
+      let ttlMs = DEFAULT_TTL_MS;
+      if (opts.ttl) {
+        const secs = parseDuration(opts.ttl);
+        if (!secs) {
+          console.error(chalk.red(`Invalid --ttl '${opts.ttl}'. Use e.g. 30m, 2h, 8h.`));
+          process.exit(1);
+        }
+        ttlMs = secs * 1000;
+      }
+      if (!(await ensureAgentRunning())) {
+        console.error(chalk.red('Could not start the secrets-agent.'));
+        process.exit(1);
+      }
+      let loaded = 0;
+      for (const name of targets) {
+        try {
+          // noAgent: read the real keychain (one Touch ID) rather than the
+          // agent we're about to populate.
+          const { bundle, env } = readAndResolveBundleEnv(name, { noAgent: true, caller: 'unlock' });
+          if (await agentLoad(name, bundle, env, ttlMs)) {
+            loaded++;
+            console.log(`${chalk.green('unlocked')} ${chalk.cyan(name)} ${chalk.gray(`(${Object.keys(env).length} keys, ${humanRemaining(Date.now() + ttlMs)})`)}`);
+          } else {
+            console.error(chalk.red(`Failed to load '${name}' into the agent.`));
+          }
+        } catch (err) {
+          if (isPromptCancelled(err)) {
+            console.error(chalk.yellow(`Cancelled unlocking '${name}'.`));
+            continue;
+          }
+          console.error(chalk.red(`${name}: ${(err as Error).message}`));
+        }
+      }
+      if (loaded === 0) process.exit(1);
+    });
+
+  cmd
+    .command('lock [names...]')
+    .description('Wipe bundles from the secrets-agent (forces Touch ID again next read). Default: all.')
+    .option('--all', 'Wipe every unlocked bundle (same as no names)')
+    .action(async (names: string[], opts: { all?: boolean }) => {
+      if (process.platform !== 'darwin') return; // nothing to lock off darwin
+      if (names && names.length > 0 && !opts.all) {
+        let total = 0;
+        for (const name of names) total += await agentLock(name);
+        console.log(total > 0 ? chalk.green(`Locked ${total} bundle(s).`) : chalk.gray('Nothing to lock.'));
+      } else {
+        const wiped = await agentLock();
+        console.log(wiped > 0 ? chalk.green(`Locked ${wiped} bundle(s).`) : chalk.gray('Nothing to lock.'));
+      }
+    });
+
+  cmd
+    .command('status')
+    .description('Show which bundles the secrets-agent currently holds and when they lock.')
+    .action(async () => {
+      if (process.platform !== 'darwin') {
+        console.log(chalk.gray('secrets-agent is macOS-only.'));
+        return;
+      }
+      const entries = await agentStatus();
+      if (entries.length === 0) {
+        console.log(chalk.gray('No bundles unlocked. The secrets-agent is idle or not running.'));
+        console.log(chalk.gray('Try: agents secrets unlock <bundle>'));
+        return;
+      }
+      console.log(chalk.bold(`${'BUNDLE'.padEnd(24)} ${'KEYS'.padEnd(5)} LOCKS IN`));
+      for (const e of entries) {
+        console.log(`${chalk.cyan(e.name.padEnd(24))} ${String(e.keyCount).padEnd(5)} ${humanRemaining(e.expiresAt)}`);
+      }
+    });
+
+  cmd
+    .command('tier <bundle> [tier]')
+    .description("Show or set a bundle's secrets-agent tier: biometry (default) or session.")
+    .action((bundleName: string, tier: string | undefined) => {
+      try {
+        const bundle = readBundle(bundleName);
+        if (tier === undefined) {
+          console.log(`${chalk.cyan(bundle.name)} tier: ${chalk.bold(bundleTier(bundle))}`);
+          return;
+        }
+        const next = parseTierOpt(tier);
+        bundle.tier = next;
+        writeBundle(bundle);
+        console.log(chalk.green(`${bundle.name} tier set to ${next}.`));
+        if (next === 'session') {
+          console.log(chalk.gray('Eligible for the secrets-agent: unlock it, or enable auto-cache with `secrets.agent.auto: true` in agents.yaml.'));
+        }
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
+        process.exit(1);
+      }
+    });
+
+  cmd
+    .command('_agent-run', { hidden: true })
+    .description('Run the secrets-agent broker in the foreground (internal)')
+    .action(async () => {
+      await runSecretsAgent();
+    });
+
   registerSecretsSyncCommands(cmd);
   registerSecretsMigrateAclCommand(cmd);
+}
+
+/** Validate a --tier value, exiting with a clear message on a bad one. `none`
+ * is rejected explicitly: it would require storing items without the biometry
+ * ACL (a separate signed-helper change), so it isn't offered yet. */
+function parseTierOpt(raw: string | undefined): SecretsTier {
+  const v = (raw ?? 'biometry').toLowerCase();
+  if (v === 'biometry' || v === 'session') return v;
+  if (v === 'none') {
+    console.error(chalk.red("tier 'none' (no biometry ACL) is not available yet — use 'biometry' or 'session'."));
+    process.exit(1);
+  }
+  console.error(chalk.red(`Invalid --tier '${raw}'. Use 'biometry' or 'session'.`));
+  process.exit(1);
+}
+
+/** Human-readable "locks in 3 hours" / "locks in 5 minutes" from an epoch-ms expiry. */
+function humanRemaining(expiresAt: number): string {
+  const ms = expiresAt - Date.now();
+  if (ms <= 0) return 'expired';
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return `locks in ${mins} minute${mins === 1 ? '' : 's'}`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `locks in ${hours} hour${hours === 1 ? '' : 's'}`;
+  const days = Math.round(hours / 24);
+  return `locks in ${days} day${days === 1 ? '' : 's'}`;
 }
 
 /**

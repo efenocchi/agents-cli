@@ -30,6 +30,7 @@ import {
   type SecretRef,
 } from './index.js';
 import { emit } from '../events.js';
+import { agentGetSync, agentAutoLoadSync, secretsAgentAutoEnabled, DEFAULT_TTL_MS } from './agent.js';
 
 /** Allowed values for a secret's `type` metadata field. */
 export const SECRET_TYPES = [
@@ -54,11 +55,24 @@ export interface VarMeta {
   note?: string;
 }
 
+/**
+ * How a bundle interacts with the macOS secrets-agent:
+ * - `biometry` (default): only an explicit `agents secrets unlock` populates the
+ *   agent; every other read pops Touch ID. Use for high-value bundles you want
+ *   to confirm each session.
+ * - `session`: eligible for the agent — `unlock`, and (when `secrets.agent.auto`
+ *   is enabled) the first real keychain read auto-loads it so concurrent runs
+ *   read it silently.
+ */
+export type SecretsTier = 'biometry' | 'session';
+
 /** A named set of environment variable definitions backed by various secret providers. */
 export interface SecretsBundle {
   name: string;
   description?: string;
   allow_exec?: boolean;
+  /** Secrets-agent interaction tier. Absent ⇒ `biometry` (the safe default). */
+  tier?: SecretsTier;
   /** ISO 8601 UTC timestamp. Set once on the first writeBundle() for a bundle. */
   created_at?: string;
   /** ISO 8601 UTC timestamp. Refreshed on every writeBundle(). */
@@ -197,6 +211,7 @@ export function readBundle(name: string): SecretsBundle {
     name,
     description: parsed.description,
     allow_exec: Boolean(parsed.allow_exec),
+    tier: parseTier(parsed.tier),
     vars: parsed.vars && typeof parsed.vars === 'object' ? parsed.vars : {},
   };
   if (typeof parsed.created_at === 'string') bundle.created_at = parsed.created_at;
@@ -209,6 +224,16 @@ export function readBundle(name: string): SecretsBundle {
     validateEnvKey(key);
   }
   return bundle;
+}
+
+/** Normalize a persisted `tier` value; anything but `session` ⇒ default tier. */
+function parseTier(raw: unknown): SecretsTier | undefined {
+  return raw === 'session' ? 'session' : undefined;
+}
+
+/** The effective tier of a bundle (absent ⇒ `biometry`). */
+export function bundleTier(bundle: SecretsBundle): SecretsTier {
+  return bundle.tier ?? 'biometry';
 }
 
 export function writeBundle(bundle: SecretsBundle): void {
@@ -239,6 +264,7 @@ export function writeBundle(bundle: SecretsBundle): void {
   const payload = {
     description: bundle.description,
     allow_exec: bundle.allow_exec ? true : undefined,
+    tier: bundle.tier === 'session' ? 'session' : undefined,
     created_at: bundle.created_at,
     updated_at: bundle.updated_at,
     last_used: bundle.last_used,
@@ -296,6 +322,7 @@ export function listBundles(): SecretsBundle[] {
       name,
       description: parsed.description,
       allow_exec: Boolean(parsed.allow_exec),
+      tier: parseTier(parsed.tier),
       vars: parsed.vars && typeof parsed.vars === 'object' ? parsed.vars : {},
     };
     if (typeof parsed.created_at === 'string') bundle.created_at = parsed.created_at;
@@ -363,6 +390,13 @@ export interface ResolveBundleOptions {
    * about to read the bundle.
    */
   caller?: string;
+  /**
+   * Skip the secrets-agent fast-path and read straight from the keychain
+   * (popping Touch ID). Set by callers that must NOT serve a cached snapshot —
+   * `unlock` (which populates the agent in the first place) and any flow that
+   * needs live values. Also honored via AGENTS_SECRETS_NO_AGENT=1.
+   */
+  noAgent?: boolean;
 }
 
 // Walk the bundle and produce a flat env map. Every keychain: ref is gathered
@@ -442,6 +476,26 @@ export function readAndResolveBundleEnv(
 ): { bundle: SecretsBundle; env: Record<string, string> } {
   validateBundleName(name);
 
+  // Fast-path: if the secrets-agent holds this bundle (user ran
+  // `agents secrets unlock <name>`), return the cached snapshot with no Touch
+  // ID. Soft — any failure falls through to the real keychain read below. macOS
+  // only; the never-unlocked path is a single stat (agentSocketExists) so it
+  // costs nothing when the agent isn't running.
+  if (!opts.noAgent && process.env.AGENTS_SECRETS_NO_AGENT !== '1') {
+    const hit = agentGetSync(name);
+    if (hit) {
+      stampLastUsed(hit.bundle);
+      emit('secrets.get', {
+        bundle: name,
+        caller: opts.caller,
+        status: 'success',
+        source: 'agent',
+        keyCount: Object.keys(hit.env).length,
+      });
+      return hit;
+    }
+  }
+
   const metaItem = bundleMetaItem(name);
   const bundleSecretPrefix = `${SECRETS_ITEM_PREFIX}${name}.`;
   let secretItems: string[];
@@ -475,6 +529,7 @@ export function readAndResolveBundleEnv(
     name,
     description: parsed.description,
     allow_exec: Boolean(parsed.allow_exec),
+    tier: parseTier(parsed.tier),
     vars: parsed.vars && typeof parsed.vars === 'object' ? parsed.vars : {},
   };
   if (typeof parsed.created_at === 'string') bundle.created_at = parsed.created_at;
@@ -546,6 +601,19 @@ export function readAndResolveBundleEnv(
       }
     }
     emitReadAudit('success');
+    // Auto-cache: this was a real keychain read (the agent fast-path returned
+    // earlier on a hit). If the bundle opts into the session tier and the user
+    // enabled `secrets.agent.auto`, populate the broker in the background so the
+    // next concurrent run reads silently. Skipped when noAgent (e.g. `unlock`,
+    // which loads the agent itself). Fire-and-forget — never blocks this read.
+    if (
+      !opts.noAgent &&
+      process.env.AGENTS_SECRETS_NO_AGENT !== '1' &&
+      bundleTier(bundle) === 'session' &&
+      secretsAgentAutoEnabled()
+    ) {
+      agentAutoLoadSync(name, bundle, env, DEFAULT_TTL_MS);
+    }
     return { bundle, env };
   } catch (err) {
     emitReadAudit('error', err);
