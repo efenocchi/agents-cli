@@ -47,6 +47,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                 let sub = it.submenu.map { " [\($0.items.map { $0.title }.joined(separator: " | "))]" } ?? ""
                 FileHandle.standardError.write("  \(kind)\(sub)\n".data(using: .utf8)!)
             }
+            // Dump mode is a probe for tests and diagnostics; do not leave a
+            // second status item alive after emitting the menu contents.
+            DispatchQueue.main.async { NSApp.terminate(nil) }
         }
     }
 
