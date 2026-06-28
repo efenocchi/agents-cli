@@ -44,73 +44,135 @@ func buildBiometryAccessControl() -> SecAccessControl {
     return access
 }
 
-// Read one item's value, decrypting through the shared auth context.
+// The data-protection keychain access group. This is the
+// com.apple.application-identifier granted by the embedded provisioning
+// profile (2HTP252L87.com.phnx-labs.agents-keychain) and is covered by the
+// keychain-access-groups entitlement (2HTP252L87.*). Pinning it explicitly
+// makes every item land in one deterministic group no matter how the helper is
+// spawned, instead of relying on the implicit "first entitled group" default.
+let kAccessGroup = "2HTP252L87.com.phnx-labs.agents-keychain"
+
+// Base attributes for every DATA-PROTECTION keychain operation (issue #279).
 //
-// For modern biometry-protected items, the first read pops Touch ID and
-// later reads reuse the assertion. For legacy items with a trusted-app
-// ACL (kSecAttrAccess) that doesn't list this binary, macOS shows the
-// "enter password" sheet — kSecUseAuthenticationUIAllow makes that
-// fallback explicit and intentional. We use that one password sheet to
-// drive the JIT upgrade: the caller (get / get-batch) re-writes the
-// item with biometry ACL immediately afterward, so the next read is
-// Touch ID forever.
+// Three properties, each made explicit on purpose:
 //
-// Returns the decoded value, the raw OSStatus (so callers can
-// distinguish missing/cancelled), and a needsMigration flag — true if
-// the item has no kSecAttrAccessControl (legacy item).
-func readItem(service: String, account: String) -> (value: String?, status: OSStatus, needsMigration: Bool) {
-    let query: [CFString: Any] = [
+//  - kSecUseDataProtectionKeychain: routes the SecItem call to the
+//    data-protection keychain. The biometry SecAccessControl already forced our
+//    items onto this keychain implicitly (the file-based keychain cannot store
+//    biometry-gated items); stating it removes any ambiguity and is Apple's
+//    documented direction — the file-based keychain is on the road to
+//    deprecation. See TN3137 "On Mac keychain APIs and implementations".
+//
+//  - kSecAttrAccessGroup: pins items to ONE concrete access group. The embedded
+//    provisioning profile grants the entitlement as a wildcard (2HTP252L87.*)
+//    with no concrete default group, so an add that omits the access group
+//    relies on the system's implicit default-group resolution. Pinning the
+//    application-identifier group removes that dependency and makes every item
+//    deterministic regardless of how the helper is spawned.
+//
+//  - kSecAttrSynchronizable false: keeps items device-local (matching the
+//    kSecAttrAccessibleWhenUnlockedThisDeviceOnly intent of the biometry ACL and
+//    never letting them reach iCloud Keychain).
+func dpBase(service: String, account: String) -> [CFString: Any] {
+    return [
         kSecClass: kSecClassGenericPassword,
         kSecAttrService: service as CFString,
         kSecAttrAccount: account as CFString,
-        kSecReturnData: kCFBooleanTrue!,
-        kSecReturnAttributes: kCFBooleanTrue!,
-        kSecMatchLimit: kSecMatchLimitOne,
-        kSecUseAuthenticationContext: authContext,
-        kSecUseAuthenticationUI: kSecUseAuthenticationUIAllow,
-        kSecUseOperationPrompt: "Unlock agents-cli secrets" as CFString,
+        kSecUseDataProtectionKeychain: kCFBooleanTrue!,
+        kSecAttrAccessGroup: kAccessGroup as CFString,
+        kSecAttrSynchronizable: kCFBooleanFalse!,
     ]
-    var result: AnyObject?
-    let status = SecItemCopyMatching(query as CFDictionary, &result)
-    guard status == errSecSuccess,
-          let dict = result as? [String: Any],
-          let data = dict[kSecValueData as String] as? Data,
-          let value = String(data: data, encoding: .utf8) else { return (nil, status, false) }
-    // Legacy items (kSecAttrAccess, "any-app", or no ACL at all) lack the
-    // kSecAttrAccessControl attribute. Items written by the new `set`
-    // path have it. Use that as the migration signal.
-    let needsMigration = dict[kSecAttrAccessControl as String] == nil
-    return (value, status, needsMigration)
 }
 
-// Re-write a legacy item with the modern biometry access control. Called
-// inline by get / get-batch right after the legacy password sheet has
-// produced the plaintext — every future read of this item will then
-// require Touch ID via the LAContext flow. Delete + re-add is required
-// because SecItemUpdate cannot change an item's ACL. If anything goes
-// wrong, log to stderr but don't fail the parent read: the caller
-// already has the value and the user just typed their password for it.
+// Base attributes for the LEGACY file-based login keychain. Used ONLY to read
+// or remove items written by helper versions before the data-protection
+// migration. The file-based keychain has no access-group concept, so we add
+// neither kSecAttrAccessGroup nor kSecUseDataProtectionKeychain here.
+func fileBase(service: String, account: String) -> [CFString: Any] {
+    return [
+        kSecClass: kSecClassGenericPassword,
+        kSecAttrService: service as CFString,
+        kSecAttrAccount: account as CFString,
+    ]
+}
+
+// Read one item's value, decrypting through the shared auth context.
+//
+// Lookup order:
+//   1. The DATA-PROTECTION keychain, where `set` now writes. For modern
+//      biometry-protected items the first read pops Touch ID and later reads
+//      reuse the assertion via the shared LAContext.
+//   2. On a clean miss, the LEGACY file-based login keychain ONCE. Items written
+//      by a pre-migration helper still live there; reading one may pop the
+//      legacy "enter password" sheet for a trusted-app ACL, which
+//      kSecUseAuthenticationUIAllow makes explicit and intentional. The caller
+//      (get / get-batch) then re-writes the value into the data-protection
+//      keychain via migrateInline, so the next read resolves at step 1 and this
+//      fallback never fires again for that item.
+//
+// Returns the decoded value, the raw OSStatus (so callers can distinguish
+// missing/cancelled), and a needsMigration flag — true when the value was found
+// only in the legacy file-based keychain and must be migrated forward.
+func readItem(service: String, account: String) -> (value: String?, status: OSStatus, needsMigration: Bool) {
+    var dpQuery = dpBase(service: service, account: account)
+    dpQuery[kSecReturnData] = kCFBooleanTrue!
+    dpQuery[kSecMatchLimit] = kSecMatchLimitOne
+    dpQuery[kSecUseAuthenticationContext] = authContext
+    dpQuery[kSecUseAuthenticationUI] = kSecUseAuthenticationUIAllow
+    dpQuery[kSecUseOperationPrompt] = "Unlock agents-cli secrets" as CFString
+    var dpResult: AnyObject?
+    let dpStatus = SecItemCopyMatching(dpQuery as CFDictionary, &dpResult)
+    if dpStatus == errSecSuccess,
+       let data = dpResult as? Data,
+       let value = String(data: data, encoding: .utf8) {
+        return (value, dpStatus, false)
+    }
+    // Only a clean "not found" justifies the legacy fallback. errSecAuthFailed,
+    // user-cancel, interaction-not-allowed, etc. are surfaced to the caller as-is.
+    guard dpStatus == errSecItemNotFound else { return (nil, dpStatus, false) }
+
+    var fileQuery = fileBase(service: service, account: account)
+    fileQuery[kSecReturnData] = kCFBooleanTrue!
+    fileQuery[kSecMatchLimit] = kSecMatchLimitOne
+    fileQuery[kSecUseAuthenticationContext] = authContext
+    fileQuery[kSecUseAuthenticationUI] = kSecUseAuthenticationUIAllow
+    fileQuery[kSecUseOperationPrompt] = "Unlock agents-cli secrets" as CFString
+    var fileResult: AnyObject?
+    let fileStatus = SecItemCopyMatching(fileQuery as CFDictionary, &fileResult)
+    guard fileStatus == errSecSuccess,
+          let data = fileResult as? Data,
+          let value = String(data: data, encoding: .utf8) else {
+        // Nothing in either keychain — report the data-protection miss so the
+        // caller treats it as "not found" rather than a legacy read error.
+        return (nil, dpStatus, false)
+    }
+    return (value, fileStatus, true)
+}
+
+// Migrate a value found in the legacy file-based keychain forward into the
+// data-protection keychain with the modern biometry access control. Called
+// inline by get / get-batch right after the legacy read produced the plaintext
+// — every future read then resolves from the data-protection keychain and
+// requires Touch ID via the LAContext flow. If anything goes wrong, log to
+// stderr but don't fail the parent read: the caller already has the value.
 func migrateInline(service: String, account: String, value: String) {
     guard let valueData = value.data(using: .utf8) else {
         writeStderr("migrate-inline: could not encode value for \(service)")
         return
     }
-    let delStatus = SecItemDelete([
-        kSecClass: kSecClassGenericPassword,
-        kSecAttrService: service as CFString,
-        kSecAttrAccount: account as CFString,
-    ] as CFDictionary)
+    // Drop the legacy file-based copy so the next read resolves cleanly from the
+    // data-protection keychain instead of re-triggering this fallback.
+    let delStatus = SecItemDelete(fileBase(service: service, account: account) as CFDictionary)
     if delStatus != errSecSuccess && delStatus != errSecItemNotFound {
-        writeStderr("migrate-inline: delete failed for \(service) (OSStatus \(delStatus))")
+        writeStderr("migrate-inline: legacy delete failed for \(service) (OSStatus \(delStatus))")
         return
     }
-    let addAttrs: [CFString: Any] = [
-        kSecClass: kSecClassGenericPassword,
-        kSecAttrService: service as CFString,
-        kSecAttrAccount: account as CFString,
-        kSecAttrAccessControl: buildBiometryAccessControl(),
-        kSecValueData: valueData,
-    ]
+    // Defensive: clear any partial data-protection copy so SecItemAdd cannot
+    // fail with errSecDuplicateItem.
+    SecItemDelete(dpBase(service: service, account: account) as CFDictionary)
+    var addAttrs = dpBase(service: service, account: account)
+    addAttrs[kSecAttrAccessControl] = buildBiometryAccessControl()
+    addAttrs[kSecValueData] = valueData
     let addStatus = SecItemAdd(addAttrs as CFDictionary, nil)
     if addStatus != errSecSuccess {
         writeStderr("migrate-inline: re-add failed for \(service) (OSStatus \(addStatus))")
@@ -163,6 +225,8 @@ case "list":
         kSecMatchLimit: kSecMatchLimitAll,
         kSecReturnAttributes: kCFBooleanTrue!,
         kSecUseDataProtectionKeychain: kCFBooleanTrue!,
+        kSecAttrAccessGroup: kAccessGroup as CFString,
+        kSecAttrSynchronizable: kCFBooleanFalse!,
     ]
     var items: [[String: Any]] = []
     for query in [fileQuery, dpQuery] {
@@ -192,23 +256,20 @@ case "has":
     // reports that interaction would be required, the item still exists.
     //
     // Two passes, because no single prompt-free query covers both keychains:
-    // items written by `set` carry a biometry ACL, which forces them into the
-    // data-protection keychain, and a UIFail query without the DP key skips
-    // the DP keychain entirely — it reports errSecItemNotFound for items that
-    // exist. The DP pass keeps UIFail (guaranteed no prompt); a present
-    // DP item then surfaces as errSecInteractionNotAllowed, which already
-    // counts as "exists".
+    // new items live in the data-protection keychain (DP pass) while items
+    // written by a pre-migration helper still live in the file-based one (file
+    // pass). Both passes use UIFail to guarantee no prompt; a present DP item
+    // then surfaces as errSecInteractionNotAllowed, which already counts as
+    // "exists".
     guard args.count == 4 else { die(2, "Usage: agents-keychain has <service> <account>") }
     let (service, account) = (args[2], args[3])
-    for dp in [false, true] {
-        var query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service as CFString,
-            kSecAttrAccount: account as CFString,
-            kSecMatchLimit: kSecMatchLimitOne,
-            kSecUseAuthenticationUI: kSecUseAuthenticationUIFail,
-        ]
-        if dp { query[kSecUseDataProtectionKeychain] = kCFBooleanTrue! }
+    var fileQuery = fileBase(service: service, account: account)
+    fileQuery[kSecMatchLimit] = kSecMatchLimitOne
+    fileQuery[kSecUseAuthenticationUI] = kSecUseAuthenticationUIFail
+    var dpQuery = dpBase(service: service, account: account)
+    dpQuery[kSecMatchLimit] = kSecMatchLimitOne
+    dpQuery[kSecUseAuthenticationUI] = kSecUseAuthenticationUIFail
+    for query in [fileQuery, dpQuery] {
         var ignored: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &ignored)
         if status == errSecSuccess || status == errSecInteractionNotAllowed { exit(0) }
@@ -268,10 +329,12 @@ case "get-batch":
     }
 
 case "set":
-    // set <service> <account> — value on stdin. Always written device-local
-    // with the biometry access control. SecItemUpdate cannot change an
-    // item's ACL, so we delete any existing copy and re-add it; deleting a
-    // protected item needs no authentication, so set never prompts.
+    // set <service> <account> — value on stdin. Always written to the
+    // data-protection keychain, device-local, with the biometry access control.
+    // SecItemUpdate cannot change an item's ACL, so we delete any existing copy
+    // (in both keychains, so no stale legacy item shadows the new one) and
+    // re-add it; deleting a protected item needs no authentication, so set never
+    // prompts.
     guard args.count == 4 else { die(2, "Usage: agents-keychain set <service> <account>") }
     let (service, account) = (args[2], args[3])
     let stdinData = FileHandle.standardInput.readDataToEndOfFile()
@@ -281,50 +344,41 @@ case "set":
     while value.hasSuffix("\n") || value.hasSuffix("\r") { value = String(value.dropLast()) }
     guard let valueData = value.data(using: .utf8) else { die(2, "Failed to encode value") }
 
-    SecItemDelete([
-        kSecClass: kSecClassGenericPassword,
-        kSecAttrService: service as CFString,
-        kSecAttrAccount: account as CFString,
-    ] as CFDictionary)
+    SecItemDelete(dpBase(service: service, account: account) as CFDictionary)
+    SecItemDelete(fileBase(service: service, account: account) as CFDictionary)
 
-    let addAttrs: [CFString: Any] = [
-        kSecClass: kSecClassGenericPassword,
-        kSecAttrService: service as CFString,
-        kSecAttrAccount: account as CFString,
-        kSecAttrAccessControl: buildBiometryAccessControl(),
-        kSecValueData: valueData,
-    ]
+    var addAttrs = dpBase(service: service, account: account)
+    addAttrs[kSecAttrAccessControl] = buildBiometryAccessControl()
+    addAttrs[kSecValueData] = valueData
     let status = SecItemAdd(addAttrs as CFDictionary, nil)
     guard status == errSecSuccess else { die(2, "Failed to write keychain item (OSStatus \(status))") }
 
 case "delete":
-    // delete <service> <account> — remove the item. Deletion never decrypts,
-    // so it never prompts. Exit 0 if something was removed, else 1.
+    // delete <service> <account> — remove the item from BOTH keychains. New
+    // items live in the data-protection keychain; an un-migrated legacy copy may
+    // still sit in the file-based one, so we delete from both to avoid orphans.
+    // Deletion never decrypts, so it never prompts. Exit 0 if either keychain
+    // held a copy, else 1.
     guard args.count == 4 else { die(2, "Usage: agents-keychain delete <service> <account>") }
     let (service, account) = (args[2], args[3])
-    let status = SecItemDelete([
-        kSecClass: kSecClassGenericPassword,
-        kSecAttrService: service as CFString,
-        kSecAttrAccount: account as CFString,
-    ] as CFDictionary)
-    exit(status == errSecSuccess ? 0 : 1)
+    let dpStatus = SecItemDelete(dpBase(service: service, account: account) as CFDictionary)
+    let fileStatus = SecItemDelete(fileBase(service: service, account: account) as CFDictionary)
+    exit((dpStatus == errSecSuccess || fileStatus == errSecSuccess) ? 0 : 1)
 
 case "migrate-acl":
-    // migrate-acl <service> <account> — one-time upgrade for items written by
-    // an older helper that used a trusted-app ACL. Reading such an item may
-    // pop the legacy password sheet ONCE (the only place a password prompt is
-    // acceptable); we allow that UI explicitly. We then delete and re-add the
-    // item with the biometry access control so every future read is Touch ID.
+    // migrate-acl <service> <account> — one-time upgrade for items written by an
+    // older helper into the legacy file-based keychain (trusted-app ACL or
+    // pre-migration layout). Reading such an item may pop the legacy password
+    // sheet ONCE (the only place a password prompt is acceptable); we allow that
+    // UI explicitly. We then delete the legacy copy and re-add the item into the
+    // data-protection keychain with the biometry access control and pinned access
+    // group so every future read is Touch ID and resolves deterministically.
     guard args.count == 4 else { die(2, "Usage: agents-keychain migrate-acl <service> <account>") }
     let (service, account) = (args[2], args[3])
-    let readQuery: [CFString: Any] = [
-        kSecClass: kSecClassGenericPassword,
-        kSecAttrService: service as CFString,
-        kSecAttrAccount: account as CFString,
-        kSecReturnData: kCFBooleanTrue!,
-        kSecMatchLimit: kSecMatchLimitOne,
-        kSecUseAuthenticationUI: kSecUseAuthenticationUIAllow,
-    ]
+    var readQuery = fileBase(service: service, account: account)
+    readQuery[kSecReturnData] = kCFBooleanTrue!
+    readQuery[kSecMatchLimit] = kSecMatchLimitOne
+    readQuery[kSecUseAuthenticationUI] = kSecUseAuthenticationUIAllow
     var result: AnyObject?
     let readStatus = SecItemCopyMatching(readQuery as CFDictionary, &result)
     if readStatus == errSecItemNotFound { exit(1) }
@@ -332,19 +386,12 @@ case "migrate-acl":
         die(2, "Failed to read legacy keychain item (OSStatus \(readStatus))")
     }
 
-    SecItemDelete([
-        kSecClass: kSecClassGenericPassword,
-        kSecAttrService: service as CFString,
-        kSecAttrAccount: account as CFString,
-    ] as CFDictionary)
+    SecItemDelete(fileBase(service: service, account: account) as CFDictionary)
+    SecItemDelete(dpBase(service: service, account: account) as CFDictionary)
 
-    let addAttrs: [CFString: Any] = [
-        kSecClass: kSecClassGenericPassword,
-        kSecAttrService: service as CFString,
-        kSecAttrAccount: account as CFString,
-        kSecAttrAccessControl: buildBiometryAccessControl(),
-        kSecValueData: valueData,
-    ]
+    var addAttrs = dpBase(service: service, account: account)
+    addAttrs[kSecAttrAccessControl] = buildBiometryAccessControl()
+    addAttrs[kSecValueData] = valueData
     let addStatus = SecItemAdd(addAttrs as CFDictionary, nil)
     guard addStatus == errSecSuccess else { die(2, "Failed to rewrite item with biometry ACL (OSStatus \(addStatus))") }
 

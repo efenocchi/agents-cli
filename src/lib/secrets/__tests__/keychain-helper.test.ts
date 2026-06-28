@@ -4,56 +4,165 @@ import * as path from 'path';
 
 const helperSource = () => fs.readFileSync(path.join(process.cwd(), 'src/lib/secrets/keychain-helper.swift'), 'utf8');
 
+// Slice the source for a single `case "<cmd>":` block so an assertion can't be
+// satisfied by an unrelated command elsewhere in the file. `order` lists the
+// switch cases in source order; the block runs from the named case up to the
+// next case in that list (or the `default:` for the last one).
+const order = ['list', 'has', 'get', 'get-batch', 'set', 'delete', 'migrate-acl'];
+function caseBlock(source: string, cmd: string): string {
+  const idx = order.indexOf(cmd);
+  const start = source.indexOf(`case "${cmd}":`);
+  const nextMarker = idx + 1 < order.length ? `case "${order[idx + 1]}":` : 'default:';
+  const end = source.indexOf(nextMarker, start);
+  expect(start, `case "${cmd}" present`).toBeGreaterThanOrEqual(0);
+  expect(end, `marker after case "${cmd}" present`).toBeGreaterThan(start);
+  return source.slice(start, end);
+}
+
 describe('keychain-helper Touch ID policy', () => {
   it('writes secrets with SecAccessControl user-presence protection', () => {
     const source = helperSource();
-
     expect(source).toContain('SecAccessControlCreateWithFlags');
     expect(source).toContain('kSecAttrAccessibleWhenUnlockedThisDeviceOnly');
     expect(source).toContain('.biometryCurrentSet');
     expect(source).toContain('.devicePasscode');
-    expect(source).toContain('kSecAttrAccessControl: buildBiometryAccessControl()');
+    expect(source).toContain('addAttrs[kSecAttrAccessControl] = buildBiometryAccessControl()');
   });
 
   it('reads secrets through a shared LocalAuthentication context', () => {
     const source = helperSource();
-
     expect(source).toContain('import LocalAuthentication');
     expect(source).toContain('let authContext: LAContext');
-    expect(source).toContain('kSecUseAuthenticationContext: authContext');
+    expect(source).toContain('kSecUseAuthenticationContext] = authContext');
     expect(source).toContain('case "get":');
     expect(source).toContain('case "get-batch":');
   });
 });
 
-describe('keychain-helper data-protection keychain coverage', () => {
-  // Items written by `set` carry a biometry ACL, which forces them into the
-  // data-protection keychain. A query with kSecUseAuthenticationUIFail and
-  // no kSecUseDataProtectionKeychain key never sees those items, so has/list
-  // reported every stored secret as missing (RUSH-1083). Each command needs
-  // a DP pass alongside the file-based one.
-  it('has probes both the file-based and data-protection keychains', () => {
+describe('keychain-helper data-protection keychain routing', () => {
+  // Issue #279: the biometry SecAccessControl already routed our items to the
+  // data-protection keychain implicitly, but the routing and the access group
+  // were never stated. dpBase() makes all three explicit (DP key + pinned access
+  // group + device-local) so every write/read/delete is deterministic and never
+  // relies on default-access-group resolution under a wildcard-only entitlement.
+  it('dpBase pins the DP keychain, a concrete access group, and device-local', () => {
     const source = helperSource();
-    const hasBlock = source.slice(source.indexOf('case "has":'), source.indexOf('case "get":'));
+    const block = source.slice(source.indexOf('func dpBase('), source.indexOf('func fileBase('));
+    expect(block).toContain('kSecUseDataProtectionKeychain: kCFBooleanTrue!');
+    expect(block).toContain('kSecAttrAccessGroup: kAccessGroup as CFString');
+    expect(block).toContain('kSecAttrSynchronizable: kCFBooleanFalse!');
+    // The access group is the stable application-identifier from the profile.
+    expect(source).toContain('let kAccessGroup = "2HTP252L87.com.phnx-labs.agents-keychain"');
+  });
 
-    expect(hasBlock).toContain('for dp in [false, true]');
-    expect(hasBlock).toContain('kSecUseDataProtectionKeychain');
-    // UIFail is the no-prompt guarantee; a present DP item then surfaces as
-    // errSecInteractionNotAllowed, which must count as "exists".
-    expect(hasBlock).toContain('kSecUseAuthenticationUIFail');
-    expect(hasBlock).toContain('errSecInteractionNotAllowed');
+  it('fileBase carries no DP key and no access group (legacy reads only)', () => {
+    const source = helperSource();
+    const block = source.slice(source.indexOf('func fileBase('), source.indexOf('// Read one item'));
+    expect(block).not.toContain('kSecUseDataProtectionKeychain');
+    expect(block).not.toContain('kSecAttrAccessGroup');
+  });
+
+  it('every write/delete attrs dictionary is built from dpBase or fileBase', () => {
+    const source = helperSource();
+    // No SecItemAdd/Delete/CopyMatching may hand-roll a kSecClass dictionary that
+    // bypasses the dpBase/fileBase helpers — that is how the old set/delete paths
+    // silently targeted only one keychain. Allow kSecClass only inside the
+    // helpers themselves and the two prefix-enumeration queries in `list`.
+    const listBlock = caseBlock(source, 'list');
+    const occurrences = source.split('kSecClass: kSecClassGenericPassword').length - 1;
+    const allowed =
+      2 + // dpBase + fileBase
+      (listBlock.split('kSecClass: kSecClassGenericPassword').length - 1); // fileQuery + dpQuery
+    expect(occurrences, 'kSecClass only appears in dpBase, fileBase, and list queries').toBe(allowed);
+  });
+});
+
+describe('keychain-helper set / delete cover both keychains', () => {
+  it('set writes to DP and clears any stale copy from both keychains', () => {
+    const block = caseBlock(helperSource(), 'set');
+    expect(block).toContain('SecItemDelete(dpBase(service: service, account: account) as CFDictionary)');
+    expect(block).toContain('SecItemDelete(fileBase(service: service, account: account) as CFDictionary)');
+    expect(block).toContain('var addAttrs = dpBase(service: service, account: account)');
+    expect(block).toContain('addAttrs[kSecAttrAccessControl] = buildBiometryAccessControl()');
+    expect(block).toContain('SecItemAdd(addAttrs as CFDictionary, nil)');
+  });
+
+  it('delete removes from both keychains and reports existence in either', () => {
+    const block = caseBlock(helperSource(), 'delete');
+    expect(block).toContain('let dpStatus = SecItemDelete(dpBase(');
+    expect(block).toContain('let fileStatus = SecItemDelete(fileBase(');
+    expect(block).toContain('(dpStatus == errSecSuccess || fileStatus == errSecSuccess)');
+  });
+});
+
+describe('keychain-helper forward migration (file-based -> data-protection)', () => {
+  // Items written by a pre-migration helper live in whichever keychain the old
+  // attrs selected. readItem now resolves DP first, then the legacy file-based
+  // keychain ONCE on a clean miss; get/get-batch then migrate the value forward.
+  // This is the per-item, self-retiring analogue of a one-shot bulk migration:
+  // once an item is rewritten to DP, the DP lookup hits and the fallback never
+  // fires again — so it is idempotent without a separate sentinel.
+  it('readItem queries the data-protection keychain before the file-based one', () => {
+    const source = helperSource();
+    const block = source.slice(source.indexOf('func readItem('), source.indexOf('func migrateInline('));
+    const dpIdx = block.indexOf('var dpQuery = dpBase(');
+    const fileIdx = block.indexOf('var fileQuery = fileBase(');
+    expect(dpIdx).toBeGreaterThanOrEqual(0);
+    expect(fileIdx).toBeGreaterThan(dpIdx); // DP first, file fallback second
+    // The file fallback only runs on a clean not-found, never on auth errors.
+    expect(block).toContain('guard dpStatus == errSecItemNotFound else { return (nil, dpStatus, false) }');
+    // A value found only in the file-based keychain is flagged for migration.
+    expect(block).toContain('return (value, fileStatus, true)');
+  });
+
+  it('migrateInline deletes the legacy copy and re-adds into the DP keychain', () => {
+    const source = helperSource();
+    const block = source.slice(source.indexOf('func migrateInline('), source.indexOf('func dieIfCancelled('));
+    // Remove the legacy file-based copy so the next read resolves from DP.
+    expect(block).toContain('SecItemDelete(fileBase(service: service, account: account) as CFDictionary)');
+    // Re-add carries the DP base (incl. access group) plus the biometry ACL.
+    expect(block).toContain('var addAttrs = dpBase(service: service, account: account)');
+    expect(block).toContain('addAttrs[kSecAttrAccessControl] = buildBiometryAccessControl()');
+    expect(block).toContain('SecItemAdd(addAttrs as CFDictionary, nil)');
+  });
+
+  it('get and get-batch only migrate items in our own namespace', () => {
+    const source = helperSource();
+    // Both callers guard migration on the agents-cli prefix so we never rewrite
+    // another app's items.
+    const getBlock = caseBlock(source, 'get');
+    const batchBlock = caseBlock(source, 'get-batch');
+    for (const block of [getBlock, batchBlock]) {
+      expect(block).toContain('needsMigration && service.hasPrefix("agents-cli.")');
+      expect(block).toContain('migrateInline(service: service, account: account, value: value)');
+    }
+  });
+
+  it('migrate-acl reads the legacy file copy and rewrites it into the DP keychain', () => {
+    const block = caseBlock(helperSource(), 'migrate-acl');
+    expect(block).toContain('var readQuery = fileBase(service: service, account: account)');
+    expect(block).toContain('SecItemDelete(fileBase(service: service, account: account) as CFDictionary)');
+    expect(block).toContain('var addAttrs = dpBase(service: service, account: account)');
+    expect(block).toContain('SecItemAdd(addAttrs as CFDictionary, nil)');
+  });
+});
+
+describe('keychain-helper has / list still probe both keychains', () => {
+  it('has probes the file-based and data-protection keychains without prompting', () => {
+    const block = caseBlock(helperSource(), 'has');
+    expect(block).toContain('var fileQuery = fileBase(service: service, account: account)');
+    expect(block).toContain('var dpQuery = dpBase(service: service, account: account)');
+    expect(block).toContain('for query in [fileQuery, dpQuery]');
+    expect(block).toContain('kSecUseAuthenticationUIFail');
+    expect(block).toContain('errSecInteractionNotAllowed');
   });
 
   it('list enumerates both keychains and tolerates a locked DP keybag', () => {
-    const source = helperSource();
-    const listBlock = source.slice(source.indexOf('case "list":'), source.indexOf('case "has":'));
-
-    expect(listBlock).toContain('kSecUseDataProtectionKeychain');
-    expect(listBlock).toContain('for query in [fileQuery, dpQuery]');
-    // The DP keybag locks with the screen; enumeration must skip, not die.
-    expect(listBlock).toContain('if status == errSecInteractionNotAllowed { continue }');
-    // The DP pass must keep an explicit kSecReturn* key: with none at all,
-    // SecItemCopyMatching evaluates the biometry ACL and blocks on Touch ID.
-    expect(listBlock).toContain('kSecReturnAttributes');
+    const block = caseBlock(helperSource(), 'list');
+    expect(block).toContain('kSecUseDataProtectionKeychain: kCFBooleanTrue!');
+    expect(block).toContain('kSecAttrAccessGroup: kAccessGroup as CFString');
+    expect(block).toContain('for query in [fileQuery, dpQuery]');
+    expect(block).toContain('if status == errSecInteractionNotAllowed { continue }');
+    expect(block).toContain('kSecReturnAttributes');
   });
 });
