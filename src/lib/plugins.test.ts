@@ -137,7 +137,7 @@ describe('discoverPlugins', () => {
     vi.resetModules();
     vi.doMock('./state.js', async (importOriginal) => {
       const actual = await importOriginal<typeof import('./state.js')>();
-      return { ...actual, getPluginsDir: () => pluginsDir, getEnabledExtraRepos: () => [], getProjectPluginsDir: () => null };
+      return { ...actual, getPluginsDir: () => pluginsDir, getEnabledExtraRepos: () => [], getProjectPluginsDir: () => null, getSystemPluginsDir: () => path.join(tmpDir, 'no-system') };
     });
 
     try {
@@ -159,7 +159,7 @@ describe('discoverPlugins', () => {
     vi.resetModules();
     vi.doMock('./state.js', async (importOriginal) => {
       const actual = await importOriginal<typeof import('./state.js')>();
-      return { ...actual, getPluginsDir: () => pluginsDir, getEnabledExtraRepos: () => [], getProjectPluginsDir: () => null };
+      return { ...actual, getPluginsDir: () => pluginsDir, getEnabledExtraRepos: () => [], getProjectPluginsDir: () => null, getSystemPluginsDir: () => path.join(tmpDir, 'no-system') };
     });
 
     try {
@@ -213,7 +213,9 @@ describe('discoverPlugins across marketplaces', () => {
     vi.resetModules();
     vi.doMock('./state.js', async (importOriginal) => {
       const actual = await importOriginal<typeof import('./state.js')>();
-      return { ...actual, ...overrides };
+      // Isolate from a real ~/.agents/.system/plugins on the dev machine; a test
+      // can still opt into a system repo by passing getSystemPluginsDir in overrides.
+      return { ...actual, getSystemPluginsDir: () => path.join(tmpDir, 'no-system'), ...overrides };
     });
     try {
       const mod = await import('./plugins.js');
@@ -259,6 +261,65 @@ describe('discoverPlugins across marketplaces', () => {
         const code = discoverPlugins().filter((p) => p.name === 'code');
         expect(code).toHaveLength(2);
         expect(code.map((p) => p.marketplace).sort()).toEqual(['agents-cli', 'agents-extras']);
+      }
+    );
+  });
+
+  it('getPlugin resolves a name collision to the highest-precedence scope (project > extra > user > system)', async () => {
+    const systemDir = path.join(tmpDir, 'system', 'plugins');
+    fs.mkdirSync(systemDir, { recursive: true });
+    // Same name in all four scopes — the user must NOT get the system copy.
+    writePlugin(systemDir, 'code');
+    writePlugin(userDir, 'code');
+    writePlugin(path.join(extraRepo, 'plugins'), 'code');
+    writePlugin(projectDir, 'code');
+
+    await withState(
+      {
+        getSystemPluginsDir: () => systemDir,
+        getPluginsDir: () => userDir,
+        getEnabledExtraRepos: () => [{ alias: 'extras', dir: extraRepo, url: '' }],
+        getProjectPluginsDir: () => projectDir,
+      },
+      ({ getPlugin }) => {
+        expect(getPlugin('code')?.marketplace).toBe('agents-project');
+      }
+    );
+  });
+
+  it('getPlugin prefers the user copy over a same-named system plugin', async () => {
+    const systemDir = path.join(tmpDir, 'system', 'plugins');
+    fs.mkdirSync(systemDir, { recursive: true });
+    writePlugin(systemDir, 'code');
+    writePlugin(userDir, 'code');
+
+    await withState(
+      {
+        getSystemPluginsDir: () => systemDir,
+        getPluginsDir: () => userDir,
+        getEnabledExtraRepos: () => [],
+        getProjectPluginsDir: () => null,
+      },
+      ({ getPlugin }) => {
+        expect(getPlugin('code')?.marketplace).toBe('agents-cli');
+      }
+    );
+  });
+
+  it('getPlugin still resolves a system-only plugin', async () => {
+    const systemDir = path.join(tmpDir, 'system', 'plugins');
+    fs.mkdirSync(systemDir, { recursive: true });
+    writePlugin(systemDir, 'sysonly');
+
+    await withState(
+      {
+        getSystemPluginsDir: () => systemDir,
+        getPluginsDir: () => userDir,
+        getEnabledExtraRepos: () => [],
+        getProjectPluginsDir: () => null,
+      },
+      ({ getPlugin }) => {
+        expect(getPlugin('sysonly')?.marketplace).toBe('agents-system');
       }
     );
   });
