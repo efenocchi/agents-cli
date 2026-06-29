@@ -466,7 +466,7 @@ export function checkPluginDependencies(manifest: PluginManifest): string[] {
  * inspects it (e.g. descriptionFor, which would otherwise label the system
  * marketplace as an extra repo named "system").
  */
-function marketplaceSpecForName(name: string | undefined, cwd: string = process.cwd()): MarketplaceSpec {
+export function marketplaceSpecForName(name: string | undefined, cwd: string = process.cwd()): MarketplaceSpec {
   if (!name || name === MARKETPLACE_NAME) return { kind: 'user' };
   if (name === SYSTEM_MARKETPLACE_NAME) {
     return { kind: 'system', root: getSystemPluginsDir() };
