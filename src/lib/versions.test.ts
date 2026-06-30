@@ -23,8 +23,12 @@ function runVersionSync(home: string, expression: string): unknown {
   // tsx (Node) — not bun. The CLI ships against Node, and `versions.ts`
   // transitively imports the SQLite layer that this test exercises.
   const moduleUrl = pathToFileURL(path.resolve('src/lib/versions.ts')).href;
-  const tsxBin = path.resolve('node_modules/.bin/tsx');
-  const child = spawnSync(tsxBin, ['-e', `
+  // Run tsx via `node node_modules/tsx/dist/cli.mjs` (not the .bin/tsx shim): on
+  // Windows the shim is tsx.cmd, which spawnSync cannot exec without a shell, and
+  // routing the multi-line `-e` script through cmd.exe would mangle it. node is an
+  // .exe everywhere, so this is shell-free and cross-platform.
+  const tsxBin = path.resolve('node_modules/tsx/dist/cli.mjs');
+  const child = spawnSync(process.execPath, [tsxBin, '-e', `
     import { listInstalledVersions, syncResourcesToVersion } from ${JSON.stringify(moduleUrl)};
     const home = ${JSON.stringify(home)};
     const result = ${expression};
@@ -42,8 +46,12 @@ function runReconcile(home: string, agent: string, installedVersion: string): st
   // tsx (Node) subprocess with an isolated HOME — exercises the real fs +
   // session-db path that reconcileStaleLatestDir touches, no mocking.
   const moduleUrl = pathToFileURL(path.resolve('src/lib/versions.ts')).href;
-  const tsxBin = path.resolve('node_modules/.bin/tsx');
-  const child = spawnSync(tsxBin, ['-e', `
+  // Run tsx via `node node_modules/tsx/dist/cli.mjs` (not the .bin/tsx shim): on
+  // Windows the shim is tsx.cmd, which spawnSync cannot exec without a shell, and
+  // routing the multi-line `-e` script through cmd.exe would mangle it. node is an
+  // .exe everywhere, so this is shell-free and cross-platform.
+  const tsxBin = path.resolve('node_modules/tsx/dist/cli.mjs');
+  const child = spawnSync(process.execPath, [tsxBin, '-e', `
     import { reconcileStaleLatestDir } from ${JSON.stringify(moduleUrl)};
     (async () => {
       const result = await reconcileStaleLatestDir(${JSON.stringify(agent)}, ${JSON.stringify(installedVersion)});
@@ -321,8 +329,12 @@ describe('version resource sync path handling', () => {
 // version can never escape into a shell.
 function runInstallVersion(home: string, agent: string, version: string): { ok: boolean; error?: string } {
   const moduleUrl = pathToFileURL(path.resolve('src/lib/versions.ts')).href;
-  const tsxBin = path.resolve('node_modules/.bin/tsx');
-  const child = spawnSync(tsxBin, ['-e', `
+  // Run tsx via `node node_modules/tsx/dist/cli.mjs` (not the .bin/tsx shim): on
+  // Windows the shim is tsx.cmd, which spawnSync cannot exec without a shell, and
+  // routing the multi-line `-e` script through cmd.exe would mangle it. node is an
+  // .exe everywhere, so this is shell-free and cross-platform.
+  const tsxBin = path.resolve('node_modules/tsx/dist/cli.mjs');
+  const child = spawnSync(process.execPath, [tsxBin, '-e', `
     import { installVersion } from ${JSON.stringify(moduleUrl)};
     (async () => {
       try {
@@ -382,8 +394,12 @@ describe('installVersion version validation', () => {
 // dirs, so a fixture is just N dirs + one binary — every dir reads as installed.
 function runResolveAlias(home: string, agent: string, raw: string | undefined): string | null {
   const moduleUrl = pathToFileURL(path.resolve('src/lib/versions.ts')).href;
-  const tsxBin = path.resolve('node_modules/.bin/tsx');
-  const child = spawnSync(tsxBin, ['-e', `
+  // Run tsx via `node node_modules/tsx/dist/cli.mjs` (not the .bin/tsx shim): on
+  // Windows the shim is tsx.cmd, which spawnSync cannot exec without a shell, and
+  // routing the multi-line `-e` script through cmd.exe would mangle it. node is an
+  // .exe everywhere, so this is shell-free and cross-platform.
+  const tsxBin = path.resolve('node_modules/tsx/dist/cli.mjs');
+  const child = spawnSync(process.execPath, [tsxBin, '-e', `
     import { resolveVersionAlias } from ${JSON.stringify(moduleUrl)};
     const r = resolveVersionAlias(${JSON.stringify(agent)}, ${JSON.stringify(raw ?? null)});
     console.log(JSON.stringify({ v: r === undefined ? null : r }));
