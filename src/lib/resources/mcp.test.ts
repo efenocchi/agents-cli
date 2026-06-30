@@ -29,34 +29,37 @@ afterEach(() => {
 });
 
 describe('getMcpConfigPath', () => {
+  // Build expected values with path.join so the assertions compare separators
+  // the way the host produces them — the source uses path.join, which yields
+  // backslashes on Windows. Hardcoded forward-slash literals would fail there.
   it('returns correct config path for Claude', () => {
     const configPath = getMcpConfigPath('claude', '/home/user');
-    expect(configPath).toBe('/home/user/.claude/settings.json');
+    expect(configPath).toBe(path.join('/home/user', '.claude', 'settings.json'));
   });
 
   it('returns correct config path for Codex', () => {
     const configPath = getMcpConfigPath('codex', '/home/user');
-    expect(configPath).toBe('/home/user/.codex/config.toml');
+    expect(configPath).toBe(path.join('/home/user', '.codex', 'config.toml'));
   });
 
   it('returns correct config path for OpenCode', () => {
     const configPath = getMcpConfigPath('opencode', '/home/user');
-    expect(configPath).toBe('/home/user/.opencode/opencode.jsonc');
+    expect(configPath).toBe(path.join('/home/user', '.opencode', 'opencode.jsonc'));
   });
 
   it('returns correct config path for Cursor', () => {
     const configPath = getMcpConfigPath('cursor', '/home/user');
-    expect(configPath).toBe('/home/user/.cursor/mcp.json');
+    expect(configPath).toBe(path.join('/home/user', '.cursor', 'mcp.json'));
   });
 
   it('returns correct config path for Gemini', () => {
     const configPath = getMcpConfigPath('gemini', '/home/user');
-    expect(configPath).toBe('/home/user/.gemini/settings.json');
+    expect(configPath).toBe(path.join('/home/user', '.gemini', 'settings.json'));
   });
 
   it('returns correct config path for OpenClaw', () => {
     const configPath = getMcpConfigPath('openclaw', '/home/user');
-    expect(configPath).toBe('/home/user/.openclaw/openclaw.json');
+    expect(configPath).toBe(path.join('/home/user', '.openclaw', 'openclaw.json'));
   });
 
 });

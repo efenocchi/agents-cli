@@ -185,7 +185,16 @@ export function parseCliManifest(
   contents: string,
   opts: { name: string; source: string; path: string },
 ): CliManifest {
-  const raw = yaml.parse(contents);
+  // Tolerant parse. A manifest may legitimately carry OS-specific strings — a
+  // Windows path like `C:\Users\...` embedded in a double-quoted YAML scalar
+  // trips YAML's escape rules (`\U` is an invalid escape) and makes the strict
+  // `yaml.parse` throw a parser error. That throw must NOT pre-empt the
+  // security validation below: the per-field allowlist checks (unsafe tokens,
+  // non-https URLs, path traversal) are the authoritative gate on a hostile
+  // manifest. parseDocument collects those escape errors instead of throwing
+  // and still recovers the scalar values, so the dangerous content reaches
+  // assertSafeCheckToken / assertNpmPackage and is rejected on its merits.
+  const raw = yaml.parseDocument(contents, { strict: false }).toJS();
   if (!raw || typeof raw !== 'object') {
     throw new Error('manifest must be a YAML object');
   }

@@ -279,24 +279,27 @@ describe('PermissionsHandler', () => {
   });
 
   describe('configPath', () => {
+    // Compare against path.join output — the source builds these with path.join,
+    // so on Windows they come back with backslashes. Forward-slash literals
+    // would make these assertions fail on the windows-latest CI leg.
     it('returns correct path for Claude', () => {
       const result = PermissionsHandler.configPath!('claude', '/test/home');
-      expect(result).toBe('/test/home/.claude/settings.json');
+      expect(result).toBe(path.join('/test/home', '.claude', 'settings.json'));
     });
 
     it('returns correct path for Codex', () => {
       const result = PermissionsHandler.configPath!('codex', '/test/home');
-      expect(result).toBe('/test/home/.codex/config.toml');
+      expect(result).toBe(path.join('/test/home', '.codex', 'config.toml'));
     });
 
     it('returns correct path for OpenCode', () => {
       const result = PermissionsHandler.configPath!('opencode', '/test/home');
-      expect(result).toBe('/test/home/.opencode/opencode.jsonc');
+      expect(result).toBe(path.join('/test/home', '.opencode', 'opencode.jsonc'));
     });
 
     it('returns correct path for Kimi', () => {
       const result = PermissionsHandler.configPath!('kimi', '/test/home');
-      expect(result).toBe('/test/home/.kimi-code/config.toml');
+      expect(result).toBe(path.join('/test/home', '.kimi-code', 'config.toml'));
     });
 
     it('returns null for unsupported agents', () => {

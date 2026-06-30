@@ -11,7 +11,6 @@
  * actually testing).
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -64,11 +63,11 @@ interface FixtureLayout {
 
 function setupFixture(): FixtureLayout {
   TEMP_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-res-'));
-  // Use cp -R so symlinks/empty dirs survive. Source includes hidden .agents/.
-  const cp = spawnSync('cp', ['-R', `${FIXTURE_SRC}/.`, TEMP_ROOT]);
-  if (cp.status !== 0) {
-    throw new Error(`fixture copy failed: ${cp.stderr.toString()}`);
-  }
+  // Recursive copy that preserves symlinks/empty dirs and hidden .agents/.
+  // fs.cpSync is cross-platform — the old `cp -R` spawn assumed a POSIX `cp`
+  // on PATH, which the windows-latest runner does not provide. Default
+  // dereference:false copies symlinks as links, matching `cp -R`.
+  fs.cpSync(FIXTURE_SRC, TEMP_ROOT, { recursive: true });
   USER_DIR = path.join(TEMP_ROOT, '_user_empty');
   SYSTEM_DIR = path.join(TEMP_ROOT, '_system_empty');
   VERSIONS_DIR = path.join(TEMP_ROOT, '_versions');
