@@ -22,10 +22,16 @@ interface ShimFixtureCase {
   alreadyPresent?: boolean;
 }
 
+// The shim PATH-block rewrite (addShimsToPath) is POSIX shell-rc logic and
+// operates on LF-delimited lines. Git can check these text fixtures out with
+// CRLF on Windows, so fold to LF on read — otherwise the comparison fails on a
+// pure line-ending difference that never occurs in a real POSIX rc file.
+const toLF = (s: string): string => s.replace(/\r\n/g, '\n');
+
 function readShimFixture(name: string): { meta: ShimFixtureCase; before: string; after: string } {
   const meta = JSON.parse(fs.readFileSync(path.join(SHIMS_FIXTURES_DIR, `${name}.json`), 'utf8')) as ShimFixtureCase;
-  const before = fs.readFileSync(path.join(SHIMS_FIXTURES_DIR, `${name}.before`), 'utf8');
-  const after = fs.readFileSync(path.join(SHIMS_FIXTURES_DIR, `${name}.after`), 'utf8');
+  const before = toLF(fs.readFileSync(path.join(SHIMS_FIXTURES_DIR, `${name}.before`), 'utf8'));
+  const after = toLF(fs.readFileSync(path.join(SHIMS_FIXTURES_DIR, `${name}.after`), 'utf8'));
   return { meta, before, after };
 }
 
@@ -81,7 +87,7 @@ describe('addShimsToPath', () => {
         reloadHint: `Restart your shell or run: source ~/${rcFile}`,
       });
 
-      const content = fs.readFileSync(rcPath, 'utf8');
+      const content = toLF(fs.readFileSync(rcPath, 'utf8'));
       const expected = fixture.after.replaceAll('__SHIMS_DIR__', shimsDir).trimEnd();
       expect(content.trimEnd()).toBe(expected);
     });

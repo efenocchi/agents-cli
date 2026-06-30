@@ -24,24 +24,33 @@ let origHome: string | undefined;
 /**
  * A fake `claude` that:
  *  - emits one Claude stream-json assistant turn carrying message.usage tokens
- *  - reads a control file (FAKE_CLAUDE_SIGNAL) to decide what loop-signal to
+ *  - reads a control file (FAKE_CLAUDE_SIGNAL_DIR) to decide what loop-signal to
  *    write into the run dir (so the test can script continue/stop per iteration)
+ *
+ * Written as a Node script (not bash) so the same fake runs on Windows, where
+ * the loop spawns the bare `claude` through cmd.exe — there a `.cmd` companion
+ * forwards to `node`. Only stdout (the stream-json) and the signal file matter
+ * here; argv is not asserted, so cmd's argv re-parsing is irrelevant.
  */
-const FAKE_CLAUDE = `#!/usr/bin/env bash
-echo '{"type":"assistant","message":{"model":"claude-sonnet-4-5","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":10}}}'
-echo '{"type":"result","usage":{"input_tokens":100,"output_tokens":50}}'
-if [ -n "$FAKE_CLAUDE_SIGNAL_DIR" ]; then
-  # Decrement a counter file; while >0 write continue:true, then continue:false.
-  COUNTER="$FAKE_CLAUDE_SIGNAL_DIR/counter"
-  N=$(cat "$COUNTER" 2>/dev/null || echo 0)
-  if [ "$N" -gt 1 ]; then
-    echo '{"continue":true,"reason":"more"}' > "$FAKE_CLAUDE_SIGNAL_DIR/loop-signal.json"
-    echo $((N - 1)) > "$COUNTER"
-  else
-    echo '{"continue":false,"reason":"done"}' > "$FAKE_CLAUDE_SIGNAL_DIR/loop-signal.json"
-  fi
-fi
-exit 0
+const FAKE_CLAUDE = `#!/usr/bin/env node
+const fs = require('fs');
+const path = require('path');
+process.stdout.write('{"type":"assistant","message":{"model":"claude-sonnet-4-5","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":10}}}\\n');
+process.stdout.write('{"type":"result","usage":{"input_tokens":100,"output_tokens":50}}\\n');
+const dir = process.env.FAKE_CLAUDE_SIGNAL_DIR;
+if (dir) {
+  // Decrement a counter file; while >1 write continue:true, then continue:false.
+  const counter = path.join(dir, 'counter');
+  let n = 0;
+  try { n = parseInt(fs.readFileSync(counter, 'utf-8').trim(), 10) || 0; } catch {}
+  if (n > 1) {
+    fs.writeFileSync(path.join(dir, 'loop-signal.json'), '{"continue":true,"reason":"more"}');
+    fs.writeFileSync(counter, String(n - 1));
+  } else {
+    fs.writeFileSync(path.join(dir, 'loop-signal.json'), '{"continue":false,"reason":"done"}');
+  }
+}
+process.exit(0);
 `;
 
 beforeAll(() => {
@@ -51,9 +60,14 @@ beforeAll(() => {
   fs.mkdirSync(runDir, { recursive: true });
   const fakeClaude = path.join(binDir, 'claude');
   fs.writeFileSync(fakeClaude, FAKE_CLAUDE, { mode: 0o755 });
+  // Windows cmd.exe can't run the extensionless Node script directly; drop a
+  // `.cmd` companion that forwards to node so `claude` resolves via PATHEXT.
+  if (process.platform === 'win32') {
+    fs.writeFileSync(fakeClaude + '.cmd', `@echo off\r\nnode "${fakeClaude}" %*\r\n`);
+  }
   origPath = process.env.PATH;
   origHome = process.env.HOME;
-  process.env.PATH = `${binDir}:${origPath}`;
+  process.env.PATH = `${binDir}${path.delimiter}${origPath}`;
   // HOME pinned so checkpointPath() (via getRunsDir) resolves into a temp tree.
   process.env.HOME = home;
 });

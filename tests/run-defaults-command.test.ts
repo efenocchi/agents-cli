@@ -10,6 +10,13 @@ const entrypoint = path.join(repoRoot, 'src/index.ts');
 function writeExecutable(filePath: string, body: string): void {
   fs.writeFileSync(filePath, body, 'utf-8');
   fs.chmodSync(filePath, 0o755);
+  // Windows cmd.exe can't run the extensionless Node script directly. Drop a
+  // `.cmd` companion that forwards to node so the fake CLI resolves via PATHEXT
+  // (and via spawn shell:true for `.cmd`/bare names). The companion captures the
+  // same argv the POSIX shebang script would.
+  if (process.platform === 'win32') {
+    fs.writeFileSync(filePath + '.cmd', `@echo off\r\nnode "${filePath}" %*\r\n`, 'utf-8');
+  }
 }
 
 describe('agents run defaults', () => {

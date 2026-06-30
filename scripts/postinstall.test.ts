@@ -26,6 +26,9 @@ describe('postinstall alias shims', () => {
       env: {
         ...process.env,
         HOME: home,
+        // postinstall derives SHIMS_DIR from os.homedir(), which reads USERPROFILE
+        // on Windows (HOME is POSIX-only). Pin both so the temp home is honored.
+        USERPROFILE: home,
         npm_config_global: 'true',
         AGENTS_INIT_SHELL: '0',
         SHELL: '/bin/sh',
@@ -57,6 +60,8 @@ describe('postinstall alias shims', () => {
       env: {
         ...process.env,
         HOME: home,
+        // os.homedir() reads USERPROFILE on Windows; pin it alongside HOME.
+        USERPROFILE: home,
         AGENTS_POSTINSTALL_SHIMS_ONLY: '1',
         SHELL: '/bin/sh',
       },

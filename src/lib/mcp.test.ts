@@ -5,6 +5,7 @@ import { pathToFileURL } from 'url';
 import { spawnSync } from 'child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { parseMcpServerConfig, buildWorkflowMcpConfig, type InstalledMcpServer } from './mcp.js';
+import { IS_WINDOWS } from './platform/index.js';
 
 const tempDirs: string[] = [];
 
@@ -57,7 +58,12 @@ describe('MCP sync execution', () => {
     expect(() => parseMcpServerConfig(configPath)).toThrow('args must be a string array');
   });
 
-  it('installs Codex MCP servers with argv, not a shell command string', async () => {
+  // Proves installMcpServers spawns the CLI with an argv array (no shell), so a
+  // `command: "/bin/echo; touch"` payload can't execute. The proof uses a
+  // `#!/bin/sh` argv-logger fake binary, which is POSIX-only — on Windows the
+  // managed binary is a `.cmd` reached via cmd.exe. installMcpServers' Windows
+  // spawn path (.cmd resolution + shell) is hardened in mcp.ts.
+  it.skipIf(IS_WINDOWS)('installs Codex MCP servers with argv, not a shell command string', async () => {
     const home = makeTempHome();
     const version = '0.1.0';
     const logPath = path.join(home, 'argv.log');

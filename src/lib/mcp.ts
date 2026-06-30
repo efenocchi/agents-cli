@@ -17,6 +17,7 @@ import * as os from 'os';
 import type { AgentId } from './types.js';
 import { getMcpDir, getUserMcpDir, getProjectAgentsDir, getVersionsDir } from './state.js';
 import { getBinaryPath, getVersionHomePath } from './versions.js';
+import { IS_WINDOWS, needsWindowsShell } from './platform/index.js';
 import { AGENTS } from './agents.js';
 import { isCapable } from './capabilities.js';
 import { setGeminiAutoUpdateDisabled, updateGeminiSettings } from './gemini-settings.js';
@@ -263,6 +264,7 @@ function installMcpViaClaude(binaryPath: string, server: InstalledMcpServer, ver
       stdio: 'pipe',
       timeout: 30000,
       env: execEnv,
+      shell: needsWindowsShell(binaryPath),
     });
   } else {
     // claude mcp add --scope user --transport http <name> <url>
@@ -270,6 +272,7 @@ function installMcpViaClaude(binaryPath: string, server: InstalledMcpServer, ver
       stdio: 'pipe',
       timeout: 30000,
       env: execEnv,
+      shell: needsWindowsShell(binaryPath),
     });
   }
 }
@@ -292,6 +295,7 @@ function installMcpViaCodex(binaryPath: string, server: InstalledMcpServer, vers
       stdio: 'pipe',
       timeout: 30000,
       env: { ...process.env, HOME: versionHome },
+      shell: needsWindowsShell(binaryPath),
     });
   }
   // Note: Codex may not support HTTP MCPs
@@ -339,7 +343,7 @@ function registerMcpCommand(
       ? ['mcp', 'add', '--transport', transport, '--scope', scope, name, '--', ...commandArgs]
       : ['mcp', 'add', name, '--', ...commandArgs];
     const env = options.home ? { ...process.env, HOME: options.home } : process.env;
-    execFileSync(bin, args, { stdio: 'pipe', timeout: 30000, env });
+    execFileSync(bin, args, { stdio: 'pipe', timeout: 30000, env, shell: needsWindowsShell(bin) });
     return { success: true };
   } catch (err) {
     return { success: false, error: (err as Error).message };
@@ -538,9 +542,14 @@ export function installMcpServers(
   const applied: string[] = [];
   const errors: string[] = [];
 
-  // Get binary path for CLI-based agents
+  // Get binary path for CLI-based agents. On Windows npm drops a `.cmd` launcher
+  // next to the extensionless POSIX wrapper in node_modules/.bin; prefer it so
+  // the CLI is actually executable (the bare wrapper is a shell script).
   const cliCommand = AGENTS[agentId].cliCommand;
-  const binaryPath = path.join(getVersionsDir(), agentId, version, 'node_modules', '.bin', cliCommand);
+  let binaryPath = path.join(getVersionsDir(), agentId, version, 'node_modules', '.bin', cliCommand);
+  if (IS_WINDOWS && fs.existsSync(binaryPath + '.cmd')) {
+    binaryPath += '.cmd';
+  }
 
   for (const server of servers) {
     try {

@@ -584,23 +584,20 @@ export function buildExecCommand(options: ExecOptions): string[] {
   // on Linux installs where the shims dir isn't on PATH, spawning the bare
   // versioned name fails with ENOENT even though `agents view` shows the agent.
   //
-  // On Windows, shims are bash scripts and cannot be executed by spawn() directly.
-  // buildExecEnv() already sets the isolation env vars (CLAUDE_CONFIG_DIR, CODEX_HOME,
-  // etc.) that the bash shim would set, so we can skip the shim entirely and resolve
-  // straight to the real binary via getBinaryPath.
+  // On Windows the shims dir holds a `.cmd` companion next to the bash alias
+  // (see createVersionedAlias); prefer it so spawn() can launch it (the bash
+  // script is not directly executable by cmd.exe). When no shim exists on disk
+  // we fall back to the bare versioned name, which spawnAgent() resolves via
+  // PATH (+ PATHEXT/shell on Windows).
   if (options.version && cmd.length > 0) {
-    if (process.platform === 'win32') {
-      const binaryPath = getBinaryPath(options.agent, options.version);
-      const binaryPathCmd = binaryPath + '.cmd';
-      if (fs.existsSync(binaryPathCmd)) {
-        cmd[0] = binaryPathCmd;
-      } else if (fs.existsSync(binaryPath)) {
-        cmd[0] = binaryPath;
-      }
+    const versionedName = `${cmd[0]}@${options.version}`;
+    const absPath = path.join(getShimsDir(), versionedName);
+    if (process.platform === 'win32' && fs.existsSync(absPath + '.cmd')) {
+      cmd[0] = absPath + '.cmd';
+    } else if (fs.existsSync(absPath)) {
+      cmd[0] = absPath;
     } else {
-      const versionedName = `${cmd[0]}@${options.version}`;
-      const absPath = path.join(getShimsDir(), versionedName);
-      cmd[0] = fs.existsSync(absPath) ? absPath : versionedName;
+      cmd[0] = versionedName;
     }
   }
 

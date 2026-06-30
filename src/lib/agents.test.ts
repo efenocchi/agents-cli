@@ -5,6 +5,7 @@ import { pathToFileURL } from 'url';
 import { spawnSync } from 'child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AGENTS, ALL_AGENT_IDS, getAccountInfo, resolveAgentName, resolveLastActive } from './agents.js';
+import { IS_WINDOWS } from './platform/index.js';
 import type { CapabilityName } from './types.js';
 
 const tempDirs: string[] = [];
@@ -60,7 +61,14 @@ afterEach(() => {
   }
 });
 
-describe('MCP CLI execution', () => {
+// These prove the SOURCE passes MCP commands as an argv array (never a shell
+// string), so injection payloads like `; touch pwned` stay inert. The proof
+// relies on a `#!/bin/sh` argv-logger fake that records each arg — a POSIX-only
+// mechanism (no shebang/argv-logger on Windows, where the agent CLI is a `.cmd`
+// reached through cmd.exe). The argv-safety property itself is platform-agnostic
+// (execFileAsync with an array), but it can only be asserted via the sh fake, so
+// these run on POSIX. registerMcp's Windows spawn path is hardened in agents.ts.
+describe.skipIf(IS_WINDOWS)('MCP CLI execution', () => {
   it('registers MCP servers with argv, not a shell command string', async () => {
     const dir = makeTempDir();
     const { binary, logPath } = writeArgLogger(dir);

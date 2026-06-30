@@ -726,8 +726,10 @@ describe('buildExecCommand', () => {
 
     it('injects Claude config dir for pinned Claude versions', () => {
       const env = buildExecEnv(opts({ agent: 'claude', version: '2.1.98' }));
+      // path.join (not a forward-slash template) so the separator matches the
+      // source on every OS — buildExecEnv builds this with path.join too.
       expect(env.CLAUDE_CONFIG_DIR).toBe(
-        `${process.env.HOME}/.agents/.history/versions/claude/2.1.98/home/.claude`
+        path.join(process.env.HOME!, '.agents', '.history', 'versions', 'claude', '2.1.98', 'home', '.claude')
       );
     });
 
@@ -748,7 +750,7 @@ describe('buildExecCommand', () => {
     it('injects COPILOT_HOME for pinned Copilot versions', () => {
       const env = buildExecEnv(opts({ agent: 'copilot', version: '1.0.56', mode: 'edit' }));
       expect(env.COPILOT_HOME).toBe(
-        `${process.env.HOME}/.agents/.history/versions/copilot/1.0.56/home/.copilot`
+        path.join(process.env.HOME!, '.agents', '.history', 'versions', 'copilot', '1.0.56', 'home', '.copilot')
       );
     });
 
@@ -765,7 +767,7 @@ describe('buildExecCommand', () => {
     it('injects KIMI_CODE_HOME for pinned Kimi versions', () => {
       const env = buildExecEnv(opts({ agent: 'kimi', version: '0.11.0' }));
       expect(env.KIMI_CODE_HOME).toBe(
-        `${process.env.HOME}/.agents/.history/versions/kimi/0.11.0/home/.kimi-code`
+        path.join(process.env.HOME!, '.agents', '.history', 'versions', 'kimi', '0.11.0', 'home', '.kimi-code')
       );
     });
 

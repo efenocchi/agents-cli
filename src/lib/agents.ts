@@ -16,6 +16,7 @@ import * as os from 'os';
 import * as TOML from 'smol-toml';
 import chalk from 'chalk';
 import type { AgentConfig, AgentId } from './types.js';
+import { needsWindowsShell } from './platform/index.js';
 import { latestFileMtimeMs } from './fs-walk.js';
 import { damerauLevenshtein } from './fuzzy.js';
 import { getCacheDir, getVersionsDir, getShimsDir, getCliVersionCachePath } from './state.js';
@@ -1287,7 +1288,10 @@ export async function registerMcp(
     }
     // When home is specified, override HOME so MCP config writes to the version's config dir
     const env = options?.home ? { ...process.env, HOME: options.home } : undefined;
-    await execFileAsync(bin, args, env ? { env } : undefined);
+    // On Windows a bare command name / `.cmd` wrapper (the npm-installed agent
+    // CLI) can't be exec'd directly — it needs shell:true for PATHEXT/cmd. Off
+    // Windows this is always false, so the no-shell argv path is unchanged.
+    await execFileAsync(bin, args, { ...(env ? { env } : {}), shell: needsWindowsShell(bin) });
     return { success: true };
   } catch (err) {
     return { success: false, error: (err as Error).message };
@@ -1311,7 +1315,7 @@ export async function unregisterMcp(
   try {
     const bin = options?.binary || agent.cliCommand;
     const env = options?.home ? { ...process.env, HOME: options.home } : undefined;
-    await execFileAsync(bin, ['mcp', 'remove', name], env ? { env } : undefined);
+    await execFileAsync(bin, ['mcp', 'remove', name], { ...(env ? { env } : {}), shell: needsWindowsShell(bin) });
     return { success: true };
   } catch (err) {
     return { success: false, error: (err as Error).message };

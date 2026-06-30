@@ -18,6 +18,7 @@ import {
   buildSentinelCommand,
   captureProcessStartTime,
 } from './agents.js';
+import { IS_WINDOWS } from '../platform/index.js';
 
 function tmpBase(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'agents-exitcode-test-'));
@@ -73,7 +74,13 @@ function spawnTeammate(
   });
 }
 
-describe('teams exit-code sentinel', () => {
+// The teammate launcher records the real exit status via a detached `/bin/sh`
+// that appends `; echo $? > sentinel` (buildSentinelCommand). That process-group
+// + POSIX-shell sentinel mechanism — and the `echo`/`sh -c 'exit 3'`/`true`
+// fixtures below — are POSIX-only; there is no `/bin/sh` on Windows, so these
+// spawn-real-process cases are skipped there. The pure-string buildSentinelCommand
+// suite below still runs on every OS.
+describe.skipIf(IS_WINDOWS)('teams exit-code sentinel', () => {
   it('marks a clean exit COMPLETED even when the stream has no terminal event', async () => {
     const base = tmpBase();
     const agentDir = path.join(base, 'a1');
