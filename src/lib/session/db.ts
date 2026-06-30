@@ -753,8 +753,11 @@ function buildSessionWhere(options: QueryOptions): { clause: string; params: any
   }
 
   if (options.cwdPrefix) {
+    // Stored cwd uses the host path separator (normalizeCwd → path.resolve), so
+    // the subdir wildcard must too — a hardcoded '/' never matches a Windows
+    // `C:\a\b` subpath and the listing comes back empty.
     where.push('(cwd = ? OR cwd LIKE ?)');
-    params.push(options.cwdPrefix, options.cwdPrefix + '/%');
+    params.push(options.cwdPrefix, options.cwdPrefix + path.sep + '%');
   }
 
   if (options.project) {
