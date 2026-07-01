@@ -97,6 +97,7 @@ import {
   loadTrash,
   loadRestore,
   loadDoctor,
+  loadStatus,
   loadProfiles,
   loadSecrets,
   loadWallet,
@@ -890,6 +891,7 @@ async function registerAllEagerCommands(): Promise<void> {
   await reg(loadTrash);
   await reg(loadRestore);
   await reg(loadDoctor);
+  await reg(loadStatus);
   registerExecAliasCommand(program);
   await reg(loadProfiles);
   await reg(loadSecrets);
@@ -1031,7 +1033,8 @@ if (!helpOrVersionRequested) {
   // fire-and-forget the next background sync. System repo gets a real fast-forward
   // pull (read-only locally, safe). User repo and extras get fetch-only + a
   // status marker that we'll print on the *next* invocation.
-  const { spawnDetachedSync } = await import('./lib/auto-pull.js');
+  const { spawnDetachedSync, printPendingUpdateNotices } = await import('./lib/auto-pull.js');
+  printPendingUpdateNotices();
   spawnDetachedSync();
 }
 
