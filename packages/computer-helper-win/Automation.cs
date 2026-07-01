@@ -219,7 +219,7 @@ public sealed class Automation
 
             // No ValuePattern — focus and type the characters.
             el.SetFocus();
-            foreach (char ch in text) SendUnicode(ch);
+            SendUnicodeString(text);
             bool committed = false;
             if (P.BoolOr(p, "commit", false)) { SendVirtualKey(VK_RETURN); committed = true; }
             return new() { ["ok"] = true, ["committed"] = committed };
@@ -250,7 +250,13 @@ public sealed class Automation
             // Prefer rich document text, then ValuePattern, then the Name.
             if (el.TryGetCurrentPattern(TextPattern.Pattern, out var tp))
             {
-                var text = ((TextPattern)tp).DocumentRange.GetText(MaxTextChars);
+                // GetText(maxLength > 0) makes the provider compute an endpoint at
+                // start+maxLength; the Windows 11 Notepad UIA provider rejects that as
+                // "Start or end specified is past the end of the text range" when the
+                // document is shorter than maxLength. GetText(-1) returns the whole
+                // range with no endpoint arithmetic; clamp the length in managed code.
+                var text = ((TextPattern)tp).DocumentRange.GetText(-1) ?? "";
+                if (text.Length > MaxTextChars) text = text.Substring(0, MaxTextChars);
                 return new() { ["text"] = text };
             }
             if (el.TryGetCurrentPattern(ValuePattern.Pattern, out var vp))
@@ -265,11 +271,7 @@ public sealed class Automation
     {
         string text = P.StringOpt(p, "text") ?? throw RpcError.Invalid("type_text needs `text`");
         int delayMs = P.IntOr(p, "char_delay_ms", 0);
-        foreach (char ch in text)
-        {
-            SendUnicode(ch);
-            if (delayMs > 0) Thread.Sleep(delayMs);
-        }
+        SendUnicodeString(text, delayMs);
         if (P.BoolOr(p, "commit", false)) SendVirtualKey(VK_RETURN);
         return new() { ["ok"] = true, ["chars"] = text.Length };
     }
@@ -907,11 +909,47 @@ public sealed class Automation
 
     private static void SendVirtualKey(ushort vk) { SendKeyEvent(vk, false); SendKeyEvent(vk, true); }
 
+    private static INPUT UnicodeDown(char ch) =>
+        new() { type = INPUT_KEYBOARD, U = new InputUnion { ki = new KEYBDINPUT { wScan = ch, dwFlags = KEYEVENTF_UNICODE } } };
+    private static INPUT UnicodeUp(char ch) =>
+        new() { type = INPUT_KEYBOARD, U = new InputUnion { ki = new KEYBDINPUT { wScan = ch, dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP } } };
+
     private static void SendUnicode(char ch)
     {
-        var down = new INPUT { type = INPUT_KEYBOARD, U = new InputUnion { ki = new KEYBDINPUT { wScan = ch, dwFlags = KEYEVENTF_UNICODE } } };
-        var up = new INPUT { type = INPUT_KEYBOARD, U = new InputUnion { ki = new KEYBDINPUT { wScan = ch, dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP } } };
-        var inp = new[] { down, up };
+        var inp = new[] { UnicodeDown(ch), UnicodeUp(ch) };
+        SendInput((uint)inp.Length, inp, Marshal.SizeOf<INPUT>());
+    }
+
+    // Type an arbitrary string as KEYEVENTF_UNICODE key events. Every character
+    // is delivered by its own down/up pair carrying the literal UTF-16 code unit
+    // in wScan (with wVk = 0), so SendKeys metacharacters (+ ^ % ~ ( ) { }) and
+    // spaces land byte-for-byte — there is no SendKeys operator layer to escape.
+    //
+    // Fidelity depends on a SINGLE SendInput call for the whole string: it
+    // enqueues all events atomically and in order. The previous one-SendInput-
+    // per-char loop injected with no inter-key settle, which races the target's
+    // input-processing thread and can collapse the tail of the string onto the
+    // last character — issue #554: "reliability probe 12345" landed as
+    // "reliability 55555555555" (same length, tail stuck on the final '5').
+    //
+    // When char_delay_ms > 0 the caller explicitly wants pacing (slow inputs for
+    // laggy fields), so fall back to per-char calls with a real sleep between
+    // them — the sleep provides the settle the batched path gets for free.
+    private static void SendUnicodeString(string text, int delayMs = 0)
+    {
+        if (text.Length == 0) return;
+        if (delayMs > 0)
+        {
+            foreach (char ch in text) { SendUnicode(ch); Thread.Sleep(delayMs); }
+            return;
+        }
+        var inp = new INPUT[text.Length * 2];
+        int i = 0;
+        foreach (char ch in text)
+        {
+            inp[i++] = UnicodeDown(ch);
+            inp[i++] = UnicodeUp(ch);
+        }
         SendInput((uint)inp.Length, inp, Marshal.SizeOf<INPUT>());
     }
 }
