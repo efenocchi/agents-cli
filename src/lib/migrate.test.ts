@@ -228,8 +228,9 @@ describe('repairSelfReferentialBinShims', () => {
 
     // A genuine binary on PATH, in a dir that is NOT the shims dir.
     const realBinDir = makeTempRoot();
-    const realBin = path.join(realBinDir, 'droid');
-    fs.writeFileSync(realBin, '#!/bin/sh\n# real droid\n');
+    const exeExt = process.platform === 'win32' ? '.cmd' : '';
+    const realBin = path.join(realBinDir, 'droid' + exeExt);
+    fs.writeFileSync(realBin, process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n# real droid\n');
     fs.chmodSync(realBin, 0o755);
 
     // Sanity: before repair the link resolves into the shims dir (the loop).
@@ -237,8 +238,13 @@ describe('repairSelfReferentialBinShims', () => {
 
     withPath([realBinDir], () => repairSelfReferentialBinShims(versionsRoot, shimsDir));
 
-    // After repair it resolves to the real binary, not the shim.
-    expect(fs.realpathSync(binLink)).toBe(fs.realpathSync(realBin));
+    // After repair the loop is broken and the .bin entry yields the real binary.
+    // On Windows without the symlink privilege createLink copies (a copy's
+    // realpath is itself, not the target), so assert the functional contract —
+    // same bytes as the real binary, and no longer resolving back into the
+    // shims dir — rather than symlink-target identity.
+    expect(fs.readFileSync(binLink)).toEqual(fs.readFileSync(realBin));
+    expect(fs.realpathSync(binLink).startsWith(fs.realpathSync(shimsDir) + path.sep)).toBe(false);
   });
 
   it('removes the self-referential symlink when no real binary is on PATH', () => {
@@ -263,8 +269,9 @@ describe('repairSelfReferentialBinShims', () => {
     fs.mkdirSync(shimsDir, { recursive: true });
 
     const realBinDir = makeTempRoot();
-    const realBin = path.join(realBinDir, 'droid');
-    fs.writeFileSync(realBin, '#!/bin/sh\n');
+    const exeExt = process.platform === 'win32' ? '.cmd' : '';
+    const realBin = path.join(realBinDir, 'droid' + exeExt);
+    fs.writeFileSync(realBin, process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n');
     fs.chmodSync(realBin, 0o755);
 
     const binDir = path.join(versionsRoot, 'droid', 'latest', 'node_modules', '.bin');
