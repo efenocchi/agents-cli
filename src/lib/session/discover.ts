@@ -24,6 +24,7 @@ import { walkForFiles } from '../fs-walk.js';
 import { getConfigSymlinkVersion } from '../shims.js';
 import { SESSION_AGENTS } from './types.js';
 import { extractSessionTopic } from './prompt.js';
+import { extractPrUrl, detectWorktree, detectTicket, isPrCreateCommand } from './state.js';
 import { costOfUsage } from '../pricing/index.js';
 import {
   getDB,
@@ -110,6 +111,11 @@ interface ClaudeSessionScan {
   entrypoint?: string;
   /** Concatenated user message text, ready to hand to FTS5. */
   contentText?: string;
+  /** Durable state signals persisted to the index by the session-state engine. */
+  prUrl?: string;
+  prNumber?: number;
+  worktreeSlug?: string;
+  ticketId?: string;
 }
 
 /** Lightweight metadata extracted from a Codex JSONL file during incremental scan. */
@@ -125,6 +131,10 @@ interface CodexSessionScan {
   costUsd?: number;
   durationMs?: number;
   contentText?: string;
+  prUrl?: string;
+  prNumber?: number;
+  worktreeSlug?: string;
+  ticketId?: string;
 }
 
 const cachedAgentVersions = new Map<SessionAgentId, Promise<string | undefined>>();
@@ -565,6 +575,10 @@ async function readClaudeMeta(
       costUsd: scan.costUsd,
       durationMs: scan.durationMs,
       isTeamOrigin,
+      prUrl: scan.prUrl,
+      prNumber: scan.prNumber,
+      worktreeSlug: scan.worktreeSlug,
+      ticketId: scan.ticketId,
     };
   } else {
     const stat = safeStatSync(filePath);
@@ -582,6 +596,10 @@ async function readClaudeMeta(
       durationMs: scan.durationMs,
       topic: scan.topic,
       isTeamOrigin,
+      prUrl: scan.prUrl,
+      prNumber: scan.prNumber,
+      worktreeSlug: scan.worktreeSlug,
+      ticketId: scan.ticketId,
     };
   }
 
@@ -758,6 +776,10 @@ async function readCodexMeta(
     costUsd: scan.costUsd,
     durationMs: scan.durationMs,
     account,
+    prUrl: scan.prUrl,
+    prNumber: scan.prNumber,
+    worktreeSlug: scan.worktreeSlug,
+    ticketId: scan.ticketId,
   };
   return { meta, content: scan.contentText || '' };
 }
@@ -1782,6 +1804,12 @@ export async function scanClaudeSession(filePath: string): Promise<ClaudeSession
   let lastTsMs: number | undefined;
   const seenAssistantIds = new Set<string>();
   const userTexts: string[] = [];
+  // Durable PR signal: set only when an actual `gh pr create` Bash *command*
+  // runs (structural — the command field, not any prose mentioning it), then
+  // capture the pull URL from a later tool_result's output.
+  let sawPrCreate = false;
+  let prUrl: string | undefined;
+  let prNumber: number | undefined;
 
   try {
     for await (const line of rl) {
@@ -1798,6 +1826,28 @@ export async function scanClaudeSession(filePath: string): Promise<ClaudeSession
       // and is the clean structural signal for "was this a team spawn?"
       if (!entrypoint && typeof parsed.entrypoint === 'string') {
         entrypoint = parsed.entrypoint;
+      }
+
+      // PR signal, structurally: a Bash tool_use whose command is `gh pr create`
+      // marks intent; the pull URL is then read from a tool_result's output.
+      if (!prUrl) {
+        if (!sawPrCreate && parsed.type === 'assistant' && Array.isArray(parsed.message?.content)) {
+          for (const b of parsed.message.content) {
+            if (b?.type === 'tool_use' && typeof b?.input?.command === 'string' && isPrCreateCommand(b.input.command)) {
+              sawPrCreate = true;
+            }
+          }
+        }
+        if (sawPrCreate && parsed.type === 'user' && Array.isArray(parsed.message?.content)) {
+          for (const b of parsed.message.content) {
+            if (b?.type !== 'tool_result') continue;
+            const text = typeof b.content === 'string'
+              ? b.content
+              : Array.isArray(b.content) ? b.content.map((c: any) => c?.text || '').join('\n') : '';
+            const pr = extractPrUrl(text);
+            if (pr) { prUrl = pr.url; prNumber = pr.number; }
+          }
+        }
       }
 
       // Track duration across every timestamped event, not just the first.
@@ -1886,6 +1936,8 @@ export async function scanClaudeSession(filePath: string): Promise<ClaudeSession
   // Prefer an explicit session title (user `/rename` > Claude auto-title) over
   // the first-prompt topic.
   const resolvedTopic = customTitle || aiTitle || topic;
+  const worktree = detectWorktree(cwd, gitBranch);
+  const ticket = detectTicket(userTexts.join('\n') || undefined, gitBranch);
 
   return {
     timestamp,
@@ -1899,6 +1951,10 @@ export async function scanClaudeSession(filePath: string): Promise<ClaudeSession
     costUsd: sawCost ? costUsd : undefined,
     durationMs,
     contentText: userTexts.length > 0 ? userTexts.join('\n') : undefined,
+    prUrl,
+    prNumber,
+    worktreeSlug: worktree?.slug,
+    ticketId: ticket?.id,
   };
 }
 
@@ -1920,6 +1976,9 @@ async function scanCodexSession(filePath: string): Promise<CodexSessionScan> {
   let firstTsMs: number | undefined;
   let lastTsMs: number | undefined;
   const userTexts: string[] = [];
+  let sawPrCreate = false;
+  let prUrl: string | undefined;
+  let prNumber: number | undefined;
 
   try {
     for await (const line of rl) {
@@ -1930,6 +1989,24 @@ async function scanCodexSession(filePath: string): Promise<CodexSessionScan> {
         parsed = JSON.parse(line);
       } catch {
         continue;
+      }
+
+      // PR signal, structurally: a Codex `function_call` whose command is
+      // `gh pr create`, then the pull URL from a `function_call_output`.
+      if (!prUrl && parsed.type === 'response_item') {
+        const p = parsed.payload || {};
+        if (!sawPrCreate && p.type === 'function_call') {
+          let cmd = '';
+          try {
+            const args = typeof p.arguments === 'string' ? JSON.parse(p.arguments) : (p.arguments || {});
+            cmd = String(args.command || args.cmd || '');
+          } catch { /* non-JSON args */ }
+          if (isPrCreateCommand(cmd)) sawPrCreate = true;
+        }
+        if (sawPrCreate && p.type === 'function_call_output') {
+          const pr = extractPrUrl(String(p.output || ''));
+          if (pr) { prUrl = pr.url; prNumber = pr.number; }
+        }
       }
 
       // Track duration across every timestamped event.
@@ -2000,6 +2077,9 @@ async function scanCodexSession(filePath: string): Promise<CodexSessionScan> {
       ? lastTsMs - firstTsMs
       : undefined;
 
+  const worktree = detectWorktree(cwd, gitBranch);
+  const ticket = detectTicket(userTexts.join('\n') || undefined, gitBranch);
+
   return {
     sessionId,
     timestamp,
@@ -2012,6 +2092,10 @@ async function scanCodexSession(filePath: string): Promise<CodexSessionScan> {
     costUsd,
     durationMs,
     contentText: userTexts.length > 0 ? userTexts.join('\n') : undefined,
+    prUrl,
+    prNumber,
+    worktreeSlug: worktree?.slug,
+    ticketId: ticket?.id,
   };
 }
 

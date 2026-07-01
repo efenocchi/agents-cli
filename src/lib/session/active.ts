@@ -25,7 +25,10 @@ import { listActiveTasks } from '../cloud/store.js';
 import { AgentManager } from '../teams/agents.js';
 import { getTerminalsDir } from '../state.js';
 import { buildClaudeLabelMap } from './discover.js';
+import { latestSessionFileForCwd } from './db.js';
 import { extractSessionTopic } from './prompt.js';
+import { readSessionTail } from './tail.js';
+import { inferSessionState, type SessionState, type SessionActivity, type AwaitingReason, type DetectedPr, type DetectedWorktree, type DetectedTicket } from './state.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -45,6 +48,18 @@ export interface ActiveSession {
   label?: string;
   /** First meaningful line of the initial prompt (extracted topic). */
   topic?: string;
+  /** Live preview: the latest turn (agent message or tool action), from the state engine. */
+  preview?: string;
+  /** Inferred activity: working / waiting_input / idle (from the transcript tail). */
+  activity?: SessionActivity;
+  /** Why the agent is waiting, when activity is waiting_input. */
+  awaitingReason?: AwaitingReason;
+  /** PR opened during the session. */
+  pr?: DetectedPr;
+  /** Worktree the session runs in. */
+  worktree?: DetectedWorktree;
+  /** Tracker ticket the session is tied to. */
+  ticket?: DetectedTicket;
   sessionFile?: string;
   startedAtMs?: number;
   status: ActiveStatus;
@@ -182,6 +197,61 @@ function classifyActivity(sessionFile: string | undefined): 'running' | 'idle' {
 }
 
 /**
+ * Locate the live transcript for an agent process. Claude files are keyed by
+ * cwd (+ optional session uuid); Codex files are date-partitioned, so we resolve
+ * the newest indexed Codex session for the cwd instead.
+ */
+function findSessionFileForKind(kind: string, cwd?: string, sessionId?: string): string | undefined {
+  if (!cwd) return undefined;
+  if (kind === 'claude') return findClaudeSessionFile(cwd, sessionId);
+  if (kind === 'codex') return latestSessionFileForCwd('codex', cwd);
+  return undefined;
+}
+
+/** Recover the session UUID from a transcript filename (Claude `<uuid>.jsonl`, Codex `rollout-…-<uuid>.jsonl`). */
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+function sessionIdFromFile(file?: string): string | undefined {
+  if (!file) return undefined;
+  return path.basename(file).match(UUID_RE)?.[0];
+}
+
+/** Infer live state from a session file's tail (Claude/Codex). Undefined when unreadable. */
+function computeLiveState(kind: string, sessionFile: string | undefined, cwd: string | undefined, pidAlive: boolean): SessionState | undefined {
+  if (!sessionFile) return undefined;
+  const agent = kind === 'codex' ? 'codex' : 'claude';
+  const events = readSessionTail(sessionFile, agent);
+  if (events.length === 0) return undefined;
+  let mtimeMs: number | undefined;
+  try { mtimeMs = fs.statSync(sessionFile).mtimeMs; } catch { /* vanished between calls */ }
+  return inferSessionState(events, { cwd, pidAlive, mtimeMs, activeWindowMs: ACTIVE_MTIME_WINDOW_MS });
+}
+
+/** Map inferred activity onto the coarse ActiveStatus used by the renderer and counts. */
+function statusFromActivity(activity: SessionActivity): ActiveStatus {
+  return activity === 'working' ? 'running' : activity === 'waiting_input' ? 'input_required' : 'idle';
+}
+
+/**
+ * Fold a computed SessionState onto an active-session row: rich status +
+ * preview + PR/worktree/ticket badges. With no state (unreadable/non-Claude/
+ * Codex file) it degrades to the mtime-only classification.
+ */
+function applyState(base: Omit<ActiveSession, 'status'>, state: SessionState | undefined, fallbackFile: string | undefined): ActiveSession {
+  if (!state) return { ...base, status: classifyActivity(fallbackFile) };
+  return {
+    ...base,
+    status: statusFromActivity(state.activity),
+    activity: state.activity,
+    awaitingReason: state.awaitingReason,
+    // Prefer the live preview (latest turn); keep the first-prompt topic as a fallback.
+    preview: state.preview ?? base.preview,
+    pr: state.pr,
+    worktree: state.worktree,
+    ticket: state.ticket,
+  };
+}
+
+/**
  * Extract the first user message's content from a Claude JSONL file.
  * Reads only the first ~50 lines for speed, since the user message is
  * typically near the top (after system/queue events).
@@ -260,25 +330,22 @@ export async function listTeamsActive(): Promise<ActiveSession[]> {
   const running = await mgr.listRunning();
   return running.map((a): ActiveSession => {
     const sessionId = a.parentSessionId ?? a.remoteSessionId ?? undefined;
-    const sessionFile =
-      a.agentType === 'claude' && a.cwd
-        ? findClaudeSessionFile(a.cwd, sessionId ?? undefined)
-        : undefined;
+    const sessionFile = findSessionFileForKind(a.agentType, a.cwd ?? undefined, sessionId ?? undefined);
     const topic = sessionFile ? quickExtractTopic(sessionFile) : undefined;
-    return {
+    const state = computeLiveState(a.agentType, sessionFile, a.cwd ?? undefined, a.pid ? isPidAlive(a.pid) : true);
+    return applyState({
       context: 'teams',
       kind: a.agentType,
       pid: a.pid ?? undefined,
-      sessionId,
+      sessionId: sessionId ?? sessionIdFromFile(sessionFile),
       cwd: a.cwd ?? undefined,
       label: a.name ?? undefined,
       topic,
       sessionFile,
       startedAtMs: a.startedAt.getTime(),
-      status: classifyActivity(sessionFile),
       teamName: a.taskName,
       agentId: a.agentId,
-    };
+    }, state, sessionFile);
   });
 }
 
@@ -296,28 +363,25 @@ export async function listTerminalsActive(): Promise<ActiveSession[]> {
   const labelMap = buildClaudeLabelMap();
 
   return entries.map((t): ActiveSession => {
-    const sessionFile =
-      t.kind === 'claude' && t.cwd
-        ? findClaudeSessionFile(t.cwd, t.sessionId)
-        : undefined;
+    const sessionFile = findSessionFileForKind(t.kind, t.cwd ?? undefined, t.sessionId);
     // Prefer label from live terminal, fall back to Claude's session label
     const label = t.label ?? (t.sessionId ? labelMap.get(t.sessionId) : undefined) ?? undefined;
     // Extract topic from session file (first meaningful user message)
     const topic = sessionFile ? quickExtractTopic(sessionFile) : undefined;
-    return {
+    const state = computeLiveState(t.kind, sessionFile, t.cwd ?? undefined, isPidAlive(t.pid));
+    return applyState({
       context: 'terminal',
       kind: t.kind,
       host: detectHost(t.pid, procByPid),
       pid: t.pid,
-      sessionId: t.sessionId,
+      sessionId: t.sessionId ?? sessionIdFromFile(sessionFile),
       cwd: t.cwd ?? undefined,
       label,
       topic,
       sessionFile,
       startedAtMs: t.startedAtMs,
-      status: classifyActivity(sessionFile),
       windowId: t.windowId,
-    };
+    }, state, sessionFile);
   });
 }
 
@@ -498,20 +562,21 @@ export async function listUnattributedActive(attributed: Set<number>): Promise<A
   for (let i = 0; i < candidates.length; i++) {
     const { pid, kind } = candidates[i];
     const cwd = cwds[i];
-    const sessionFile = kind === 'claude' && cwd ? findClaudeSessionFile(cwd) : undefined;
+    const sessionFile = findSessionFileForKind(kind, cwd);
     const topic = sessionFile ? quickExtractTopic(sessionFile) : undefined;
     const host = detectHost(pid, procByPid);
     const context: ActiveContext = host && UI_HOSTS.has(host) ? 'terminal' : 'headless';
-    out.push({
+    const state = computeLiveState(kind, sessionFile, cwd, true);
+    out.push(applyState({
       context,
       kind,
       host,
       pid,
       cwd,
+      sessionId: sessionIdFromFile(sessionFile),
       topic,
       sessionFile,
-      status: classifyActivity(sessionFile),
-    });
+    }, state, sessionFile));
   }
   return out;
 }

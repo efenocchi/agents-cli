@@ -137,10 +137,19 @@ describe('migration v5 -> v6 adds cost/duration columns', () => {
     expect(cols).toContain('duration_ms');
   });
 
-  it('schema_version is recorded as 6', () => {
+  it('schema_version is recorded as the current version', () => {
     const db = getDB();
     const row = db.prepare(`SELECT value FROM meta WHERE key = 'schema_version'`).get() as { value: string };
-    expect(row.value).toBe('6');
+    expect(row.value).toBe('7');
+  });
+
+  it('v7 adds the session-state columns (pr_url, worktree_slug, ticket_id)', () => {
+    const db = getDB();
+    const cols = (db.prepare(`PRAGMA table_info(sessions)`).all() as Array<{ name: string }>).map(c => c.name);
+    expect(cols).toContain('pr_url');
+    expect(cols).toContain('pr_number');
+    expect(cols).toContain('worktree_slug');
+    expect(cols).toContain('ticket_id');
   });
 });
 

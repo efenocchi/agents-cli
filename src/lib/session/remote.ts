@@ -28,6 +28,7 @@ import { createHash } from 'crypto';
 import chalk from 'chalk';
 import { getCacheDir } from '../state.js';
 import { formatRelativeTime } from './relative-time.js';
+import { terminalWidth } from './width.js';
 
 /**
  * SSH target: a bare ssh-config host alias (e.g. `yosemite-s1`) or `user@host`.
@@ -90,9 +91,13 @@ export function buildForwardedArgs(argv: string[], hosts: Set<string> = new Set(
  * are quoted for the inner login shell, then the whole `agents …` invocation is
  * quoted again so it survives `bash -lc <...>`.
  */
-export function buildRemoteCommand(forwardedArgs: string[]): string {
+export function buildRemoteCommand(forwardedArgs: string[], columns?: number): string {
   const inner = ['agents', ...forwardedArgs].map(shellQuote).join(' ');
-  return `bash -lc ${shellQuote(inner)}`;
+  // Forward the caller's terminal width so the remote renders the table to the
+  // local screen (over SSH the remote's own COLUMNS is unset/wrong). `VAR=val
+  // cmd` scopes the env to that process — the remote's terminalWidth() reads it.
+  const withCols = columns && columns > 0 ? `COLUMNS=${columns} ${inner}` : inner;
+  return `bash -lc ${shellQuote(withCols)}`;
 }
 
 const SSH_OPTS = [
@@ -186,7 +191,7 @@ export function runRemoteSessions(hosts: string[], argv: string[] = process.argv
   for (const host of hosts) assertValidSshTarget(host); // fail fast on any bad target
 
   const forwarded = buildForwardedArgs(argv, new Set(hosts));
-  const remoteCmd = buildRemoteCommand(forwarded);
+  const remoteCmd = buildRemoteCommand(forwarded, terminalWidth());
   const multi = hosts.length > 1;
   let failures = 0;
 

@@ -44,6 +44,11 @@ function sanitizeArgsDeep(value: any): any {
   return value;
 }
 
+/** In-place sanitize every user-visible string field on a list of events. */
+export function sanitizeEvents(events: SessionEvent[]): void {
+  for (const e of events) sanitizeEvent(e);
+}
+
 /** In-place sanitize all user-visible string fields on an event. */
 function sanitizeEvent(e: SessionEvent): void {
   if (e.content) e.content = sanitizeForTerminal(e.content);
@@ -188,7 +193,16 @@ function shortenPath(p: string): string {
 
 /** Parse a Claude JSONL session file into normalized events. */
 export function parseClaude(filePath: string): SessionEvent[] {
-  const content = safeReadSessionFile(filePath);
+  return parseClaudeContent(safeReadSessionFile(filePath));
+}
+
+/**
+ * Parse Claude JSONL *content* (already read into a string) into normalized
+ * events. Split from `parseClaude` so the tail reader can parse just the last
+ * chunk of a file without re-reading the whole thing. Malformed leading lines
+ * (a tail that starts mid-line) are skipped by the per-line try/catch below.
+ */
+export function parseClaudeContent(content: string): SessionEvent[] {
   const lines = content.split('\n').filter(l => l.trim());
   const events: SessionEvent[] = [];
 
@@ -377,7 +391,15 @@ export function parseClaude(filePath: string): SessionEvent[] {
 
 /** Parse a Codex JSONL session file into normalized events. */
 export function parseCodex(filePath: string): SessionEvent[] {
-  const content = safeReadSessionFile(filePath);
+  return parseCodexContent(safeReadSessionFile(filePath));
+}
+
+/**
+ * Parse Codex JSONL *content* (already read into a string) into normalized
+ * events. Split from `parseCodex` so the tail reader can parse just the last
+ * chunk without re-reading the whole file.
+ */
+export function parseCodexContent(content: string): SessionEvent[] {
   const lines = content.split('\n').filter(l => l.trim());
   const events: SessionEvent[] = [];
 

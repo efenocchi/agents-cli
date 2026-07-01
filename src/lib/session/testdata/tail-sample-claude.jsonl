@@ -1,0 +1,4 @@
+{"type":"user","message":{"role":"user","content":"Add a --tree flag to agents sessions"},"timestamp":"2026-06-30T10:00:00.000Z","cwd":"/home/u/repo/.agents/worktrees/tree-view","gitBranch":"agents/tree-view","sessionId":"aaaa1111"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"On it."},{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"bun test src/lib/session/"}}],"usage":{"input_tokens":10,"output_tokens":5}},"timestamp":"2026-06-30T10:00:05.000Z"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"12 pass"}]},"timestamp":"2026-06-30T10:00:09.000Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Tests pass. Should the flat table stay the default, or make --tree the default?"}]},"timestamp":"2026-06-30T10:00:12.000Z"}

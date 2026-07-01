@@ -20,6 +20,8 @@ import { SESSION_AGENTS } from '../lib/session/types.js';
 import { discoverArtifacts, readArtifact, resolveArtifact } from '../lib/session/artifacts.js';
 import { looksLikePath, toComparablePath, homeDir } from '../lib/platform/index.js';
 import { getActiveSessions, type ActiveSession } from '../lib/session/active.js';
+import { stringWidth, truncateToWidth, padToWidth, terminalWidth } from '../lib/session/width.js';
+import type { SessionActivity, AwaitingReason } from '../lib/session/state.js';
 import { discoverSessions, countSessionsInScope, resolveSessionById, searchContentIndex, parseTimeFilter, type DiscoverOptions, type ScanProgress } from '../lib/session/discover.js';
 import { filterTeamSessions } from '../lib/session/team-filter.js';
 import { parseSession } from '../lib/session/parse.js';
@@ -62,6 +64,10 @@ interface SessionsOptions extends SessionFilterOptions {
   active?: boolean;
   cloud?: boolean;
   host?: string[];
+  /** Group the listing by directory and drop the id/version columns. */
+  tree?: boolean;
+  /** With --active: show only sessions waiting on user input; exit 1 if any. */
+  waiting?: boolean;
 }
 
 interface ClaudeHistoryEntry {
@@ -235,42 +241,68 @@ function formatStartedAt(startedAtMs?: number): string {
   return formatRelativeTime(new Date(startedAtMs).toISOString());
 }
 
-/** Build a display-friendly description for an active session (label or topic). */
+/**
+ * Build the live description for an active session: prefer the state engine's
+ * preview (the latest turn), then a user label, then the first-prompt topic.
+ */
 function buildSessionDescription(s: ActiveSession): string {
   if (s.context === 'cloud') {
-    return `${s.cloudProvider ?? ''}${s.cloudTaskId ? ` · ${s.cloudTaskId.slice(0, 12)}` : ''}`;
+    return s.preview || `${s.cloudProvider ?? ''}${s.cloudTaskId ? ` · ${s.cloudTaskId.slice(0, 12)}` : ''}`;
   }
   if (s.context === 'teams') {
     const parts = [s.teamName];
-    if (s.label) parts.push(s.label);
+    if (s.preview) parts.push(s.preview);
+    else if (s.label) parts.push(s.label);
     else if (s.topic) parts.push(s.topic);
     return parts.filter(Boolean).join(' · ');
   }
-  // Terminal or headless: prefer label, then topic
-  if (s.label) return s.label;
-  if (s.topic) return s.topic;
-  return '';
+  // Terminal or headless: prefer the live preview, then label, then topic.
+  return s.preview || s.label || s.topic || '';
+}
+
+/** Short human word for a session's activity (falls back to the coarse status). */
+function activityLabel(s: ActiveSession): string {
+  if (s.activity === 'waiting_input') return 'waiting';
+  if (s.activity === 'working') return 'working';
+  if (s.activity === 'idle') return 'idle';
+  return s.status === 'input_required' ? 'waiting' : s.status;
+}
+
+/**
+ * Compact, colour-coded badges for the durable/awaiting signals. Text-only (no
+ * emoji, per repo convention): `plan` / `ask` / `perm` for why it's waiting,
+ * `PR#N`, `wt:slug`, `TICKET-123`.
+ */
+function signalBadges(s: Pick<ActiveSession, 'awaitingReason' | 'pr' | 'worktree' | 'ticket'>): string {
+  const parts: string[] = [];
+  if (s.awaitingReason === 'plan_review') parts.push(chalk.yellow('plan'));
+  else if (s.awaitingReason === 'question') parts.push(chalk.yellow('ask'));
+  else if (s.awaitingReason === 'permission') parts.push(chalk.yellow('perm'));
+  if (s.ticket) parts.push(chalk.cyan(s.ticket.id));
+  if (s.pr) parts.push(chalk.blue(`PR#${s.pr.number ?? '?'}`));
+  if (s.worktree) parts.push(chalk.magenta(`wt:${s.worktree.slug}`));
+  return parts.join(' ');
 }
 
 /**
  * Render a single agent-session row inside an already-printed group header.
  * Indent is the leading whitespace (2 spaces for flat groups, 4 inside a
- * window sub-group).
+ * window sub-group). Leads with the 8-char session id (the address to read or
+ * resume it); status, badges, and the live preview fill the rest, sized to the
+ * terminal width so the row never wraps.
  */
 function printActiveRow(s: ActiveSession, indent: string): void {
-  const kindCol = colorAgent(s.kind as any)(padRight(truncate(s.kind, 8), 9));
-  const hostCol = chalk.gray(padRight(truncate(s.host ?? '-', 8), 9));
-  const statusCol = statusColor(s.status)(padRight(truncate(s.status, 7), 8));
-  const pidCol = chalk.yellow(padRight(s.pid ? String(s.pid) : '-', 7));
-  const desc = buildSessionDescription(s);
-  console.log(
-    indent +
-    pidCol +
-    kindCol +
-    hostCol +
-    statusCol +
-    chalk.white(truncate(desc || '-', 50))
-  );
+  const idCol = chalk.dim(padToWidth((s.sessionId?.slice(0, 8)) ?? '-', 9));
+  const kindCol = colorAgent(s.kind as any)(padToWidth(truncateToWidth(s.kind, 8), 9));
+  const hostCol = chalk.gray(padToWidth(truncateToWidth(s.host ?? '-', 8), 9));
+  const statusCol = statusColor(s.status)(padToWidth(truncateToWidth(activityLabel(s), 8), 9));
+  const badges = signalBadges(s);
+  const desc = buildSessionDescription(s) || '-';
+  // Fill the remaining width with the preview so nothing wraps under tmux/SSH.
+  const fixed = stringWidth(indent) + 9 + 9 + 9 + 9 + (badges ? stringWidth(badges) + 1 : 0);
+  const room = Math.max(12, terminalWidth() - fixed - 1);
+  const descCol = chalk.white(truncateToWidth(desc, room));
+  console.log(indent + idCol + kindCol + hostCol + statusCol + (badges ? badges + ' ' : '') + descCol);
 }
 
 /**
@@ -352,16 +384,22 @@ export function groupActiveSessions(sessions: ActiveSession[]): ActiveSessionsLa
 }
 
 /** Render the unified active-session view. */
-async function renderActiveSessions(asJson: boolean): Promise<void> {
-  const sessions = await getActiveSessions();
+async function renderActiveSessions(asJson: boolean, waitingOnly = false): Promise<void> {
+  const all = await getActiveSessions();
+  // --waiting: only sessions blocked on the user. Exits non-zero when any are
+  // present so a supervising agent or hook can poll it as a gate.
+  const sessions = waitingOnly
+    ? all.filter(s => s.status === 'input_required')
+    : all;
 
   if (asJson) {
     process.stdout.write(JSON.stringify(sessions, null, 2) + '\n');
+    if (waitingOnly && sessions.length > 0) process.exitCode = 1;
     return;
   }
 
   if (sessions.length === 0) {
-    console.log(chalk.gray('No active agent sessions.'));
+    console.log(chalk.gray(waitingOnly ? 'No sessions waiting on input.' : 'No active agent sessions.'));
     return;
   }
 
@@ -401,6 +439,9 @@ async function renderActiveSessions(asJson: boolean): Promise<void> {
   if (idleCount > 0) parts.push(`${idleCount} idle`);
   if (queuedCount > 0) parts.push(`${queuedCount} queued`);
   console.log(chalk.gray(`\n${sessions.length} active (${parts.join(', ')}).`));
+
+  // Scriptable gate: a non-zero exit when anything is waiting on the user.
+  if (waitingOnly && sessions.length > 0) process.exitCode = 1;
 }
 
 /** Main action handler for `agents sessions`. Routes to picker, table, or single-session render. */
@@ -416,7 +457,7 @@ async function sessionsAction(query: string | undefined, options: SessionsOption
   }
 
   if (options.active) {
-    await renderActiveSessions(options.json === true);
+    await renderActiveSessions(options.json === true, options.waiting === true);
     return;
   }
 
@@ -562,7 +603,9 @@ async function sessionsAction(query: string | undefined, options: SessionsOption
       return;
     }
 
-    if (isInteractiveTerminal()) {
+    // --tree is a printed grouped listing, not an interactive pick — render it
+    // directly even in a TTY.
+    if (isInteractiveTerminal() && !options.tree) {
       const message = pathFilter
         ? `Search sessions (${path.basename(pathFilter)}):`
         : formatSearchMessage(options);
@@ -576,7 +619,7 @@ async function sessionsAction(query: string | undefined, options: SessionsOption
 
     // Non-interactive fallback (piped output)
     const filtered = searchQuery ? filterSessionsByQuery(sessions, searchQuery) : sessions;
-    printSessionTable(filtered, hiddenCount);
+    printSessionTable(filtered, hiddenCount, options.tree === true);
   } catch (err: any) {
     tracker.stop();
     spinner?.stop();
@@ -596,25 +639,89 @@ function teamTag(session: SessionMeta): string {
   return parts ? `[${parts}] ` : '[team] ';
 }
 
-function printSessionTable(sessions: SessionMeta[], hiddenCount = 0): void {
-  for (const session of sessions) {
-    const agentColor = colorAgent(session.agent);
-    const when = formatRelativeTime(session.timestamp);
-    const project = session.project || '-';
-    const tag = teamTag(session);
-    const label = (session as any).label;
-    const topic = tag ? `${tag}${session.topic ?? ''}` : session.topic;
-    const versionStr = session.version || '-';
+/** Adapt a SessionMeta's persisted signals to the badge renderer's shape. */
+function metaSignals(s: SessionMeta): Parameters<typeof signalBadges>[0] {
+  return {
+    pr: s.prUrl ? { url: s.prUrl, number: s.prNumber } : undefined,
+    worktree: s.worktreeSlug ? { path: s.cwd ?? '', slug: s.worktreeSlug } : undefined,
+    ticket: s.ticketId ? { id: s.ticketId } : undefined,
+  };
+}
 
-    console.log(
-      chalk.white(padRight(session.shortId, 10)) +
-      agentColor(padRight(truncate(session.agent, 8), 9)) +
-      chalk.yellow(padRight(truncate(versionStr, 7), 8)) +
-      chalk.cyan(padRight(truncate(project, 14), 16)) +
-      renderTopicCell(label, topic, '', 48, 50) +
-      chalk.gray(when)
-    );
+/** One flat table row: shortId · agent · version · project · topic(+badges) · time. */
+function flatSessionRow(session: SessionMeta): string {
+  const agentColor = colorAgent(session.agent);
+  const when = formatRelativeTime(session.timestamp);
+  const project = session.project || '-';
+  const tag = teamTag(session);
+  const label = (session as any).label;
+  const topic = tag ? `${tag}${session.topic ?? ''}` : session.topic;
+  const versionStr = session.version || '-';
+  const badges = signalBadges(metaSignals(session));
+  const badgeW = badges ? stringWidth(badges) + 1 : 0;
+  const topicW = Math.max(16, terminalWidth() - (10 + 9 + 8 + 16) - badgeW - stringWidth(when) - 1);
+
+  return (
+    chalk.white(padToWidth(truncateToWidth(session.shortId, 9), 10)) +
+    agentColor(padToWidth(truncateToWidth(session.agent, 8), 9)) +
+    chalk.yellow(padToWidth(truncateToWidth(versionStr, 7), 8)) +
+    chalk.cyan(padToWidth(truncateToWidth(project, 14), 16)) +
+    renderTopicCell(label, topic, '', topicW, topicW) +
+    (badges ? badges + ' ' : '') +
+    chalk.gray(when)
+  );
+}
+
+/** One tree-mode row (grouped under a dir header): id · agent · badges · topic · time. No version/project column. */
+function treeSessionRow(session: SessionMeta): string {
+  const agentColor = colorAgent(session.agent);
+  const when = formatRelativeTime(session.timestamp);
+  const tag = teamTag(session);
+  const label = (session as any).label;
+  const topic = (tag ? `${tag}${session.topic ?? ''}` : session.topic) || '-';
+  const badges = signalBadges(metaSignals(session));
+  const badgeW = badges ? stringWidth(badges) + 1 : 0;
+  const head = label ? `${label} · ${topic}` : topic;
+  const topicW = Math.max(12, terminalWidth() - (2 + 9 + 8) - badgeW - stringWidth(when) - 1);
+
+  return (
+    '  ' +
+    chalk.dim(padToWidth(session.shortId, 9)) +
+    agentColor(padToWidth(truncateToWidth(session.agent, 7), 8)) +
+    (badges ? badges + ' ' : '') +
+    padToWidth(chalk.white(truncateToWidth(head, topicW)), topicW) +
+    ' ' + chalk.gray(when)
+  );
+}
+
+function printSessionTable(sessions: SessionMeta[], hiddenCount = 0, tree = false): void {
+  if (tree) {
+    // Group by directory; drop the id/version columns from view. The short id
+    // stays as each row's leading handle (the address to read/resume it).
+    const byDir = new Map<string, SessionMeta[]>();
+    for (const s of sessions) {
+      const key = s.cwd || s.project || 'unknown';
+      (byDir.get(key) ?? byDir.set(key, []).get(key)!).push(s);
+    }
+    const keys = [...byDir.keys()].sort((a, b) => {
+      const d = byDir.get(b)!.length - byDir.get(a)!.length;
+      return d !== 0 ? d : a.localeCompare(b);
+    });
+    let first = true;
+    for (const key of keys) {
+      if (!first) console.log();
+      first = false;
+      const group = byDir.get(key)!;
+      console.log(`${chalk.cyan.bold(shortCwd(key))} ${chalk.gray(`(${group.length})`)}`);
+      for (const s of group) console.log(treeSessionRow(s));
+    }
+    const dirWord = keys.length === 1 ? 'directory' : 'directories';
+    console.log(chalk.gray(`\n${sessions.length} session${sessions.length === 1 ? '' : 's'} across ${keys.length} ${dirWord}.`));
+    if (hiddenCount > 0) console.log(chalk.gray(formatTeamHiddenFooter(hiddenCount)));
+    return;
   }
+
+  for (const session of sessions) console.log(flatSessionRow(session));
 
   const countLine = `${sessions.length} session${sessions.length === 1 ? '' : 's'}.`;
   console.log(chalk.gray(`\n${countLine}`));
@@ -738,8 +845,10 @@ function renderTopicCell(
   const tpc = (topic ?? '').trim();
   const sep = ' · ';
   const raw = lbl && tpc ? `${lbl}${sep}${tpc}` : (lbl || tpc);
-  const visible = truncate(raw, visibleWidth);
-  const padding = ' '.repeat(Math.max(0, paddedWidth - visible.length));
+  // Width-aware: measure/truncate/pad by display cells, not String.length, so
+  // ANSI escapes and wide (CJK/emoji) glyphs don't drift the column.
+  const visible = truncateToWidth(raw, visibleWidth);
+  const padding = ' '.repeat(Math.max(0, paddedWidth - stringWidth(visible)));
   const labelEnd = lbl ? Math.min(lbl.length, visible.length) : 0;
 
   let matchStart = -1, matchEnd = -1;
@@ -1302,6 +1411,8 @@ export function registerSessionsCommands(program: Command): void {
     .option('--artifacts', 'List all files written or edited during a session')
     .option('--artifact <name>', 'Read a specific artifact by filename or path (outputs to stdout)')
     .option('--active', 'Show only sessions running right now across terminals, teams, cloud, and headless agents')
+    .option('--waiting', 'With --active: show only sessions waiting on your input (exits non-zero if any)')
+    .option('--tree', 'Group the listing by directory; drops the id/version columns for readability')
     .option('--cloud', 'Source sessions from Rush Cloud (captured runs) instead of local disk')
     .option('-H, --host <target...>', 'Run this query on remote machine(s) over SSH (host alias or user@host; repeatable)');
 

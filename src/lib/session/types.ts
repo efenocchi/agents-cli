@@ -70,6 +70,15 @@ export interface SessionMeta {
   label?: string;
   /** Set when this session was spawned by `agents teams`. */
   teamOrigin?: TeamOrigin;
+  /** Durable state signals extracted at scan time by the session-state engine. */
+  /** PR URL, if the session opened one (`gh pr create`). */
+  prUrl?: string;
+  /** PR number parsed from prUrl, for compact display. */
+  prNumber?: number;
+  /** Worktree slug when cwd is under `.agents/worktrees/<slug>/`. */
+  worktreeSlug?: string;
+  /** Tracker ticket ref (e.g. RUSH-1234) from the prompt or branch. */
+  ticketId?: string;
   /**
    * True when the session was spawned programmatically (SDK entrypoint) rather
    * than by a human at the Claude CLI. Captured at scan time from the JSONL

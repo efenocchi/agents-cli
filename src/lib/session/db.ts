@@ -17,7 +17,7 @@ const SESSIONS_DIR = getSessionsDir();
 const DB_PATH = getSessionsDbPath();
 
 /** Current schema version; bumped when migrations are added. */
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 /**
  * Canonicalize a file path for use as a scan_ledger key. The same physical
@@ -64,7 +64,11 @@ CREATE TABLE IF NOT EXISTS sessions (
   file_mtime_ms INTEGER,
   file_size INTEGER,
   scanned_at INTEGER,
-  is_team_origin INTEGER DEFAULT 0
+  is_team_origin INTEGER DEFAULT 0,
+  pr_url TEXT,
+  pr_number INTEGER,
+  worktree_slug TEXT,
+  ticket_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_timestamp ON sessions(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_cwd ON sessions(cwd);
@@ -120,6 +124,10 @@ export interface SessionRow {
   file_size: number | null;
   scanned_at: number | null;
   is_team_origin: number;
+  pr_url: string | null;
+  pr_number: number | null;
+  worktree_slug: string | null;
+  ticket_id: string | null;
 }
 
 /** File stat snapshot used to detect changes between scan runs. */
@@ -221,6 +229,17 @@ function migrateSchema(db: Database.Database, fromVersion: number): void {
     if (!cols.some(c => c.name === 'duration_ms')) {
       db.exec(`ALTER TABLE sessions ADD COLUMN duration_ms INTEGER`);
     }
+    db.exec(`DELETE FROM scan_ledger;`);
+  }
+  if (fromVersion < 7) {
+    // v6 → v7: the session-state engine now persists durable signals (PR opened,
+    // worktree, tracker ticket) at scan time. Add the columns and force a full
+    // rescan so every existing session gets them populated.
+    const cols = db.prepare(`PRAGMA table_info(sessions)`).all() as Array<{ name: string }>;
+    if (!cols.some(c => c.name === 'pr_url')) db.exec(`ALTER TABLE sessions ADD COLUMN pr_url TEXT`);
+    if (!cols.some(c => c.name === 'pr_number')) db.exec(`ALTER TABLE sessions ADD COLUMN pr_number INTEGER`);
+    if (!cols.some(c => c.name === 'worktree_slug')) db.exec(`ALTER TABLE sessions ADD COLUMN worktree_slug TEXT`);
+    if (!cols.some(c => c.name === 'ticket_id')) db.exec(`ALTER TABLE sessions ADD COLUMN ticket_id TEXT`);
     db.exec(`DELETE FROM scan_ledger;`);
   }
 }
@@ -444,12 +463,14 @@ const upsertSessionStmt = (db: Database.Database) => db.prepare(`
     id, short_id, agent, version, account, timestamp,
     project, cwd, git_branch, topic, label, message_count, token_count,
     cost_usd, duration_ms,
-    file_path, file_mtime_ms, file_size, scanned_at, is_team_origin
+    file_path, file_mtime_ms, file_size, scanned_at, is_team_origin,
+    pr_url, pr_number, worktree_slug, ticket_id
   ) VALUES (
     @id, @short_id, @agent, @version, @account, @timestamp,
     @project, @cwd, @git_branch, @topic, @label, @message_count, @token_count,
     @cost_usd, @duration_ms,
-    @file_path, @file_mtime_ms, @file_size, @scanned_at, @is_team_origin
+    @file_path, @file_mtime_ms, @file_size, @scanned_at, @is_team_origin,
+    @pr_url, @pr_number, @worktree_slug, @ticket_id
   )
   ON CONFLICT(id) DO UPDATE SET
     short_id = excluded.short_id,
@@ -470,7 +491,11 @@ const upsertSessionStmt = (db: Database.Database) => db.prepare(`
     file_mtime_ms = excluded.file_mtime_ms,
     file_size = excluded.file_size,
     scanned_at = excluded.scanned_at,
-    is_team_origin = excluded.is_team_origin
+    is_team_origin = excluded.is_team_origin,
+    pr_url = excluded.pr_url,
+    pr_number = excluded.pr_number,
+    worktree_slug = excluded.worktree_slug,
+    ticket_id = excluded.ticket_id
 `);
 
 const deleteTextStmt = (db: Database.Database) =>
@@ -523,6 +548,10 @@ export function upsertSession(meta: SessionMeta, content: string, scan?: ScanSta
     file_size: scan?.fileSize ?? null,
     scanned_at: Date.now(),
     is_team_origin: meta.isTeamOrigin ? 1 : 0,
+    pr_url: meta.prUrl ?? null,
+    pr_number: meta.prNumber ?? null,
+    worktree_slug: meta.worktreeSlug ?? null,
+    ticket_id: meta.ticketId ?? null,
   };
 
   const txn = db.transaction(() => {
@@ -611,6 +640,10 @@ export function upsertSessionsBatch(
         file_size: scan?.fileSize ?? null,
         scanned_at: now,
         is_team_origin: meta.isTeamOrigin ? 1 : 0,
+        pr_url: meta.prUrl ?? null,
+        pr_number: meta.prNumber ?? null,
+        worktree_slug: meta.worktreeSlug ?? null,
+        ticket_id: meta.ticketId ?? null,
       });
       delText.run(meta.id);
       insText.run(
@@ -732,7 +765,28 @@ function rowToMeta(row: SessionRow): SessionMeta {
     topic: row.topic ?? undefined,
     label: row.label ?? undefined,
     isTeamOrigin: row.is_team_origin === 1,
+    prUrl: row.pr_url ?? undefined,
+    prNumber: row.pr_number ?? undefined,
+    worktreeSlug: row.worktree_slug ?? undefined,
+    ticketId: row.ticket_id ?? undefined,
   };
+}
+
+/**
+ * Newest indexed session file for an agent working in `cwd`. Lets the live
+ * `--active` scanner locate a Codex transcript (whose files are date-partitioned,
+ * not cwd-keyed like Claude's) by reusing the index. Returns undefined if the
+ * session hasn't been scanned yet — the caller degrades to no live state.
+ */
+export function latestSessionFileForCwd(agent: SessionAgentId, cwd: string): string | undefined {
+  if (!cwd) return undefined;
+  let normalized = cwd;
+  try { normalized = fs.realpathSync(cwd); } catch { /* use as-is */ }
+  const db = getDB();
+  const row = db
+    .prepare(`SELECT file_path FROM sessions WHERE agent = ? AND cwd = ? ORDER BY timestamp DESC LIMIT 1`)
+    .get(agent, normalized) as { file_path: string } | undefined;
+  return row?.file_path;
 }
 
 /** Build a parameterized WHERE clause from query options. */
