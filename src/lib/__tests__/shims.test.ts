@@ -172,11 +172,23 @@ describe('generateVersionedAliasScript', () => {
     expect(script).toContain('export GROK_HOME=');
   });
 
+  it('resolves grok for the pinned version', () => {
+    const script = generateVersionedAliasScript('grok', '0.1.218');
+    expect(script).toContain('$HOME/.grok/downloads');
+    expect(script).toContain('grep -i "0.1.218"');
+    expect(script).not.toContain('node_modules/.bin');
+  });
+
   it('resolves kimi from ~/.kimi-code/bin, not node_modules', () => {
     const script = generateVersionedAliasScript('kimi', '0.12.1');
     expect(script).toContain('KIMI_BINARY="$HOME/.kimi-code/bin/kimi"');
     expect(script).not.toContain('node_modules/.bin/kimi');
     expect(script).toContain('export KIMI_CODE_HOME=');
+  });
+
+  it('keeps npm-packaged claude on node_modules/.bin', () => {
+    const script = generateVersionedAliasScript('claude', '2.1.0');
+    expect(script).toContain('/node_modules/.bin/claude');
   });
 });
 

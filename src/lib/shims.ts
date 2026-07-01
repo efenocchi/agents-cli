@@ -636,6 +636,7 @@ export function removeShim(agent: AgentId): boolean {
  *   v5 — hard-disable Codex startup update checks in versioned aliases.
  *   v6 — versions moved from ~/.agents-system/versions to ~/.agents/versions
  *        (two-repo split: system = shipped defaults, user = operational state).
+ *   v7 — runtime state split into ~/.agents/.history and ~/.agents/.cache.
  *   v8 — resolve grok/kimi/droid binaries from their real install locations
  *        (~/.grok/downloads, ~/.kimi-code/bin, ~/.local/bin) instead of the
  *        hardcoded node_modules/.bin, which never exists for these three and
@@ -712,6 +713,8 @@ export KIMI_CODE_HOME="$HOME/.agents/.history/versions/${agent}/${version}/home/
   // node_modules path made every versioned alias for these three fail with
   // "<agent>@<version> not installed", which is exactly the path `agents teams`
   // takes once it pins a teammate's version.
+  // This template is unix-only — on Windows the .cmd companion delegates to
+  // "agents __shim" which resolves via getBinaryPath() instead.
   const versionDir = `$HOME/.agents/.history/versions/${agent}/${version}`;
   const binaryResolution =
     agent === 'grok'
