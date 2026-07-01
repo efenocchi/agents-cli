@@ -125,6 +125,14 @@ export function setKeychainBackendForTest(b: KeychainBackend | null): KeychainBa
   return prev;
 }
 
+/** True when a test backend is installed (real keychain / biometry bypassed).
+ * Callers that gate on the live secrets-agent broker use this to stay hermetic —
+ * with an in-memory backend there is no real keychain to dedup, so the broker
+ * fast-path must not engage. Always false in production (`backend` is null). */
+export function isKeychainBackendOverridden(): boolean {
+  return backend !== null;
+}
+
 /**
  * Items whose name does NOT start with `agents-cli.` belong to another
  * application (e.g. Anthropic's `Claude Code-credentials-*`). Their ACL
@@ -348,6 +356,32 @@ export function listKeychainItems(prefix: string): string[] {
   if (result.status !== 0) {
     const msg = result.stderr?.toString().trim();
     throw new Error(msg || `Failed to enumerate keychain items with prefix '${prefix}'.`);
+  }
+  const out = result.stdout?.toString() || '';
+  return out.split('\n').map((s) => s.trim()).filter(Boolean);
+}
+
+/**
+ * Enumerate ONLY legacy file-based-keychain item names with the given prefix —
+ * the items that still carry a pre-migration (trusted-app) ACL and pop a
+ * separate auth sheet on read. Items already in the data-protection keychain are
+ * excluded (they need no migration). Silent (attributes only, never decrypts).
+ *
+ * macOS only: on Linux / the test backend there is no separate legacy keychain,
+ * so this returns []. Used by `agents secrets migrate-acl` to rewrite only the
+ * stragglers instead of every item (which would be a Touch ID storm).
+ */
+export function listLegacyKeychainItems(prefix: string): string[] {
+  if (backend) return [];
+  assertSupportedPlatform();
+  if (isLinux()) return [];
+  const bin = getKeychainHelperPath();
+  const result = spawnSync(bin, ['list-legacy', prefix], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (result.status !== 0) {
+    const msg = result.stderr?.toString().trim();
+    throw new Error(msg || `Failed to enumerate legacy keychain items with prefix '${prefix}'.`);
   }
   const out = result.stdout?.toString() || '';
   return out.split('\n').map((s) => s.trim()).filter(Boolean);
