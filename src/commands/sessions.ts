@@ -1257,6 +1257,7 @@ export function buildResumeCommand(session: SessionMeta): string[] | null {
     case 'opencode':
       return ['opencode', '--session', session.id];
     case 'gemini':
+    case 'antigravity':
     case 'openclaw':
     case 'rush':
     case 'hermes':
