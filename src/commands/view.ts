@@ -42,7 +42,6 @@ import {
   getVersionHomePath,
   getVersionDir,
   resolveVersion,
-  resolveVersionAlias,
   getAvailableResources,
   getActuallySyncedResources,
   getNewResources,
@@ -61,6 +60,7 @@ import {
   removeShim,
 } from '../lib/shims.js';
 import { getAgentResources, listResources } from '../lib/resources.js';
+import { resolveVersionFilter, AgentSpecError } from '../lib/agent-spec/index.js';
 import { listCliStatus } from '../lib/cli-resources.js';
 import { isCapable } from '../lib/capabilities.js';
 import { discoverPlugins, pluginSupportsAgent } from '../lib/plugins.js';
@@ -1522,12 +1522,23 @@ export async function viewAction(
     console.log(chalk.red(formatAgentError(agentName)));
     process.exit(1);
   }
-  // Keep 'default'/'pinned' as-is since showAgentResources handles 'default';
-  // resolveVersionAlias returns undefined for both (they're synonyms), which
-  // would otherwise skip the detailed view.
-  const requestedVersion = (parts[1] === 'default' || parts[1] === 'pinned')
-    ? 'default'
-    : (resolveVersionAlias(agentId, parts[1]) ?? null);
+  // Resolve the @version filter through the agent-spec engine:
+  //   bare/@any → null (show all versions), @default/@pinned → 'default'
+  //   (showAgentResources handles it), @latest/@oldest/@x.y.z → concrete.
+  let requestedVersion: string | null;
+  try {
+    requestedVersion = resolveVersionFilter(agentId, parts[1]).version;
+  } catch (e) {
+    if (e instanceof AgentSpecError) {
+      if (json) {
+        console.log(JSON.stringify({ error: e.message }));
+      } else {
+        console.log(chalk.red(e.message));
+      }
+      process.exit(1);
+    }
+    throw e;
+  }
 
   if (prune) {
     if (requestedVersion) {
