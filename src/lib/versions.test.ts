@@ -29,7 +29,7 @@ function runVersionSync(home: string, expression: string): unknown {
   // .exe everywhere, so this is shell-free and cross-platform.
   const tsxBin = path.resolve('node_modules/tsx/dist/cli.mjs');
   const child = spawnSync(process.execPath, [tsxBin, '-e', `
-    import { listInstalledVersions, syncResourcesToVersion } from ${JSON.stringify(moduleUrl)};
+    import { listInstalledVersions, syncResourcesToVersion, buildRepoScopedSelection } from ${JSON.stringify(moduleUrl)};
     const home = ${JSON.stringify(home)};
     const result = ${expression};
     console.log(JSON.stringify(result));
@@ -480,5 +480,74 @@ describe('resolveVersionAliasLoose — @any', () => {
     `], { env: { ...process.env, HOME: home }, encoding: 'utf-8' });
     expect(child.status, child.stderr).toBe(0);
     expect(JSON.parse(child.stdout.trim())).toEqual({ strictAny: null, looseAny: null, strictDefault: null });
+  });
+});
+
+describe('buildRepoScopedSelection — agents sync <agent> --repo <name>', () => {
+  // Scaffold a user skill and a system skill in an isolated HOME, then confirm
+  // scoping to one repo returns only that layer's resources. Guards against
+  // layer-misattribution — the bug where `--repo system` would sweep in (or
+  // drop) the wrong repo's skills.
+  function runBuildScoped(home: string, repo: string): { skills?: string[]; memory?: string[] } {
+    const moduleUrl = pathToFileURL(path.resolve('src/lib/versions.ts')).href;
+    const tsxBin = path.resolve('node_modules/tsx/dist/cli.mjs');
+    const child = spawnSync(process.execPath, [tsxBin, '-e', `
+      import { buildRepoScopedSelection } from ${JSON.stringify(moduleUrl)};
+      const home = ${JSON.stringify(home)};
+      console.log(JSON.stringify(buildRepoScopedSelection(${JSON.stringify(repo)}, home)));
+    `], { env: { ...process.env, HOME: home }, encoding: 'utf-8' });
+    expect(child.status, child.stderr).toBe(0);
+    return JSON.parse(child.stdout.trim());
+  }
+
+  function scaffoldSkills(home: string): void {
+    const userSkill = path.join(home, '.agents', 'skills', 'user-only', 'SKILL.md');
+    const systemSkill = path.join(home, '.agents', '.system', 'skills', 'system-only', 'SKILL.md');
+    fs.mkdirSync(path.dirname(userSkill), { recursive: true });
+    fs.mkdirSync(path.dirname(systemSkill), { recursive: true });
+    fs.writeFileSync(userSkill, 'user skill body', 'utf-8');
+    fs.writeFileSync(systemSkill, 'system skill body', 'utf-8');
+  }
+
+  it('scopes to the system repo — only system-layer skills, not user', () => {
+    const home = makeTempHome();
+    scaffoldSkills(home);
+    const sel = runBuildScoped(home, 'system');
+    expect(sel.skills).toEqual(['system-only']);
+  });
+
+  it('scopes to the user repo — only user-layer skills, not system', () => {
+    const home = makeTempHome();
+    scaffoldSkills(home);
+    const sel = runBuildScoped(home, 'user');
+    expect(sel.skills).toEqual(['user-only']);
+  });
+
+  it('skips the memory file through a real sync — leaves merged rules untouched', () => {
+    const home = makeTempHome();
+    // Same fixture the "writes missing grok AGENTS.md" test uses to PROVE the
+    // memory file IS written for a partial selection. Under a repo scope the
+    // memory:[] sentinel must make syncResourcesToVersion skip it entirely —
+    // so this is a real negative control, not a check of the returned object.
+    const rulesDir = path.join(home, '.agents', '.system', 'rules');
+    fs.mkdirSync(path.join(rulesDir, 'subrules'), { recursive: true });
+    fs.writeFileSync(
+      path.join(rulesDir, 'rules.yaml'),
+      'presets:\n  default:\n    subrules:\n      - core\n',
+      'utf-8'
+    );
+    fs.writeFileSync(path.join(rulesDir, 'subrules', 'core.md'), 'scoped memory body\n', 'utf-8');
+
+    // The empty-array sentinel is what the skipMemory gate keys on.
+    expect(runBuildScoped(home, 'system').memory).toEqual([]);
+
+    const result = runVersionSync(
+      home,
+      "syncResourcesToVersion('grok', '0.2.33', buildRepoScopedSelection('system', home), { cwd: home })"
+    ) as { memory: string[] };
+
+    const agentsPath = path.join(home, '.agents', '.history', 'versions', 'grok', '0.2.33', 'home', '.grok', 'AGENTS.md');
+    expect(result.memory).toEqual([]);
+    expect(fs.existsSync(agentsPath)).toBe(false);
   });
 });
