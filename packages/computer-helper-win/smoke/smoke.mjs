@@ -207,6 +207,38 @@ async function main() {
     }
     ok('type_text fidelity byte-for-byte');
 
+    // 5c. symbol-run fidelity (regression for #581). A contiguous run of shifted
+    // symbols INTERMITTENTLY collapsed onto the LAST char of the run because every
+    // KEYEVENTF_UNICODE event carries the same virtual key (VK_PACKET) and a busy
+    // receiver coalesced the queued run — "Fidelity probe 12345 +^%(){}=" landed
+    // as "...========", "(){}[]<>" as "(>>>>>>>". Type the full shifted-symbol set
+    // (letters/digits prefix + a long symbol run) and assert byte-for-byte, LOOPED
+    // to catch the intermittency.
+    const SYMBOLS = 'sym 007 +^%&*(){}[]<>=~!@#';
+    for (let round = 0; round < 4; round++) {
+      await c.call('key', { keys: 'ctrl+a' });
+      await c.call('key', { keys: 'delete' });
+      // NB: don't get_text the now-empty document here — get_text throws
+      // "Start or end specified is past the end of the text range" on an empty
+      // UIA text range (separate get_text-on-empty bug, tracked separately).
+      // A brief settle is enough before typing the next round.
+      await sleep(200);
+      await c.call('type_text', { text: SYMBOLS });
+      let symText = '';
+      let symMatched = false;
+      for (let i = 0; i < 40; i++) {
+        const got = await c.call('get_text', { pid, element_id: elId });
+        symText = normalizeDoc(String(got.text ?? ''));
+        if (symText === SYMBOLS) { symMatched = true; break; }
+        if (symText.length >= SYMBOLS.length && symText !== SYMBOLS) break;
+        await sleep(150);
+      }
+      if (!symMatched) {
+        fail(`type_text symbol-run mismatch (#581) round ${round + 1}:\n    expected: ${JSON.stringify(SYMBOLS)}\n    got:      ${JSON.stringify(symText)}`);
+      }
+    }
+    ok('type_text symbol-run byte-for-byte (x4)');
+
     // 6. screenshot
     const shot = await c.call('screenshot');
     if (!shot.image_data || shot.image_data.length < 1000) fail('screenshot image_data too small');
