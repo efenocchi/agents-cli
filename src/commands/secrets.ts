@@ -1379,8 +1379,18 @@ Examples:
           secretEnv = readAndResolveBundleEnv(bundleName, { caller: `command ${cmd}` }).env;
         }
         const { spawn } = await import('child_process');
-        const proc = spawn(cmd, args, {
+        // On Windows, spawn without a shell ENOENTs for `.cmd`/`.bat` launchers
+        // (npm, yarn, most JS CLIs) and shell built-ins, so we set shell:true.
+        // With shell:true Node hands cmd.exe a single command line with NO quoting
+        // of its own, so args containing spaces or cmd metacharacters must be
+        // quoted here (quoteWin32ExecArg) or they'd be split. See that helper for
+        // the cmd.exe %VAR%/!VAR! expansion caveat.
+        const useShell = process.platform === 'win32';
+        const spawnCmd = useShell ? quoteWin32ExecArg(cmd) : cmd;
+        const spawnArgs = useShell ? args.map(quoteWin32ExecArg) : args;
+        const proc = spawn(spawnCmd, spawnArgs, {
           stdio: 'inherit',
+          shell: useShell,
           env: { ...process.env, ...secretEnv },
         });
         proc.on('close', (code) => process.exit(code ?? 0));
@@ -1677,6 +1687,48 @@ function humanRemaining(expiresAt: number): string {
   if (hours < 24) return `locks in ${hours} hour${hours === 1 ? '' : 's'}`;
   const days = Math.round(hours / 24);
   return `locks in ${days} day${days === 1 ? '' : 's'}`;
+}
+
+/**
+ * Quote one argument for a Windows `cmd.exe` command line, as built by Node's
+ * `spawn(..., { shell: true })` on win32 (`agents secrets exec`). cmd.exe does
+ * NO quoting of its own, so an unquoted arg with a space is split into several
+ * args, and a cmd metacharacter (`&|<>()^`) would be interpreted by the shell.
+ * We wrap any arg with whitespace, a quote, or a metacharacter in double quotes
+ * and escape embedded quotes / trailing backslashes per the CommandLineToArgvW
+ * rules, so the *child's* argv parse reconstructs the original argument.
+ *
+ * CAVEAT: cmd.exe expands `%VAR%` (always) and `!VAR!` (under delayed expansion)
+ * BEFORE argv parsing, and double-quoting does NOT suppress `%`/`!` (the
+ * "BatBadBut" / CVE-2024-1874 class). We deliberately do not escape `%`/`!`:
+ * `agents secrets exec` runs a caller-supplied command against a bundle the
+ * caller owns, so caller-controlled `%`/`!` is not a privilege boundary. If that
+ * ever changes (exec'ing an untrusted command line), route through a shell that
+ * disables expansion rather than relying on this quoter. An empty arg becomes
+ * `""`. Exported for tests. No-ops on non-Windows (the caller only invokes it
+ * under `process.platform === 'win32'`).
+ */
+export function quoteWin32ExecArg(arg: string): string {
+  if (arg.length > 0 && !/[\s"&|<>()^]/.test(arg)) return arg;
+  let result = '"';
+  let backslashes = 0;
+  for (const ch of arg) {
+    if (ch === '\\') {
+      backslashes += 1;
+      continue;
+    }
+    if (ch === '"') {
+      // Double the run of backslashes, then escape this quote.
+      result += '\\'.repeat(backslashes * 2 + 1) + '"';
+      backslashes = 0;
+      continue;
+    }
+    result += '\\'.repeat(backslashes) + ch;
+    backslashes = 0;
+  }
+  // Trailing backslashes precede the closing quote → must be doubled.
+  result += '\\'.repeat(backslashes * 2) + '"';
+  return result;
 }
 
 /**
