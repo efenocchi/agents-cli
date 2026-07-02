@@ -30,6 +30,7 @@ import * as yaml from 'yaml';
 import { ensureLockTarget, atomicWriteFileSync, withFileLock } from './fs-atomic.js';
 import type { Meta, RegistryType } from './types.js';
 import { SEEDED_REGISTRIES } from './types.js';
+import { machineId } from './machine-id.js';
 
 const HOME = process.env.HOME ?? os.homedir();
 
@@ -566,7 +567,7 @@ export function createDefaultMeta(): Meta {
   return {};
 }
 
-let metaCache: { mtime: number; meta: Meta } | null = null;
+let metaCache: { stamp: string; meta: Meta } | null = null;
 let metaLockDepth = 0;
 
 /** Return mtimeMs for a file path, or 0 if the file is absent or unreadable. */
@@ -578,14 +579,40 @@ function safeMtimeMs(filePath: string): number {
   }
 }
 
-/** Compute the combined cache stamp for the user + system agents.yaml files. */
-function currentMetaStamp(): number {
-  return safeMtimeMs(META_FILE) + safeMtimeMs(SYSTEM_META_FILE) * 1e-3;
+/**
+ * Per-device machine-local version pins — `~/.agents/devices/<machine>/agents.yaml`.
+ * Committed and synced, but each machine only ever writes its OWN folder, so
+ * pulls never conflict. `<machine>` = machineId() (Tailscale-aligned short name).
+ */
+export function getDeviceMetaPath(): string {
+  return path.join(USER_AGENTS_DIR, 'devices', machineId(), 'agents.yaml');
+}
+
+/**
+ * Machine-local per-version resource tracking — `~/.agents/.history/version-resources.json`.
+ * Gitignored (under .history/) and regenerable; never synced.
+ */
+export function getVersionResourcesPath(): string {
+  return path.join(HISTORY_DIR, 'version-resources.json');
+}
+
+/**
+ * Combined cache stamp across all four Meta sources: central + system
+ * agents.yaml, this machine's device pins, and the version-resources tracking.
+ * A delimited string, NOT a numeric sum — summing down-scaled epoch-ms values
+ * loses precision (float64 rounds sub-unit terms away at ~1.75e12), so a change
+ * in any one file must contribute at full resolution.
+ */
+function currentMetaStamp(): string {
+  return safeMtimeMs(META_FILE)
+    + '|' + safeMtimeMs(SYSTEM_META_FILE)
+    + '|' + safeMtimeMs(getDeviceMetaPath())
+    + '|' + safeMtimeMs(getVersionResourcesPath());
 }
 
 /** Memoize a parsed Meta against the current file mtimes. */
 function rememberMeta(meta: Meta): Meta {
-  metaCache = { mtime: currentMetaStamp(), meta };
+  metaCache = { stamp: currentMetaStamp(), meta };
   return meta;
 }
 
@@ -610,10 +637,67 @@ function withMetaLock<T>(fn: () => T): T {
   });
 }
 
+/** Atomic write only when the on-disk content differs — avoids needless mtime
+ * bumps (which would thrash the meta cache) on no-op field routing. */
+function writeIfChanged(filePath: string, content: string): void {
+  let current: string | null = null;
+  try { current = fs.readFileSync(filePath, 'utf-8'); } catch { /* absent */ }
+  if (current === content) return;
+  atomicWriteFileSync(filePath, content);
+}
+
+/**
+ * Partition the in-memory Meta across three files by sync-domain:
+ *   - central  `~/.agents/agents.yaml`             — portable, everything else
+ *   - device   `~/.agents/devices/<machine>/agents.yaml` — `agents:` pins (per-device)
+ *   - history  `~/.agents/.history/version-resources.json` — `versions:` (machine-local)
+ * All callers funnel through writeMeta → here, so nothing else changes. Empty
+ * `agents:` / `versions:` are not written (no empty committed files).
+ */
 function writeMetaUnlocked(meta: Meta): void {
-  const content = META_HEADER + yaml.stringify(meta);
-  atomicWriteFileSync(META_FILE, content);
+  const { agents, versions, ...central } = meta;
+
+  // Write the machine-local files FIRST, then strip central — so a crash mid-write
+  // never removes pins/versions from central before they're persisted elsewhere.
+  if (agents && Object.keys(agents).length > 0) {
+    const devicePath = getDeviceMetaPath();
+    fs.mkdirSync(path.dirname(devicePath), { recursive: true });
+    writeIfChanged(devicePath, META_HEADER + yaml.stringify({ agents }));
+  }
+
+  if (versions && Object.keys(versions).length > 0) {
+    const vrPath = getVersionResourcesPath();
+    fs.mkdirSync(path.dirname(vrPath), { recursive: true });
+    writeIfChanged(vrPath, JSON.stringify(versions, null, 2) + '\n');
+  }
+
+  writeIfChanged(META_FILE, META_HEADER + yaml.stringify(central));
   metaCache = null;
+}
+
+/**
+ * Overlay this machine's local state onto a central-portable Meta:
+ *   - `agents:` from the device file (device wins; the union both preserves the
+ *     one-level merge and self-heals a pre-migration central that still has pins)
+ *   - `versions:` from the history JSON (wholesale replace; falls back to
+ *     whatever central carried when the history file doesn't exist yet)
+ */
+function overlayMachineLocal(meta: Meta): Meta {
+  const devicePath = getDeviceMetaPath();
+  if (fs.existsSync(devicePath)) {
+    try {
+      const dm = yaml.parse(fs.readFileSync(devicePath, 'utf-8')) as Meta;
+      if (dm?.agents) meta.agents = { ...meta.agents, ...dm.agents };
+    } catch { /* ignore malformed device file */ }
+  }
+  const vrPath = getVersionResourcesPath();
+  if (fs.existsSync(vrPath)) {
+    try {
+      const vr = JSON.parse(fs.readFileSync(vrPath, 'utf-8')) as Meta['versions'];
+      if (vr) meta.versions = vr;
+    } catch { /* ignore malformed history file */ }
+  }
+  return meta;
 }
 
 function applyRegistrySeeds(meta: Meta): boolean {
@@ -674,10 +758,7 @@ export function readMeta(): Meta {
   // what we last parsed. Reduces N readMeta calls per CLI invocation to ~2 stat
   // syscalls plus an in-memory object spread.
   if (metaCache) {
-    const userMtime = safeMtimeMs(META_FILE);
-    const systemMtime = safeMtimeMs(SYSTEM_META_FILE);
-    const stamp = userMtime + systemMtime * 1e-3;
-    if (stamp === metaCache.mtime) {
+    if (currentMetaStamp() === metaCache.stamp) {
       return metaCache.meta;
     }
   }
@@ -754,6 +835,7 @@ export function readMeta(): Meta {
       } as Meta['registries'];
     }
 
+    overlayMachineLocal(meta);
     if (applyRegistrySeeds(meta)) {
       writeMeta(meta);
       return rememberMeta(meta);
@@ -762,6 +844,7 @@ export function readMeta(): Meta {
   }
 
   const meta = createDefaultMeta();
+  overlayMachineLocal(meta);
   if (applyRegistrySeeds(meta)) {
     writeMeta(meta);
   }
