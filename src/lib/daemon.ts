@@ -374,6 +374,19 @@ function xmlEscape(s: string): string {
     .replace(/>/g, '&gt;');
 }
 
+/**
+ * Write a launchd plist or systemd unit with owner-only permissions atomically.
+ * Uses writeFileSync `{ mode: 0o600 }` so there is no TOCTOU window between
+ * create and chmod when the manifest embeds long-lived credentials.
+ */
+export function writeOwnerOnlyServiceManifest(filePath: string, content: string): void {
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  fs.writeFileSync(filePath, content, { encoding: 'utf-8', mode: 0o600 });
+}
+
 /** Generate a macOS launchd plist for auto-starting the daemon. */
 export function generateLaunchdPlist(): string {
   const agentsBin = getAgentsBinPath();
@@ -483,10 +496,9 @@ function startDaemonLocked(): { pid: number | null; method: string } {
       if (!fs.existsSync(plistDir)) {
         fs.mkdirSync(plistDir, { recursive: true });
       }
-      fs.writeFileSync(plistPath, generateLaunchdPlist(), 'utf-8');
       // The plist may embed a long-lived OAuth token in EnvironmentVariables;
-      // keep it owner-only so it isn't world/group readable on disk.
-      fs.chmodSync(plistPath, 0o600);
+      // create owner-only atomically (no world-readable window before chmod).
+      writeOwnerOnlyServiceManifest(plistPath, generateLaunchdPlist());
 
       try {
         execFileSync('launchctl', ['unload', plistPath], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] });
@@ -512,9 +524,8 @@ function startDaemonLocked(): { pid: number | null; method: string } {
       if (!fs.existsSync(unitDir)) {
         fs.mkdirSync(unitDir, { recursive: true });
       }
-      fs.writeFileSync(unitPath, generateSystemdUnit(), 'utf-8');
       // May embed a long-lived OAuth token in an Environment= line; owner-only.
-      fs.chmodSync(unitPath, 0o600);
+      writeOwnerOnlyServiceManifest(unitPath, generateSystemdUnit());
 
       execFileSync('systemctl', ['--user', 'daemon-reload'], { encoding: 'utf-8' });
       execFileSync('systemctl', ['--user', 'enable', SYSTEMD_UNIT], { encoding: 'utf-8' });

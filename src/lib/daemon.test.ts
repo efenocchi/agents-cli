@@ -23,6 +23,7 @@ import {
   buildDetachedDaemonEnv,
   getDaemonLaunch,
   startDetached,
+  writeOwnerOnlyServiceManifest,
 } from './daemon.js';
 import { ipcEndpoint } from './platform/index.js';
 import {
@@ -107,6 +108,20 @@ describe('readDaemonClaudeOAuthToken', () => {
   it('treats an empty/whitespace-only token as absent', () => {
     seedKeychainBacked('   ');
     expect(readDaemonClaudeOAuthToken()).toBeNull();
+  });
+});
+
+describe('writeOwnerOnlyServiceManifest', () => {
+  it('creates the file with mode 0600 immediately (no world-readable TOCTOU window)', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-daemon-manifest-'));
+    const manifestPath = path.join(tmpDir, 'com.agents.daemon.plist');
+    writeOwnerOnlyServiceManifest(manifestPath, generateLaunchdPlist());
+    expect(fs.existsSync(manifestPath)).toBe(true);
+    // NTFS has no POSIX mode bits — the 0o600 lockdown is a no-op on Windows.
+    if (process.platform !== 'win32') {
+      expect(fs.statSync(manifestPath).mode & 0o777).toBe(0o600);
+    }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 });
 
