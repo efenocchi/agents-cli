@@ -356,6 +356,11 @@ export const fileBackend: KeychainBackend = {
   list: fileList,
 };
 
+/** Resolved passphrase directory (exported for integration tests). */
+export function resolvePassphraseDir(): string {
+  return passphraseDir();
+}
+
 /** Test-only: reset module state (file dir + cached passphrase). */
 export function _resetFileStoreForTest(opts: {
   fileDir?: string | null;
@@ -363,7 +368,14 @@ export function _resetFileStoreForTest(opts: {
   passphrase?: string | null;
 } = {}): void {
   fileDirOverride = opts.fileDir ?? null;
-  passphraseDirOverride = opts.passphraseDir ?? null;
+  if (opts.passphraseDir !== undefined) {
+    passphraseDirOverride = opts.passphraseDir;
+  } else if (opts.fileDir) {
+    // Hermetic sibling when only the store dir is overridden (linux.test.ts).
+    passphraseDirOverride = path.resolve(opts.fileDir, '..', `${path.basename(opts.fileDir)}-key`);
+  } else {
+    passphraseDirOverride = null;
+  }
   cachedPassphrase = opts.passphrase ?? null;
   warnedAutoPassphrase = false;
 }
