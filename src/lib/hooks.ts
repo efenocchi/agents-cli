@@ -120,7 +120,7 @@ function isManagedHookCommand(command: string, prefixes: string[]): boolean {
 }
 import { getEffectiveHome, getVersionHomePath, listInstalledVersions } from './versions.js';
 import type { AgentId, InstalledHook, ManifestHook } from './types.js';
-import { generateHookShim, getHookShimPath, parseCacheConfig, removeHookShim } from './hooks/cache.js';
+import { generateHookShim, isValidHookShimName, parseCacheConfig, removeHookShim } from './hooks/cache.js';
 import { getHookShimsDir } from './state.js';
 
 export type HookEntry = { name: string; scriptPath: string; dataFile?: string };
@@ -140,6 +140,7 @@ function resolveHookCommand(
 ): string | null {
   const scriptPath = resolveScript(hookDef.script);
   if (!scriptPath) return null;
+  if (!isValidHookShimName(name)) return null;
   const cache = parseCacheConfig(hookDef.cache);
   if (!cache) {
     // No caching opted in — make sure a previously generated shim from an
