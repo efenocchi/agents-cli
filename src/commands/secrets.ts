@@ -33,6 +33,7 @@ import {
   readBundle,
   renameBundle,
   rotateBundleSecret,
+  sanitizeProcessEnv,
   validateBundleName,
   validateEnvKey,
   validateExpiresFutureDated,
@@ -197,6 +198,21 @@ function readStdinSync(): string {
 // SSH target validation is defined canonically in src/lib/ssh-exec.ts and
 // re-exported here for back-compat with existing importers of these symbols.
 export { SSH_TARGET_RE, assertValidSshTarget };
+
+/**
+ * Build the child environment for `agents secrets exec`. Strips
+ * loader/interpreter hijack vars (matching agent spawns in exec.ts) and never
+ * forwards AGENTS_SECRETS_PASSPHRASE — the master decryption key must not reach
+ * the executed command.
+ */
+export function buildSecretsExecEnv(
+  parentEnv: NodeJS.ProcessEnv,
+  secretEnv: Record<string, string>,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...sanitizeProcessEnv(parentEnv), ...secretEnv };
+  delete env.AGENTS_SECRETS_PASSPHRASE;
+  return env;
+}
 
 /** POSIX single-quote a string for safe interpolation into a remote shell command. */
 function shellQuote(s: string): string {
@@ -1415,7 +1431,7 @@ Examples:
         const proc = spawn(spawnCmd, spawnArgs, {
           stdio: 'inherit',
           shell: useShell,
-          env: { ...process.env, ...secretEnv },
+          env: buildSecretsExecEnv(process.env, secretEnv),
         });
         proc.on('close', (code) => process.exit(code ?? 0));
         proc.on('error', (err) => {
