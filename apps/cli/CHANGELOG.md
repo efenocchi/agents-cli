@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **`agents run --mode plan` no longer hard-fails on agents without a read-only mode (antigravity, cursor, kiro, …).** Those agents have no plan flag, so an explicit or default `--mode plan` used to abort with `does not support 'plan' mode` — breaking multi-agent scripts that pass a uniform plan flag, and diverging from `agents teams add` (default mode `edit`). `resolveMode` now degrades unsupported `plan` to the agent's safest native mode (`capabilities.modes[0]`, typically `edit`), matching the existing `auto` → `edit` degrade. The CLI prints a yellow warning when the user explicitly asked for plan (gray for the implicit default) so the elevation is never silent. `skip` still hard-fails when unsupported. Source: `apps/cli/src/lib/exec.ts`, `apps/cli/src/commands/exec.ts`.
+
 ## 1.20.48
 
 - **Menu-bar helper: a RECENT TICKETS section shows the issues you filed via the quick-issue bar, each clickable to open in Linear.** The completion notification is transient, so the tickets the `Cmd-Shift-O` bar creates now also persist to a small local ledger (`~/.agents/.history/menubar/recent-tickets.json`, newest-first, deduped by id, capped at 10) that the menu-bar dropdown surfaces below RECENT sessions — click a row to open the ticket. The dispatch records the id + note + Linear URL on a successful create; the section renders nothing when the ledger is empty. Source: `apps/cli/menubar/Sources/MenubarHelper/{RecentTickets,StatusItemController,AgentsCLI,IssueSelfTest}.swift`.
