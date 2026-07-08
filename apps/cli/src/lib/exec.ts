@@ -84,10 +84,16 @@ export function headlessPlanStallCommand(args: {
  *
  * - `auto` on an agent without auto support silently degrades to `edit`
  *   (every agent supports edit-like behavior as its default).
+ * - `plan` on an agent without a read-only mode degrades to the agent's
+ *   safest native mode (`capabilities.modes[0]`, typically `edit`). Agents
+ *   like antigravity/cursor/kiro have no plan flag; hard-failing made
+ *   multi-agent scripts (`--mode plan` for everyone) unusable and diverged
+ *   from `agents teams add`, which already defaults to `edit`. Callers that
+ *   care (the `agents run` CLI) must surface a warning when requested ≠
+ *   resolved so the elevation is not silent.
  * - `skip` on an agent without skip support throws with a clear message
  *   naming the agent's supported modes. No silent fallback — the user
  *   explicitly asked to bypass permissions; pretending we did is unsafe.
- * - `plan` on an agent without plan support throws the same way.
  */
 export function resolveMode(agent: AgentId, requested: Mode): Mode {
   const supported = AGENTS[agent].capabilities.modes;
@@ -97,6 +103,13 @@ export function resolveMode(agent: AgentId, requested: Mode): Mode {
     // Fall back to edit — guaranteed to exist on every agent (every agent has
     // at least 'edit' in its modes table, since that's the default behavior).
     return 'edit';
+  }
+
+  if (requested === 'plan') {
+    // No read-only mode on this agent. modes[0] is the declared safest mode
+    // (edit for antigravity/cursor/kiro/…). Prefer that over hard-fail so
+    // uniform multi-agent `--mode plan` dispatches still run.
+    return supported[0];
   }
 
   throw new Error(
@@ -112,10 +125,8 @@ export function resolveMode(agent: AgentId, requested: Mode): Mode {
  * supports." Agents that include `plan` list it first; agents like
  * antigravity that have no read-only mode list `edit` first.
  *
- * Use this when the user did not pass `--mode` explicitly. When the user
- * *did* pass `--mode plan` and the agent doesn't support it, call
- * `resolveMode` instead so the user sees a loud error rather than a silent
- * elevation from read-only to writable.
+ * Prefer this over a hard-coded `'plan'` when the agent is known. `resolveMode`
+ * also maps an unsupported `'plan'` request onto this same value.
  */
 export function defaultModeFor(agent: AgentId): Mode {
   return AGENTS[agent].capabilities.modes[0];
@@ -659,7 +670,8 @@ export function buildExecCommand(options: ExecOptions): string[] {
 
   // Resolve the requested mode against the agent's capability table.
   // - `auto` on an agent without auto support → silently degrades to `edit`
-  // - `skip`/`plan` on an unsupported agent → throws a clear error
+  // - `plan` on an agent without a read-only mode → degrades to modes[0]
+  // - `skip` on an unsupported agent → throws a clear error
   // After resolveMode, the chosen mode is guaranteed to be in template.modeFlags.
   const resolvedMode = resolveMode(options.agent, normalizeMode(options.mode));
   const modeFlags = template.modeFlags[resolvedMode];

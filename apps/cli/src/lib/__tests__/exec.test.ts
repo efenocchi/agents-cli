@@ -107,9 +107,23 @@ describe('buildExecCommand', () => {
       expect(cmd).toContain('--yolo');
     });
 
-    it('cursor plan throws (cursor has no read-only mode)', () => {
-      expect(() => buildExecCommand(opts({ agent: 'cursor', mode: 'plan' })))
-        .toThrow(/cursor does not support 'plan' mode/);
+    it('cursor plan degrades to edit (cursor has no read-only mode)', () => {
+      // Same flags as an explicit edit run — no -f (that's skip).
+      const cmd = buildExecCommand(opts({ agent: 'cursor', mode: 'plan' }));
+      expect(cmd).not.toContain('-f');
+      // Command still builds (does not throw).
+      expect(cmd[0]).toBe('cursor-agent');
+    });
+
+    it('antigravity plan degrades to edit (no read-only mode)', () => {
+      // Explicit headless so --print is emitted (printFlags require headless:true).
+      const planCmd = buildExecCommand(opts({ agent: 'antigravity', mode: 'plan', headless: true }));
+      const editCmd = buildExecCommand(opts({ agent: 'antigravity', mode: 'edit', headless: true }));
+      // plan and edit must build the same argv once plan degrades.
+      expect(planCmd).toEqual(editCmd);
+      expect(planCmd).toEqual(['agy', '--print', 'do the thing']);
+      // skip would add --dangerously-skip-permissions — plan must not.
+      expect(planCmd).not.toContain('--dangerously-skip-permissions');
     });
 
     it('cursor edit produces no flags (edit is cursor default)', () => {
@@ -1028,9 +1042,16 @@ describe('resolveMode', () => {
       .toThrow(/opencode does not support 'skip' mode\. Supported modes: plan, edit\./);
   });
 
-  it("throws on 'plan' for agents without plan support (cursor)", () => {
-    expect(() => resolveMode('cursor', 'plan'))
-      .toThrow(/cursor does not support 'plan' mode\. Supported modes: edit, skip\./);
+  it("degrades 'plan' to the agent's safest mode when plan is unsupported", () => {
+    // cursor / antigravity / kiro have no read-only mode — modes[0] is edit.
+    expect(AGENTS.cursor.capabilities.modes).not.toContain('plan');
+    expect(resolveMode('cursor', 'plan')).toBe('edit');
+    expect(resolveMode('antigravity', 'plan')).toBe('edit');
+    expect(resolveMode('kiro', 'plan')).toBe('edit');
+  });
+
+  it("keeps 'plan' for agents that natively support it (claude)", () => {
+    expect(resolveMode('claude', 'plan')).toBe('plan');
   });
 
   it("throws on 'skip' for kiro (edit-only agent)", () => {
