@@ -41,6 +41,7 @@ import {
   sortAgents,
   groupAgents,
   sessionTaskLine,
+  ticketWorkers,
   type FloorAgent,
   type FloorTicket,
   type CenterMode,
@@ -1431,6 +1432,9 @@ export function UnifiedAgentsPane({ terminals, tasks, tasksLoading, unifiedTasks
     [floorLocalAgents, floorRemoteAgents]
   )
   const floorTickets = useMemo(() => adaptTickets(unifiedTasks), [unifiedTasks])
+  // Ticket id -> agents carrying it: the backlog's in-flight chips and the ticket
+  // detail's "In flight" block + double-dispatch guard all join on this.
+  const floorWorkers = useMemo(() => ticketWorkers(floorAgents), [floorAgents])
 
   // Lookup back to the source UnifiedAgent so the right pane can reuse the rich DetailPane.
   const unifiedById = useMemo(() => {
@@ -1868,6 +1872,7 @@ export function UnifiedAgentsPane({ terminals, tasks, tasksLoading, unifiedTasks
       projFilter={projFilter}
       search={floorSearch}
       selectedTicketId={selectedTicketId}
+      workers={floorWorkers}
       onSelectTicket={(id) => setSelectedTicketId(id)}
       onOpenTask={openTaskFromTicket}
     />
@@ -2057,7 +2062,13 @@ export function UnifiedAgentsPane({ terminals, tasks, tasksLoading, unifiedTasks
       : <div className="detail-empty">Select a host to see its installed agents and configuration.</div>)
     : center === 'backlog'
     ? (selectedFloorTicket
-      ? <TicketDetail ticket={selectedFloorTicket} hosts={floorHosts} onDispatch={() => openDispatch({ ticketId: selectedFloorTicket.id })} />
+      ? <TicketDetail
+          ticket={selectedFloorTicket}
+          hosts={floorHosts}
+          workers={floorWorkers[selectedFloorTicket.id] ?? []}
+          onSelectAgent={selectFloorAgent}
+          onDispatch={() => openDispatch({ ticketId: selectedFloorTicket.id })}
+        />
       : <div className="detail-empty">Select a ticket to see its details and dispatch an agent onto it.</div>)
     : renderAgentDetail()
 
