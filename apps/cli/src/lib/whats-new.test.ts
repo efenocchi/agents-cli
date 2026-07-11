@@ -9,6 +9,13 @@ const CHANGELOG = `# Changelog
 
 ## Unreleased
 
+- **An unreleased entry that must never render.** Prose detail here.
+
+## 1.20.35
+
+- **Codex mode flags now match what the mode names promise — only \`--mode skip\` is yolo.** \`--mode edit\` used to append the bypass flag alongside \`--sandbox workspace-write\`, and the bypass flag wins. Long prose continues with **inline bold** and \`code\`.
+- **\`--add-dir\` is now forwarded to Codex (it was silently dropped).** More verbose prose that should not appear.
+
 ## 1.20.34
 
 **Test suite runs remotely on a crabbox VM (#525, #540)**
@@ -32,6 +39,13 @@ const CHANGELOG = `# Changelog
 **Older release the user already had**
 
 - Should never appear.
+
+## 1.20.29
+
+**An old-format heading with bold-led sub-bullets**
+
+- **A bold-led sub-bullet.** Detail prose that must not render as an entry.
+- Plain sub-bullet.
 `;
 
 describe('renderWhatsNew', () => {
@@ -64,5 +78,38 @@ describe('renderWhatsNew', () => {
 
   it('returns nothing when the range is empty', () => {
     expect(renderWhatsNew(CHANGELOG, '1.20.34', '1.20.34')).toEqual([]);
+  });
+
+  it('renders modern `- **Title.** prose` entries: heading kept, prose dropped', () => {
+    const lines = renderWhatsNew(CHANGELOG, '1.20.34', '1.20.35').map(plain);
+    expect(lines).toContain('v1.20.35');
+    expect(lines).toContain(
+      '  • Codex mode flags now match what the mode names promise — only `--mode skip` is yolo.',
+    );
+    expect(lines).toContain('  • `--add-dir` is now forwarded to Codex (it was silently dropped).');
+    // The verbose prose after the bold heading must be gone.
+    expect(lines.some((l) => l.includes('bypass flag wins'))).toBe(false);
+    expect(lines.some((l) => l.includes('verbose prose'))).toBe(false);
+  });
+
+  it('never renders the Unreleased section, in either format', () => {
+    const lines = renderWhatsNew(CHANGELOG, '1.20.30', '1.20.35').map(plain);
+    expect(lines.some((l) => l.includes('unreleased entry'))).toBe(false);
+  });
+
+  it('old-format sections suppress bold-led sub-bullets (they are details, not entries)', () => {
+    const lines = renderWhatsNew(CHANGELOG, '1.20.28', '1.20.29').map(plain);
+    expect(lines).toContain('  • An old-format heading with bold-led sub-bullets');
+    expect(lines.some((l) => l.includes('A bold-led sub-bullet'))).toBe(false);
+    expect(lines.some((l) => l.includes('Plain sub-bullet'))).toBe(false);
+  });
+
+  it('a range mixing both formats renders one bullet per heading in each', () => {
+    const lines = renderWhatsNew(CHANGELOG, '1.20.28', '1.20.35').map(plain);
+    // Modern section: entries render.
+    expect(lines.some((l) => l.includes('Codex mode flags'))).toBe(true);
+    // Old section: heading renders, its bold-led sub-bullet does not.
+    expect(lines).toContain('  • An old-format heading with bold-led sub-bullets');
+    expect(lines.some((l) => l.includes('A bold-led sub-bullet'))).toBe(false);
   });
 });

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **The post-upgrade "What's new" summary shows the release notes again.** The summary parser only recognized the old changelog format (standalone `**Heading**` lines with sub-bullets); every release since the changelog moved to single-line `- **Title.** prose…` entries rendered as a bare version header with zero bullets, so upgrades looked like they shipped nothing. The parser now extracts the bold heading from both formats (prose still dropped — full notes stay in the changelog). Verified against the real changelog: the 1.20.49 → 1.20.50 range renders all four 1.20.50 entry titles. Source: `apps/cli/src/lib/whats-new.ts`.
 - **Fix: daemon no longer crash-loops when started from the bare `browser` or `computer` shim.** Daemon launch resolution now maps installed sibling shims to the `agents` launcher and compiled shims to `index.js` before generating launchd/systemd commands, and fails clearly if that invariant is broken. Headless auto-start reads the long-lived Claude token only from an already-unlocked secrets-agent snapshot, so it cannot hang on a biometric prompt nobody can answer; an interactive start can still prompt normally. Source: `apps/cli/src/lib/daemon.ts` (`getAgentsBinPath`, `readDaemonClaudeOAuthToken`), `apps/cli/src/lib/secrets/bundles.ts` (`agentOnly`). (RUSH-1527)
 
 ## 1.20.51
