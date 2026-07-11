@@ -12,7 +12,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import simpleGit from 'simple-git';
-import { assertSafeGitTransport, displayHomePath, parseSource, pullRepo, syncRepoGit } from './git.js';
+import { adoptRepo, assertSafeGitTransport, displayHomePath, parseSource, pullRepo, syncRepoGit } from './git.js';
 
 describe('assertSafeGitTransport', () => {
   const allowed = [
@@ -212,5 +212,47 @@ describe('pullRepo dirty-tree hint', () => {
     expect(res.error).toContain(`cd ${displayHomePath(repo)} && git status`);
     // ... not the old hardcoded ~/.agents (which is not even a git repo).
     expect(res.error).not.toContain('cd ~/.agents ');
+  });
+});
+
+describe('adoptRepo guards', () => {
+  let base: string;
+  beforeEach(() => {
+    base = fs.mkdtempSync(path.join(os.tmpdir(), 'adopt-guard-'));
+  });
+  afterEach(() => {
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  it('refuses a local source (adopt is remote-only, like cloneIntoExisting)', async () => {
+    const target = path.join(base, 'target');
+    fs.mkdirSync(target);
+    const res = await adoptRepo(base, target); // base exists on disk → parsed as local
+    expect(res.success).toBe(false);
+    expect(res.error).toMatch(/local source/i);
+    // A rejected adopt must not have created a .git.
+    expect(fs.existsSync(path.join(target, '.git'))).toBe(false);
+  });
+
+  it('refuses to adopt a dir that is already a git repo', async () => {
+    const target = path.join(base, 'already');
+    fs.mkdirSync(target);
+    await simpleGit(target).init();
+    const res = await adoptRepo('https://github.com/owner/repo.git', target);
+    expect(res.success).toBe(false);
+    expect(res.error).toMatch(/already a git repo/i);
+  });
+
+  it('returns a graceful error (never throws) for an unsafe transport URL', async () => {
+    // parseSource/assertSafeGitTransport throw for http:// — the command has no
+    // try/catch, so this must be caught inside adoptRepo and returned, not thrown.
+    const target = path.join(base, 'bad');
+    fs.mkdirSync(target);
+    const res = await adoptRepo('http://insecure.example/repo.git', target);
+    expect(res.success).toBe(false);
+    expect(res.error).toBeTruthy();
+    // A rejected adopt leaves no .git and no leftover temp.
+    expect(fs.existsSync(path.join(target, '.git'))).toBe(false);
+    expect(fs.existsSync(path.join(target, '.git-adopt-temp'))).toBe(false);
   });
 });
