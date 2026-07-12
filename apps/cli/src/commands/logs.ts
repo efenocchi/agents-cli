@@ -32,7 +32,7 @@ import { showHostTaskLog } from '../lib/hosts/logs.js';
 import { listTasks, type HostTask } from '../lib/hosts/tasks.js';
 import { itemPicker } from '../lib/picker.js';
 import {
-  query, stats, getLogsPath, rotate,
+  query, stats, getLogsPath, rotate, levelFor,
   type EventRecord, type EventType, type EventLevel,
 } from '../lib/events.js';
 
@@ -220,7 +220,7 @@ function renderAuditRow(r: EventRecord): string {
   const time = chalk.gray(r.ts.slice(0, 19).replace('T', ' '));
   const user = `${r.osUser ?? '?'}@${r.hostname}`;
   const ev = r.event.startsWith('error') ? chalk.red(r.event) : chalk.cyan(r.event);
-  const lvl = levelColor(r.level ?? 'info');
+  const lvl = levelColor(r.level ?? levelFor(r.event as EventType));
   const agent = r.agent ? chalk.gray(` ${r.agent}`) : '';
   return `${time}  ${lvl.padEnd(14)} ${originLabel(r).padEnd(24)} ${user.padEnd(22)} ${ev.padEnd(26)}${agent}  ${auditDetailFor(r)}`;
 }

@@ -140,7 +140,7 @@ const AUDIT_EVENTS: ReadonlySet<string> = new Set([
   'session.start', 'session.end',
 ]);
 
-function levelFor(event: EventType): EventLevel {
+export function levelFor(event: EventType): EventLevel {
   if (event === 'warn') return 'warn';
   if (event === 'debug') return 'debug';
   if (AUDIT_EVENTS.has(event)) return 'audit';
