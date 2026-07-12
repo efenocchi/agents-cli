@@ -60,6 +60,53 @@ the `bundle`, `caller`, `keyCount`, and OS-user/host/transport. The resolved
 log has a 7-day retention (older daily files are pruned), so export what you need
 for long-term records.
 
+### Audit Viewer (`agents logs audit`)
+
+While `agents events` is a convenience alias, the full audit surface lives under
+`agents logs`:
+
+```bash
+agents logs audit                          # recent activity (last 100)
+agents logs audit --level audit            # security-relevant only
+agents logs audit --module teams           # team lifecycle events
+agents logs audit --command "secrets get"  # by command path prefix
+agents logs audit --event mcp.add         # by typed event (repeatable)
+agents logs audit --since 7d --json       # machine-readable, last 7 days
+agents logs audit --follow                # live tail of today's log
+```
+
+Events are classified by level:
+
+| Level | Meaning | Examples |
+|---|---|---|
+| `audit` | Security-relevant | `secrets.get`, `secrets.reveal`, `teams.create`, `teams.disband`, `cloud.dispatch` |
+| `warn` | Warnings | `warn` events |
+| `info` | Informational | `info`, `command.start`, `command.end`, `mcp.add` |
+| `debug` | Diagnostic | `debug` events |
+
+Every record includes a `caller` field (the source file that emitted the event,
+detected via stack trace) for tracing exactly where an event originated.
+
+#### Aggregate Statistics
+
+```bash
+agents logs stats                  # breakdown by level, event, module, user
+agents logs stats --since 30d      # last 30 days
+agents logs stats --json           # machine-readable
+```
+
+#### Log Rotation
+
+Files exceeding 10 MB are automatically gzip-compressed in place. Old files are
+pruned on a 14-day default; force rotation with:
+
+```bash
+agents logs rotate                 # prune files older than 14 days
+agents logs rotate --days 7        # prune files older than 7 days
+```
+
+The `query()` API reads both `.jsonl` and `.jsonl.gz` files transparently.
+
 External tools (dashboards, voice assistants, CI runners, monitoring) can read
 fleet state via three canonical `--json` sources. No direct DB access, no re-parsing
 of agent-specific formats, no auth to manage.

@@ -23,6 +23,7 @@ import {
 } from '../lib/teams/agents.js';
 import { resolveProvider } from '../lib/cloud/registry.js';
 import type { CloudProviderId, DispatchOptions } from '../lib/cloud/types.js';
+import { emit } from '../lib/events.js';
 import { runSupervisor } from '../lib/teams/supervisor.js';
 import { debug } from '../lib/teams/debug.js';
 import {
@@ -1550,6 +1551,8 @@ export function registerTeamsCommands(program: Command): void {
           hostRepoPath,
         );
 
+        emit('teams.add', { module: 'teams', team, agent, name: result.name, agent_id: result.agent_id, status: result.status });
+
         if (isJsonMode(opts)) {
           console.log(JSON.stringify(result, null, 2));
           return;
@@ -1735,6 +1738,8 @@ export function registerTeamsCommands(program: Command): void {
         await warnThrottledTeammates(mgr, team);
       }
 
+      emit('teams.start', { module: 'teams', team, watch: Boolean(opts.watch) });
+
       if (!opts.watch) {
         await runOneWave(mgr, team, Boolean(opts.json));
         return;
@@ -1782,6 +1787,8 @@ export function registerTeamsCommands(program: Command): void {
       });
 
       const elapsed = Math.floor(result.elapsed_ms / 1000);
+      emit('teams.complete', { module: 'teams', team, stoppedBy: result.stoppedBy, waves: result.waves, durationMs: result.elapsed_ms });
+
       if (result.stoppedBy === 'drained') {
         console.log(chalk.green(`Factory drained in ${elapsed}s (${result.waves} waves).`));
       } else if (result.stoppedBy === 'max-waves') {

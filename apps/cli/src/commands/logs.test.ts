@@ -1,0 +1,107 @@
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { gzipSync } from 'node:zlib';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  emit, query, rotate, stats,
+  _resetForTest,
+} from '../lib/events.js';
+
+const tempDirs: string[] = [];
+
+function makeTempDir(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-logs-'));
+  tempDirs.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of tempDirs) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ok */ }
+  }
+  tempDirs.length = 0;
+  _resetForTest();
+});
+
+function setupLogsDir(): string {
+  const dir = makeTempDir();
+  const logsDir = path.join(dir, 'logs');
+  fs.mkdirSync(logsDir, { recursive: true });
+  _resetForTest(logsDir);
+  return logsDir;
+}
+
+function makeRecord(overrides: Record<string, unknown> = {}) {
+  return {
+    ts: new Date().toISOString(),
+    tz: '+00:00',
+    tzName: 'UTC',
+    hostname: 'testhost',
+    platform: 'linux',
+    arch: 'x64',
+    pid: 1,
+    ppid: 0,
+    event: 'info',
+    level: 'info',
+    osUser: 'testuser',
+    transport: 'local',
+    ...overrides,
+  };
+}
+
+function todayFileName(): string {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `events-${yyyy}-${mm}-${dd}.jsonl`;
+}
+
+describe('logs audit subcommand data path', () => {
+  it('query reads events written by emit for audit viewer', () => {
+    setupLogsDir();
+    emit('teams.create', { module: 'teams', team: 'alpha' });
+    emit('secrets.get', { module: 'secrets', item: 'prod-key' });
+    emit('info', { module: 'test' });
+
+    const auditOnly = query({ level: 'audit' });
+    expect(auditOnly.length).toBe(2);
+    expect(auditOnly.every(r => r.level === 'audit')).toBe(true);
+  });
+
+  it('query reads gzipped archives transparently', () => {
+    const logsDir = setupLogsDir();
+    const record = makeRecord({ event: 'cloud.dispatch', level: 'audit', module: 'cloud', taskId: 'gz-task' });
+    const gzPath = path.join(logsDir, todayFileName() + '.gz');
+    fs.writeFileSync(gzPath, gzipSync(Buffer.from(JSON.stringify(record) + '\n')));
+
+    const results = query({ module: 'cloud' });
+    expect(results.length).toBe(1);
+    expect(results[0].taskId).toBe('gz-task');
+  });
+
+  it('stats aggregates across event types and levels', () => {
+    setupLogsDir();
+    emit('teams.create', { module: 'teams' });
+    emit('teams.add', { module: 'teams' });
+    emit('info', { module: 'test' });
+
+    const s = stats({ days: 1 });
+    expect(s.totalEvents).toBe(3);
+    expect(s.byModule.teams).toBe(2);
+  });
+
+  it('rotate removes old files and returns count', () => {
+    const logsDir = setupLogsDir();
+    const old = new Date();
+    old.setDate(old.getDate() - 30);
+    const yyyy = old.getFullYear();
+    const mm = String(old.getMonth() + 1).padStart(2, '0');
+    const dd = String(old.getDate()).padStart(2, '0');
+    fs.writeFileSync(path.join(logsDir, `events-${yyyy}-${mm}-${dd}.jsonl`), '{"event":"info"}\n');
+
+    const removed = rotate(7);
+    expect(removed).toBe(1);
+  });
+});
