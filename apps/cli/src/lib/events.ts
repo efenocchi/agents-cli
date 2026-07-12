@@ -16,6 +16,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { createHash } from 'node:crypto';
+import { gzipSync, gunzipSync } from 'node:zlib';
 import { parseSshConnection } from './session/provenance.js';
 import { getLogsDir } from './state.js';
 
@@ -45,6 +46,9 @@ const DEFAULT_RETENTION_DAYS = 7;
 /** Default max length for truncated strings. */
 const DEFAULT_TRUNCATE_LENGTH = 500;
 
+/** Gzip rotation threshold in bytes (10 MB). */
+const GZIP_ROTATION_BYTES = 10 * 1024 * 1024;
+
 /** Environment variable to disable event logging. */
 const DISABLE_ENV_VAR = 'AGENTS_DISABLE_EVENT_LOG';
 
@@ -61,6 +65,8 @@ const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+export type EventLevel = 'audit' | 'warn' | 'info' | 'debug';
 
 export type EventType =
   // Agent lifecycle
@@ -88,6 +94,8 @@ export type EventType =
   // Cloud dispatch
   | 'cloud.dispatch'
   | 'cloud.complete'
+  | 'cloud.cancel'
+  | 'cloud.message'
   // Teams
   | 'teams.create'
   | 'teams.add'
@@ -98,8 +106,14 @@ export type EventType =
   | 'hook.fire'
   | 'hook.complete'
   | 'hook.error'
+  // MCP
+  | 'mcp.add'
+  | 'mcp.remove'
+  | 'mcp.register'
   // Resources
   | 'resource.sync'
+  // Rotation (account/credential)
+  | 'rotation.resolved'
   // Commands (CLI entry points)
   | 'command.start'
   | 'command.end'
@@ -114,6 +128,25 @@ export type EventType =
   | 'info'
   | 'debug';
 
+const AUDIT_EVENTS: ReadonlySet<string> = new Set([
+  'command.start', 'command.end',
+  'secrets.get', 'secrets.set', 'secrets.delete', 'secrets.rename',
+  'teams.create', 'teams.add', 'teams.start', 'teams.complete', 'teams.disband',
+  'cloud.dispatch', 'cloud.complete', 'cloud.cancel', 'cloud.message',
+  'version.install', 'version.switch', 'version.remove',
+  'skill.install', 'skill.remove',
+  'mcp.add', 'mcp.remove', 'mcp.register',
+  'rotation.resolved',
+  'session.start', 'session.end',
+]);
+
+function levelFor(event: EventType): EventLevel {
+  if (event === 'warn') return 'warn';
+  if (event === 'debug') return 'debug';
+  if (AUDIT_EVENTS.has(event)) return 'audit';
+  return 'info';
+}
+
 export interface EventMeta {
   ts: string;
   tz: string;
@@ -124,8 +157,8 @@ export interface EventMeta {
   pid: number;
   ppid: number;
   event: EventType;
-  // Audit attribution — who ran this and from where. Answers "was this agent
-  // started on the host by a remote user?" for every event, not just runs.
+  level: EventLevel;
+  caller?: string;
   osUser: string;
   transport: 'local' | 'ssh';
   sshClientIp?: string;
@@ -273,6 +306,25 @@ function truncatePayload(payload: EventPayload, maxLength: number = DEFAULT_TRUN
   return result;
 }
 
+// ─── Caller detection ────────────────────────────────────────────────────────
+
+function detectCaller(): string | undefined {
+  const obj: { stack?: string } = {};
+  Error.captureStackTrace(obj, detectCaller);
+  const stack = obj.stack;
+  if (!stack) return undefined;
+  const lines = stack.split('\n');
+  for (const line of lines) {
+    const m = line.match(/at\s+(?:.*?\s+\()?(?:.*?[\\/])?(src[\\/].+?):\d+:\d+/);
+    if (m) {
+      const filePath = m[1].replace(/\\/g, '/').replace(/\.js$/, '.ts');
+      if (filePath.includes('events.ts')) continue;
+      return filePath;
+    }
+  }
+  return undefined;
+}
+
 // ─── Audit attribution ────────────────────────────────────────────────────────
 
 interface AuditOrigin {
@@ -318,6 +370,7 @@ export function emit(event: EventType, payload: EventPayload = {}): void {
   try {
     ensureLogsDir();
 
+    const caller = detectCaller();
     const record: EventRecord = {
       ts: new Date().toISOString(),
       tz: getTimezoneOffset(),
@@ -328,6 +381,8 @@ export function emit(event: EventType, payload: EventPayload = {}): void {
       pid: process.pid,
       ppid: process.ppid,
       event,
+      level: levelFor(event),
+      ...(caller ? { caller } : {}),
       ...auditOrigin(),
       ...truncatePayload(payload),
     };
@@ -337,10 +392,6 @@ export function emit(event: EventType, payload: EventPayload = {}): void {
     const isNew = !fs.existsSync(logPath);
     fs.appendFileSync(logPath, line, { mode: FILE_MODE });
 
-    // appendFileSync's mode only applies when it CREATES the file, so we chmod
-    // to guarantee 0600 — but only on first write to a given path this process.
-    // command.start/end fire on every invocation; chmod-per-append would double
-    // the syscalls on the hot path for no gain (perms don't drift mid-run).
     if (isNew || logPath !== _chmoddedPath) {
       _chmoddedPath = logPath;
       try {
@@ -349,6 +400,8 @@ export function emit(event: EventType, payload: EventPayload = {}): void {
         // May fail if not owner
       }
     }
+
+    maybeGzipRotate(logPath);
   } catch {
     // Silent failure - logging should never break the CLI
   }
@@ -570,11 +623,31 @@ export function emitError(
   });
 }
 
+// ─── Gzip rotation ──────────────────────────────────────────────────────────
+
+let _lastGzipCheck: string | undefined;
+
+function maybeGzipRotate(logPath: string): void {
+  if (_lastGzipCheck === logPath) return;
+  try {
+    const stat = fs.statSync(logPath);
+    if (stat.size < GZIP_ROTATION_BYTES) return;
+    _lastGzipCheck = logPath;
+    const raw = fs.readFileSync(logPath);
+    const gz = gzipSync(raw);
+    const gzPath = logPath + '.gz';
+    fs.writeFileSync(gzPath, gz, { mode: FILE_MODE });
+    fs.writeFileSync(logPath, '', { mode: FILE_MODE });
+  } catch {
+    // Best-effort — never break the CLI over rotation.
+  }
+}
+
 // ─── Rotation ─────────────────────────────────────────────────────────────────
 
 /**
  * Remove log files older than the retention period.
- * Called lazily on emit or explicitly via CLI.
+ * Handles both raw .jsonl and gzip-compressed .jsonl.gz files.
  *
  * @param retentionDays - Number of days to keep (default 7, from DEFAULT_RETENTION_DAYS)
  * @returns Number of files removed
@@ -584,11 +657,13 @@ export function rotate(retentionDays: number = DEFAULT_RETENTION_DAYS): number {
     if (!fs.existsSync(logsDir())) return 0;
 
     const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
-    const files = fs.readdirSync(logsDir()).filter(f => f.startsWith('events-') && f.endsWith('.jsonl'));
+    const files = fs.readdirSync(logsDir()).filter(f =>
+      f.startsWith('events-') && (f.endsWith('.jsonl') || f.endsWith('.jsonl.gz'))
+    );
     let removed = 0;
 
     for (const file of files) {
-      const match = file.match(/^events-(\d{4})-(\d{2})-(\d{2})\.jsonl$/);
+      const match = file.match(/^events-(\d{4})-(\d{2})-(\d{2})\.jsonl(?:\.gz)?$/);
       if (!match) continue;
 
       const [, yyyy, mm, dd] = match;
@@ -632,25 +707,22 @@ export function query(options: {
   startDate?: Date;
   endDate?: Date;
   eventTypes?: EventType[];
+  level?: EventLevel;
   agent?: string;
   command?: string;
   module?: string;
   limit?: number;
 }): EventRecord[] {
-  const { startDate, endDate = new Date(), eventTypes, agent, command, module, limit } = options;
+  const { startDate, endDate = new Date(), eventTypes, level, agent, command, module, limit } = options;
   const results: EventRecord[] = [];
 
   if (!fs.existsSync(logsDir())) return results;
 
   const files = fs.readdirSync(logsDir())
-    .filter(f => f.startsWith('events-') && f.endsWith('.jsonl'))
+    .filter(f => f.startsWith('events-') && (f.endsWith('.jsonl') || f.endsWith('.jsonl.gz')))
     .sort()
     .reverse();
 
-  // Coarse file skip works on whole days, so floor the bounds to midnight —
-  // otherwise a sub-day window (`--since 2h` at 15:00 → startDate 13:00) would
-  // drop *today's* file, whose date stamps to 00:00. Precise filtering below is
-  // per-record on `ts`.
   const startDay = startDate
     ? new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate())
     : undefined;
@@ -661,7 +733,7 @@ export function query(options: {
   const endMs = endDate?.getTime();
 
   for (const file of files) {
-    const match = file.match(/^events-(\d{4})-(\d{2})-(\d{2})\.jsonl$/);
+    const match = file.match(/^events-(\d{4})-(\d{2})-(\d{2})\.jsonl(?:\.gz)?$/);
     if (!match) continue;
 
     const [, yyyy, mm, dd] = match;
@@ -670,23 +742,30 @@ export function query(options: {
     if (startDay && fileDate < startDay) continue;
     if (endDay && fileDate > endDay) continue;
 
-    const content = fs.readFileSync(path.join(logsDir(), file), 'utf-8');
+    const filePath = path.join(logsDir(), file);
+    let content: string;
+    if (file.endsWith('.gz')) {
+      try {
+        content = gunzipSync(fs.readFileSync(filePath)).toString('utf-8');
+      } catch {
+        continue;
+      }
+    } else {
+      content = fs.readFileSync(filePath, 'utf-8');
+    }
     const lines = content.trim().split('\n').filter(Boolean);
 
     for (const line of lines.reverse()) {
       try {
         const record = JSON.parse(line) as EventRecord;
 
-        // Precise per-record window — the file skip above is day-granular only.
         const recMs = Date.parse(record.ts);
         if (startMs !== undefined && !isNaN(recMs) && recMs < startMs) continue;
         if (endMs !== undefined && !isNaN(recMs) && recMs > endMs) continue;
 
         if (eventTypes && !eventTypes.includes(record.event)) continue;
+        if (level && (record.level ?? levelFor(record.event as EventType)) !== level) continue;
         if (agent && record.agent !== agent) continue;
-        // `--command` matches by path prefix on a word boundary, so a coarse
-        // "teams" catches "teams create"/"teams remove" while an exact
-        // "teams create" stays exact.
         if (command && record.command !== command &&
             !(typeof record.command === 'string' && record.command.startsWith(command + ' '))) continue;
         if (module && record.module !== module) continue;
@@ -742,8 +821,76 @@ export function getTimingStats(label: string, options: { days?: number } = {}): 
   };
 }
 
+// ─── Stats ───────────────────────────────────────────────────────────────────
+
+export interface EventStats {
+  totalEvents: number;
+  byLevel: Record<string, number>;
+  byEvent: Record<string, number>;
+  byModule: Record<string, number>;
+  byUser: Record<string, number>;
+  fileCount: number;
+  totalBytes: number;
+}
+
+export function stats(options: { days?: number } = {}): EventStats {
+  const days = options.days ?? 7;
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - days);
+
+  const records = query({ startDate, limit: 100_000 });
+
+  const byLevel: Record<string, number> = {};
+  const byEvent: Record<string, number> = {};
+  const byModule: Record<string, number> = {};
+  const byUser: Record<string, number> = {};
+
+  for (const r of records) {
+    const lvl = r.level ?? levelFor(r.event as EventType);
+    byLevel[lvl] = (byLevel[lvl] ?? 0) + 1;
+    byEvent[r.event] = (byEvent[r.event] ?? 0) + 1;
+    if (r.module) byModule[r.module] = (byModule[r.module] ?? 0) + 1;
+    const user = `${r.osUser ?? '?'}@${r.hostname}`;
+    byUser[user] = (byUser[user] ?? 0) + 1;
+  }
+
+  let fileCount = 0;
+  let totalBytes = 0;
+  try {
+    if (fs.existsSync(logsDir())) {
+      const files = fs.readdirSync(logsDir()).filter(f =>
+        f.startsWith('events-') && (f.endsWith('.jsonl') || f.endsWith('.jsonl.gz'))
+      );
+      fileCount = files.length;
+      for (const f of files) {
+        try {
+          totalBytes += fs.statSync(path.join(logsDir(), f)).size;
+        } catch { /* skip */ }
+      }
+    }
+  } catch { /* skip */ }
+
+  return {
+    totalEvents: records.length,
+    byLevel,
+    byEvent,
+    byModule,
+    byUser,
+    fileCount,
+    totalBytes,
+  };
+}
+
 // ─── Exports ──────────────────────────────────────────────────────────────────
 
 export function getLogsPath(): string {
   return logsDir();
+}
+
+export function _resetForTest(overrideLogsDir?: string): void {
+  _logsDir = overrideLogsDir;
+  _origin = undefined;
+  _chmoddedPath = undefined;
+  _lastGzipCheck = undefined;
+  lastRotationCheck = 0;
 }
