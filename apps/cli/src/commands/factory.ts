@@ -12,6 +12,7 @@ import * as path from 'path';
 import { homedir } from 'os';
 import { betaEnableHint, isBetaEnabled } from '../lib/beta.js';
 import { insertTask } from '../lib/cloud/store.js';
+import { emit } from '../lib/events.js';
 
 
 function requireFactoryUrl(): string {
@@ -98,6 +99,14 @@ Examples:
         prompt: result.linear_identifier,
         createdAt: now,
         updatedAt: now,
+      });
+
+      emit('cloud.dispatch', {
+        module: 'factory',
+        taskId: result.cloud_execution_id,
+        ref,
+        linear_identifier: result.linear_identifier,
+        status: 'queued',
       });
 
       console.log(chalk.green(`Submitted ${result.linear_identifier} (${result.label})`));

@@ -13,6 +13,7 @@ import ora from 'ora';
 import { checkbox } from '@inquirer/prompts';
 
 import { capableAgents, isCapable } from '../lib/capabilities.js';
+import { emit } from '../lib/events.js';
 import {
   AGENTS,
   ALL_AGENT_IDS,
@@ -380,6 +381,7 @@ Examples:
       }
 
       writeManifest(localPath, manifest);
+      emit('mcp.add', { module: 'mcp', server: name });
       console.log(chalk.green(`Added MCP server '${name}' to manifest`));
       console.log(chalk.gray('Run: agents mcp register to apply'));
     });
@@ -542,6 +544,7 @@ Examples:
       if (removed === 0) {
         console.log(chalk.yellow('No MCP servers removed.'));
       } else {
+        for (const n of mcpsToRemove) emit('mcp.remove', { module: 'mcp', server: n });
         console.log(chalk.green(`\nRemoved ${removed} MCP server(s).`));
       }
     });
@@ -692,6 +695,7 @@ Examples:
           { headers: config.headers }
         );
 
+        const applied = results.filter(r => r.success).length;
         for (const result of results) {
           if (result.success) {
             console.log(`    ${chalk.green('+')} ${formatTargetLabel(result.agentId, result.version)}`);
@@ -701,6 +705,7 @@ Examples:
             console.log(`    ${chalk.red('x')} ${formatTargetLabel(result.agentId, result.version)}: ${result.error}`);
           }
         }
+        if (applied > 0) emit('mcp.register', { module: 'mcp', server: mcpName, applied });
       }
     });
 }

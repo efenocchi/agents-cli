@@ -13,6 +13,7 @@ import { getAccountInfo, type AccountInfo } from './agents.js';
 import { readMeta, writeMeta, getHelpersDir } from './state.js';
 import { listInstalledVersions, getVersionHomePath, resolveVersion } from './versions.js';
 import { getProjectRunConfigs } from './run-config.js';
+import { emit } from './events.js';
 import {
   getUsageInfoByIdentity,
   getUsageLookupKey,
@@ -465,6 +466,7 @@ export async function resolveRunVersion(agent: AgentId, strategy: RunStrategy, c
       }
       recordRotationPick(agent, rotation.picked.version);
     }
+    emit('rotation.resolved', { module: 'rotate', agent, version: rotation.picked.version, strategy, healthy: rotation.healthy.length, excluded: rotation.excluded.length });
     return { version: rotation.picked.version, rotation };
   }
 

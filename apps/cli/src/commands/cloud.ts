@@ -18,6 +18,7 @@ import type { CloudProvider, CloudProviderId, CloudTarget, CloudTaskStatus, Disp
 import { MissingTargetError, MAX_IMAGES_PER_DISPATCH } from '../lib/cloud/types.js';
 import type { JobConfig, JobTrigger } from '../lib/routines.js';
 import { normalizeTriggerEvent, validateTrigger, writeJob, jobExists, GITHUB_TRIGGER_EVENTS } from '../lib/routines.js';
+import { emit } from '../lib/events.js';
 
 /** Map a supported image file extension to its wire mimeType. Rejects anything else. */
 function imageMimeFromPath(file: string): ImageAttachment['mimeType'] {
@@ -387,6 +388,7 @@ Examples:
 
       // Persist locally
       insertTask(task);
+      emit('cloud.dispatch', { module: 'cloud', taskId: task.id, agent: task.agent, provider: task.provider, status: task.status });
 
       if (json) {
         process.stdout.write(JSON.stringify(task) + '\n');
@@ -414,6 +416,7 @@ Examples:
           summary: result.summary,
           prUrl: result.prUrl,
         });
+        emit('cloud.complete', { module: 'cloud', taskId: task.id, status: result.status, prUrl: result.prUrl });
         if (gated?.gate.breached()) {
           const b = gated.gate.breach();
           process.stderr.write(
@@ -586,6 +589,7 @@ Examples:
           summary: result.summary,
           prUrl: result.prUrl,
         });
+        emit('cloud.complete', { module: 'cloud', taskId: id, status: result.status, prUrl: result.prUrl });
         if (gated?.gate.breached()) {
           process.exitCode = 7;
         }
@@ -607,6 +611,7 @@ Examples:
       try {
         await provider.cancel(id);
         updateTaskStatus(id, 'cancelled');
+        emit('cloud.cancel', { module: 'cloud', taskId: id, provider: task.provider });
         console.log(chalk.green(`Task ${id} cancelled.`));
       } catch (err) {
         die((err as Error).message);
@@ -626,6 +631,7 @@ Examples:
       try {
         await provider.message(id, text);
         updateTaskStatus(id, 'running');
+        emit('cloud.message', { module: 'cloud', taskId: id });
         console.log(chalk.green(`Message sent to task ${id}. Agent is continuing.`));
       } catch (err) {
         die((err as Error).message);
