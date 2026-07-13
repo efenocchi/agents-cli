@@ -18,8 +18,12 @@ import {
   listInstalledSubagents,
   transformSubagentForClaude,
   transformSubagentForCodex,
+  writeKimiSubagentFiles,
+  buildKimiSubagentsParentYaml,
+  KIMI_SUBAGENTS_PARENT_FILE,
   transformSubagentForDroid,
   syncSubagentToOpenclaw,
+  parseSubagentFrontmatter,
 } from '../../subagents.js';
 import { safeJoin } from '../../paths.js';
 import type { ResourceWriter, WriteArgs, WriteResult } from './types.js';
@@ -38,8 +42,8 @@ function buildSubagentsWriter(agent: AgentId): ResourceWriter<string[]> {
         const sub = map.get(name);
         if (!sub) continue;
         try {
-          if (agent === 'claude') {
-            const agentsDir = path.join(versionHome, '.claude', 'agents');
+          if (agent === 'claude' || agent === 'grok') {
+            const agentsDir = path.join(versionHome, agent === 'grok' ? '.grok' : '.claude', 'agents');
             fs.mkdirSync(agentsDir, { recursive: true });
             fs.writeFileSync(safeJoin(agentsDir, `${sub.name}.md`), transformSubagentForClaude(sub.path));
             synced.push(sub.name);
@@ -47,6 +51,9 @@ function buildSubagentsWriter(agent: AgentId): ResourceWriter<string[]> {
             const agentsDir = path.join(versionHome, '.codex', 'agents');
             fs.mkdirSync(agentsDir, { recursive: true });
             fs.writeFileSync(safeJoin(agentsDir, `${sub.name}.toml`), transformSubagentForCodex(sub.path));
+            synced.push(sub.name);
+          } else if (agent === 'kimi') {
+            writeKimiSubagentFiles(path.join(versionHome, '.kimi-code', 'agents'), sub.path, sub.name);
             synced.push(sub.name);
           } else if (agent === 'droid') {
             const droidsDir = path.join(versionHome, '.factory', 'droids');
@@ -60,6 +67,25 @@ function buildSubagentsWriter(agent: AgentId): ResourceWriter<string[]> {
           }
         } catch { /* per-item sync failure: skip */ }
       }
+
+      // Kimi parent agent file listing all synced subagents for --agent-file.
+      if (agent === 'kimi' && synced.length > 0) {
+        const agentsDir = path.join(versionHome, '.kimi-code', 'agents');
+        const entries = synced.map((name) => {
+          const sub = map.get(name)!;
+          const fm = parseSubagentFrontmatter(path.join(sub.path, 'AGENT.md'));
+          return {
+            name,
+            description: fm?.description ?? name,
+            relativePath: `./${name}.yaml`,
+          };
+        });
+        fs.writeFileSync(
+          safeJoin(agentsDir, KIMI_SUBAGENTS_PARENT_FILE),
+          buildKimiSubagentsParentYaml(entries)
+        );
+      }
+
       return { synced };
     },
   };
