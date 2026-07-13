@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **`agents sessions --active --json` now carries session attachment metadata for Factory previews (RUSH-1524).** Claude and Droid prompt image/document blocks that reference local files are preserved as `{ path, name, mediaType, sizeBytes }`, and the active-session state dedupes them into `attachments` so consumers can render screenshot thumbnails and open the original files instead of only seeing an attachment count. Source: `apps/cli/src/lib/session/parse.ts`, `apps/cli/src/lib/session/state.ts`, `apps/cli/src/lib/session/active.ts`.
+
 ## 1.20.58
 
 - **Clarify the native escape hatch behind `--mode skip`.** The README and bundled `run` skill now discourage `skip`, list its exact direct-exec per-harness flag mappings and ACP `allow_always` behavior, replace an older recommendation of unsafe `full` for ordinary writes, and distinguish Codex `auto` (sandboxed `edit`, which can still prompt) from Codex `skip` (`--dangerously-bypass-approvals-and-sandbox`, equivalent to unsandboxed `--yolo`). Documentation only; runtime behavior is unchanged. Source: `README.md`, `skills/run/SKILL.md`.
