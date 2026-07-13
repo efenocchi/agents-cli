@@ -129,10 +129,14 @@ function FeedItemImpl({ agent: a, selected, plain, onSelect, onOption, onFreeTex
   const bgBadge = a.context === 'headless'
     ? <span className="pill bg" title="Background (headless) — no terminal; open with Focus">bg</span>
     : null
+  // Per-session rate/usage limit (RUSH-1523) — distinct from a healthy running card.
+  const rateBadge = a.rateLimited
+    ? <span className="pill rate" title="This session hit a rate or usage limit">rate limited</span>
+    : null
 
   return (
     <div
-      className={`fitem ${attn}${selected ? ' selsel' : ''}`}
+      className={`fitem ${attn}${selected ? ' selsel' : ''}${a.rateLimited ? ' rate-limited' : ''}`}
       data-id={a.id}
       onClick={() => onSelect(a.id)}
     >
@@ -145,6 +149,7 @@ function FeedItemImpl({ agent: a, selected, plain, onSelect, onOption, onFreeTex
         <span className="when">
           {marker}
           {bgBadge}
+          {rateBadge}
           {ciBadge}
           {tok && (
             <span className="tps">{!plain && <Icon name="zap" size={11} />}{tok}</span>

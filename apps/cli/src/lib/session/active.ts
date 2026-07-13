@@ -92,6 +92,8 @@ export interface ActiveSession {
   worktree?: DetectedWorktree;
   /** Tracker ticket the session is tied to. */
   ticket?: DetectedTicket;
+  /** Per-session rate/usage limit detected in the transcript (RUSH-1523). */
+  rateLimited?: boolean;
   /** Tracker refs the session CREATED (Linear create_issue / gh issue create). */
   createdTickets?: string[];
   /** Team name the session SPAWNED via `agents teams create/add`. */
@@ -396,6 +398,7 @@ function applyState(base: Omit<ActiveSession, 'status'>, state: SessionState | u
     ticket: state.ticket,
     createdTickets: state.createdTickets,
     spawnedTeam: state.spawnedTeam,
+    rateLimited: state.rateLimited,
   };
 }
 
