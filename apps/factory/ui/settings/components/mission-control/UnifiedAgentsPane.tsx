@@ -634,12 +634,12 @@ export function UnifiedAgentsPane({ terminals, tasks, tasksLoading, unifiedTasks
   // sweep is expensive (SSH fan-out), so it runs lazily when the Recap center opens.
   const [recapSessions, setRecapSessions] = useState<RemoteSessionLike[] | null>(null)
   const [floorSort, setFloorSort] = useState<FloorSort>('needs')
-  // Group the live feed by an axis (project/host/status/agent). Defaults to 'project'
-  // so sessions cluster under the repo/Linear project they're working on (NEEDS YOU
-  // stays pinned above the groups); 'none' falls back to flat phase sections
-  // (NEEDS YOU -> RUNNING -> DONE). Reuses the same groupAgents() the Backlog's group
-  // control uses, so the two bars behave alike.
-  const [floorGroup, setFloorGroup] = useState<FloorGroupBy | 'none'>('project')
+  // Group the live feed by an axis. Defaults to 'outcome' (ticket/PR/worktree) so a
+  // fleet-scale floor shows deliverables, not ~1,100 agents (RUSH-1479). NEEDS YOU
+  // stays pinned above the groups; 'none' falls back to flat phase sections
+  // (NEEDS YOU -> RUNNING -> DONE). Reuses groupAgents() so the control bar and
+  // the feed share one grouping implementation.
+  const [floorGroup, setFloorGroup] = useState<FloorGroupBy | 'none'>('outcome')
   const [plain, setPlain] = useState(floorPrefs0.plain)
   const [sidebarOpen, setSidebarOpen] = useState(floorPrefs0.sidebar)
   // Collapsed = the icon rail (mockup default); expanded = the full text sidebar.
