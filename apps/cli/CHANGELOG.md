@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Routines now default to `--mode auto` instead of `plan` (RUSH-1595).** A routine created without an explicit `mode` now runs under the smart classifier (`auto`) rather than read-only `plan`, so unattended jobs can create PRs, write files, and run tests end-to-end without every user opting in — `auto` maps to `--permission-mode auto` (claude), workspace-write + network (codex), `--auto high` (droid), and kimi's default headless run (which had no read-only mode and previously errored at `plan`). Opt down to `mode: plan` for read-only monitoring/reporting. `JOB_DEFAULTS.mode`, the `agents routines add --mode` flag default, and the file-add default all move to `auto`; `writeJob` now omits `mode` when it equals `auto`. Source: `apps/cli/src/lib/routines.ts`, `apps/cli/src/commands/routines.ts`.
+
 ## 1.20.54
 
 - **Unified fleet target resolution for `agents ssh` + `sessions --host`.** `agents ssh` now accepts the full target grammar the fan-out already used — a registered `name`, a `user@device` (same device, login user overridden, still dialed via its Tailscale route rather than raw LAN DNS), and an ad-hoc `user@host`/`host` literal — instead of only an exact device name (`agents ssh muqsit@mac-mini` no longer errors "Unknown device"). A bare unregistered alias still reports "Unknown device". `sessions --host user@device` now resolves the host part through the registry too, so it stops silently diverging onto the non-Tailscale route. New `resolveDeviceTarget`; `resolveSshTarget` shares one host-part matcher. Source: `apps/cli/src/lib/devices/resolve-target.ts`, `apps/cli/src/commands/ssh.ts`.
