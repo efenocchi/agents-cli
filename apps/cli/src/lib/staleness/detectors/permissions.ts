@@ -181,6 +181,26 @@ function buildKimiDetector(): ResourceDetector {
   };
 }
 
+function buildCursorDetector(): ResourceDetector {
+  return {
+    kind: 'permissions',
+    agent: 'cursor',
+    list({ versionHome }: DetectArgs): string[] {
+      const configPath = path.join(versionHome, '.cursor', 'cli-config.json');
+      if (!fs.existsSync(configPath)) return [];
+      try {
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as {
+          permissions?: { allow?: string[]; deny?: string[] };
+        };
+        const allow = config.permissions?.allow?.length ?? 0;
+        const deny = config.permissions?.deny?.length ?? 0;
+        if (allow + deny > 0) return discoverPermissionGroups().map(g => g.name);
+      } catch { /* parse fail */ }
+      return [];
+    },
+  };
+}
+
 function buildKiroDetector(): ResourceDetector {
   return {
     kind: 'permissions',
@@ -207,6 +227,7 @@ const handlers: Partial<Record<AgentId, () => ResourceDetector>> = {
   antigravity: buildAntigravityDetector,
   grok: buildGrokDetector,
   kimi: buildKimiDetector,
+  cursor: buildCursorDetector,
   kiro: buildKiroDetector,
 };
 
