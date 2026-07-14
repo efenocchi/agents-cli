@@ -96,6 +96,11 @@ describe('staleness/registry', () => {
     expect(DETECTORS.permissions.antigravity).toBeDefined();
   });
 
+  it('droid has a generic skills writer + detector', () => {
+    expect(WRITERS.skills.droid).toBeDefined();
+    expect(DETECTORS.skills.droid).toBeDefined();
+  });
+
   it('droid has a permissions writer + detector', () => {
     expect(WRITERS.permissions.droid).toBeDefined();
     expect(DETECTORS.permissions.droid).toBeDefined();
