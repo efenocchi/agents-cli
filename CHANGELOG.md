@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Added
+
+- **`agents output` — productivity: token burn vs shipped output.** A new command
+  that joins spend (`$` cost, from the offline price table) to what actually
+  shipped: real generated **output tokens** plus **commits across every git
+  identity** and **PRs opened/merged** (`gh`), with burn-vs-output ratios
+  (`$/PR`, `$/commit`, output-tokens/`$`). Supports `--since`, `--by
+  agent|project|day`, `--repos-dir`, `--author`, `--login`, `--no-prs`, `--json`,
+  and `--host`. Leads with output tokens because the raw session `token_count`
+  sums cache-read/-write context re-counted every turn and runs ~100–400× the
+  real generation — an honest "work produced" signal, not the inflated total.
+  `--all-hosts` folds in every online device (`ag devices`) over SSH for one
+  fleet-wide burn-vs-output view (unreachable/older machines are labeled, not
+  dropped). `--since` accepts `1h`, `24h`, `7d`, `4w`, `1mo`, `1y`, or an ISO
+  date.
+
+- **`parseTimeFilter` gains month (`mo`) and year (`y`) units.** Additive and
+  non-breaking — `m` still means minutes; `1mo` = 30 days, `1y` = 365 days.
+  Shared by `output`, `cost`, and `sessions --since`.
+
+- **`output_tokens` recorded per session (schema v12).** The session scanners now
+  capture real generated tokens separately from `token_count` for claude, codex,
+  gemini, opencode, kimi, and droid, surfaced via `queryUsageRollup`. Existing
+  session databases migrate additively and backfill on the next scan (the first
+  run re-indexes once).
+
 ## 1.20.58
 
 ### Added
