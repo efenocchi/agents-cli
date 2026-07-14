@@ -1,7 +1,7 @@
 # Changelog
 
 ## Unreleased
-
+- **OpenCode permissions write to the loaded config path (RUSH-1623).** Global config is `~/.config/opencode/opencode.jsonc` (not `~/.opencode/`); project config is `opencode.jsonc` at the project root. Source: `apps/cli/src/lib/permissions.ts`, `apps/cli/src/lib/agents.ts`.
 ## 1.20.58
 
 - **Self-updating agent CLIs are represented as one live installation.** `agents view` no longer invents version-home rows for single-binary installers such as Droid, Grok, Cursor, Kiro, Goose, and Hermes; it reports the version returned by the installed binary and folds away stale per-version directories. `agents add <agent>@<version>` now installs or keeps that agent's current release instead of rejecting an unsupported pinned install. Source: `apps/cli/src/lib/agents.ts`, `apps/cli/src/lib/versions.ts`, `apps/cli/src/commands/{versions,view}.ts`. (RUSH-1321)
