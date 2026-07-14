@@ -96,6 +96,11 @@ describe('staleness/registry', () => {
     expect(DETECTORS.permissions.antigravity).toBeDefined();
   });
 
+  it('kiro has a subagents writer + detector', () => {
+    expect(WRITERS.subagents.kiro).toBeDefined();
+    expect(DETECTORS.subagents.kiro).toBeDefined();
+  });
+
   it('droid has a generic skills writer + detector', () => {
     expect(WRITERS.skills.droid).toBeDefined();
     expect(DETECTORS.skills.droid).toBeDefined();
