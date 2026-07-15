@@ -6,6 +6,8 @@ All notable changes to the Factory extension are documented here. Format follows
 
 ## [Unreleased]
 
+- **Factory Floor shows live plan progress for remote / device-dispatched agents (RUSH-1380).** The CLI now carries each session's latest `TodoWrite` on `ActiveSession.todos`; the remote adapter maps it onto the feed's checklist (previously hardcoded empty for status-only remote sessions), so a headless agent on another machine now renders an N/M pill in its header, the `CardChecklist` in its feed card, and a `TodoChecklist` in its detail pane. When there's no live tool action, the now-line falls back to the in-progress step. Source: `apps/factory/src/core/remoteSessions.ts` (`RemoteSession.todos`, `normalizeTodos`), `ui/settings/components/mission-control/floorAdapter.ts` (`toFloorAgentFromRemote`), `FeedItem.tsx`, `UnifiedAgentsPane.tsx`, `floor.css`.
+
 ## [0.9.292] - 2026-07-13
 
 - **Factory recognizes every current agents-cli harness.** The checked-in CLI
