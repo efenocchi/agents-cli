@@ -5,6 +5,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import * as yaml from 'yaml';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { toPosix } from './platform/index.js';
 
@@ -1654,5 +1655,122 @@ describe('syncPluginToVersion (goose Open Plugins install)', () => {
     syncPluginToVersion(plugin, 'goose', versionHome);
     removePluginFromVersion(plugin.name, pluginRoot, 'goose', versionHome);
     expect(isPluginSynced(plugin, 'goose', versionHome)).toBe(false);
+  });
+});
+
+// ─── syncPluginToVersion: Hermes (flat plugins/ + config.yaml enable toggle) ──
+
+describe('syncPluginToVersion (hermes plugin install)', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-test-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function setupHermesPlugin(name = 'myplugin', withHooks = false): {
+    pluginRoot: string;
+    versionHome: string;
+    plugin: DiscoveredPlugin;
+  } {
+    const pluginRoot = path.join(tmpDir, name);
+    fs.mkdirSync(path.join(pluginRoot, '.claude-plugin'), { recursive: true });
+    fs.writeFileSync(
+      path.join(pluginRoot, '.claude-plugin', 'plugin.json'),
+      JSON.stringify({ name, version: '2.1.0', description: 'a hermes plugin', author: { name: 'tester' } })
+    );
+    if (withHooks) {
+      fs.mkdirSync(path.join(pluginRoot, 'hooks'), { recursive: true });
+      fs.writeFileSync(
+        path.join(pluginRoot, 'hooks', 'hooks.json'),
+        JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'echo hi' }] }] } })
+      );
+    }
+    const versionHome = path.join(tmpDir, `${name}-home`);
+    fs.mkdirSync(versionHome, { recursive: true });
+    const plugin: DiscoveredPlugin = {
+      name,
+      root: pluginRoot,
+      manifest: { name, version: '2.1.0', description: 'a hermes plugin' },
+      skills: [],
+      hooks: withHooks ? ['SessionStart'] : [],
+      scripts: [],
+      commands: [],
+      agentDefs: [],
+      memory: [],
+      bin: [],
+      mcpServers: [],
+      lspServers: [],
+      monitors: [],
+      hasMcp: false,
+      hasSettings: false,
+    };
+    return { pluginRoot, versionHome, plugin };
+  }
+
+  it('installs a flat plugin dir with a plugin.yaml manifest and enables it in config.yaml', async () => {
+    const { versionHome, plugin } = setupHermesPlugin();
+    const { syncPluginToVersion, isPluginSynced, hermesPluginsDir } = await import('./plugins.js');
+    const r = syncPluginToVersion(plugin, 'hermes', versionHome, { allowExecSurfaces: true });
+    expect(r.success).toBe(true);
+
+    const dest = path.join(hermesPluginsDir(versionHome), 'myplugin');
+    // Flat layout — no marketplaces/ sublayer.
+    expect(fs.existsSync(dest)).toBe(true);
+    expect(dest.includes(`${path.sep}marketplaces${path.sep}`)).toBe(false);
+    expect(fs.existsSync(path.join(dest, '.agents-cli-managed'))).toBe(true);
+
+    // YAML manifest (not plugin.json) with name/version/description.
+    const manifestPath = path.join(dest, 'plugin.yaml');
+    expect(fs.existsSync(manifestPath)).toBe(true);
+    const manifest = yaml.parse(fs.readFileSync(manifestPath, 'utf-8')) as { name: string; version: string; description: string };
+    expect(manifest).toEqual({ name: 'myplugin', version: '2.1.0', description: 'a hermes plugin' });
+
+    // Enable toggle: plugins.enabled allowlist in config.yaml.
+    const config = yaml.parse(fs.readFileSync(path.join(versionHome, '.hermes', 'config.yaml'), 'utf-8')) as { plugins?: { enabled?: string[] } };
+    expect(config.plugins?.enabled).toEqual(['myplugin']);
+
+    expect(isPluginSynced(plugin, 'hermes', versionHome)).toBe(true);
+  });
+
+  it('does NOT enable a plugin with exec surfaces unless allowExecSurfaces is set', async () => {
+    const { versionHome, plugin } = setupHermesPlugin('hooky', true);
+    const { syncPluginToVersion } = await import('./plugins.js');
+    const r = syncPluginToVersion(plugin, 'hermes', versionHome); // no allowExecSurfaces
+    expect(r.success).toBe(true);
+    // Files are installed, but the plugin is NOT added to the enabled allowlist.
+    const configPath = path.join(versionHome, '.hermes', 'config.yaml');
+    const enabled = fs.existsSync(configPath)
+      ? ((yaml.parse(fs.readFileSync(configPath, 'utf-8')) as { plugins?: { enabled?: string[] } }).plugins?.enabled ?? [])
+      : [];
+    expect(enabled).not.toContain('hooky');
+  });
+
+  it('preserves existing config.yaml keys and other enabled entries when enabling', async () => {
+    const { versionHome, plugin } = setupHermesPlugin();
+    const configPath = path.join(versionHome, '.hermes', 'config.yaml');
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, yaml.stringify({ mcp_servers: { foo: { url: 'http://x' } }, plugins: { enabled: ['other'], disabled: ['banned'] } }), 'utf-8');
+
+    const { syncPluginToVersion } = await import('./plugins.js');
+    syncPluginToVersion(plugin, 'hermes', versionHome, { allowExecSurfaces: true });
+
+    const config = yaml.parse(fs.readFileSync(configPath, 'utf-8')) as { mcp_servers?: unknown; plugins?: { enabled?: string[]; disabled?: string[] } };
+    expect(config.mcp_servers).toEqual({ foo: { url: 'http://x' } });
+    expect(config.plugins?.enabled).toEqual(['other', 'myplugin']);
+    expect(config.plugins?.disabled).toEqual(['banned']); // deny-list untouched
+  });
+
+  it('removePluginFromVersion deletes the dir and drops it from plugins.enabled', async () => {
+    const { pluginRoot, versionHome, plugin } = setupHermesPlugin();
+    const { syncPluginToVersion, removePluginFromVersion, isPluginSynced } = await import('./plugins.js');
+    syncPluginToVersion(plugin, 'hermes', versionHome, { allowExecSurfaces: true });
+    removePluginFromVersion(plugin.name, pluginRoot, 'hermes', versionHome);
+    expect(isPluginSynced(plugin, 'hermes', versionHome)).toBe(false);
+    const config = yaml.parse(fs.readFileSync(path.join(versionHome, '.hermes', 'config.yaml'), 'utf-8')) as { plugins?: { enabled?: string[] } };
+    expect(config.plugins?.enabled ?? []).not.toContain('myplugin');
   });
 });

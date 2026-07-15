@@ -646,6 +646,12 @@ export const AGENTS: Record<AgentId, AgentConfig> = {
     format: 'markdown',
     variableSyntax: '$ARGUMENTS',
     supportsHooks: true,
+    // Plugins: Hermes loads plugins from a flat `~/.hermes/plugins/<name>/` dir
+    // with a `plugin.yaml` manifest; a plugin only loads once its name is in the
+    // `plugins.enabled` allowlist in `~/.hermes/config.yaml` (deny-list
+    // `plugins.disabled` wins). Not the Claude marketplace layout, so it installs
+    // via a flat-copy branch (mirrors goose) plus a YAML allowlist toggle.
+    // See https://hermes-agent.nousresearch.com/docs/user-guide/features/plugins
     capabilities: {
       // Lifecycle hooks land in ~/.hermes/config.yaml under a `hooks:` block
       // (YAML, shared with `mcp_servers`); gated to Hermes ≥ 0.11.0 which
@@ -657,7 +663,7 @@ export const AGENTS: Record<AgentId, AgentConfig> = {
       allowlist: false,
       skills: true,
       commands: false,
-      plugins: false,
+      plugins: true,
       subagents: false,
       rules: { file: 'MEMORY.md' },
       workflows: false,

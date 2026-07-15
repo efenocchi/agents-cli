@@ -109,10 +109,11 @@ describe('droid (Factory AI)', () => {
 });
 
 describe('Hermes and ForgeCode install targets', () => {
-  it('registers Hermes with skills, MCP, and MEMORY.md rules', () => {
+  it('registers Hermes with skills, MCP, plugins, and MEMORY.md rules', () => {
     expect(ALL_AGENT_IDS).toContain('hermes');
     expect(capableAgents('mcp')).toContain('hermes');
     expect(capableAgents('skills')).toContain('hermes');
+    expect(capableAgents('plugins')).toContain('hermes');
     expect(capableAgents('commands')).not.toContain('hermes');
     expect(capableAgents('hooks')).toContain('hermes');
     expect(AGENTS.hermes.instructionsFile).toBe('MEMORY.md');
