@@ -11,7 +11,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'yaml';
 import { Cron } from 'croner';
-import { getRoutinesDir, getRunsDir, ensureAgentsDir, getProjectRoutinesDir } from './state.js';
+import { getRoutinesDir, getSystemRoutinesDir, getRunsDir, ensureAgentsDir, getProjectRoutinesDir } from './state.js';
 import { safeJoin } from './paths.js';
 import { atomicWriteFileSync } from './fs-atomic.js';
 import type { AgentId } from './types.js';
@@ -190,10 +190,13 @@ const JOB_DEFAULTS: Partial<JobConfig> = {
 };
 
 /**
- * List all job configs, scanning project > user routine dirs.
- * Project routines (`<project>/.agents/routines/`) shadow user routines of the
- * same name. Project discovery is opt-in via `cwd`; the daemon (which calls
- * `listJobs()` with no argument) only sees user routines.
+ * List all job configs, scanning project > user > system routine dirs.
+ * Higher layers shadow lower ones of the same name (first-seen wins): a project
+ * routine shadows a user routine, and a user routine shadows a built-in system
+ * routine (`~/.agents/.system/routines/`, shipped via gh:phnx-labs/.agents-system).
+ * Project discovery is opt-in via `cwd`; the daemon (which calls `listJobs()`
+ * with no argument) sees user + system routines, so a built-in routine fires for
+ * every install unless the user overrides or disables it by name.
  */
 export function listJobs(cwd?: string): JobConfig[] {
   ensureAgentsDir();
@@ -206,6 +209,7 @@ export function listJobs(cwd?: string): JobConfig[] {
     if (projectDir) dirs.push(projectDir);
   }
   dirs.push(getRoutinesDir());
+  dirs.push(getSystemRoutinesDir());
 
   for (const dir of dirs) {
     if (!fs.existsSync(dir)) continue;
@@ -222,9 +226,10 @@ export function listJobs(cwd?: string): JobConfig[] {
 }
 
 /**
- * Read a single job config by name, checking project > user.
+ * Read a single job config by name, checking project > user > system.
  * Project discovery is opt-in via `cwd`; daemon callers pass no argument and
- * only resolve user routines.
+ * resolve user + system routines (a user routine of the same name shadows a
+ * built-in system routine).
  */
 export function readJob(name: string, cwd?: string): JobConfig | null {
   ensureAgentsDir();
@@ -234,6 +239,7 @@ export function readJob(name: string, cwd?: string): JobConfig | null {
     if (projectDir) dirs.push(projectDir);
   }
   dirs.push(getRoutinesDir());
+  dirs.push(getSystemRoutinesDir());
 
   for (const dir of dirs) {
     for (const ext of ['.yml', '.yaml']) {
