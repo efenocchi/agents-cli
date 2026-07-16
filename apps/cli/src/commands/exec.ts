@@ -33,7 +33,8 @@ interface ExecCommandActionOptions {
   addDir: string[];
   env: string[];
   secrets: string[];
-  noAutoSecrets?: boolean;
+  /** Commander maps `--no-auto-secrets` to `autoSecrets` (default true, false when passed). */
+  autoSecrets?: boolean;
   json?: boolean;
   quiet?: boolean;
   headless?: boolean;
@@ -673,31 +674,38 @@ export function registerRunCommand(program: Command): void {
           process.exit(1);
         }
         const hostName = hostGiven[0];
-        const { resolveHost, resolveHostByCap } = await import('../lib/hosts/registry.js');
-        const { dispatchToHost, runInteractiveOnHost } = await import('../lib/hosts/dispatch.js');
-        const { registerHostSession, registerInteractiveHostSession } = await import('../lib/hosts/session-index.js');
+        const { resolveHostRunTarget, dispatchPromptToHost, HostResolutionError } = await import('../lib/hosts/run-target.js');
+        const { runInteractiveOnHost } = await import('../lib/hosts/dispatch.js');
+        const { registerInteractiveHostSession } = await import('../lib/hosts/session-index.js');
+        const { RUN_OPTION_REJECT_MESSAGES } = await import('../lib/hosts/remote-cmd.js');
         const { normalizeRunStrategy, RUN_STRATEGIES } = await import('../lib/rotate.js');
-        // A password-auth device throws DeviceOffloadUnsupportedError here; it's
-        // printed cleanly by the top-level catch in index.ts (covers every
-        // resolveHost caller), so it never falls through to capability routing.
-        let host = await resolveHost(hostName);
-        if (!host) {
-          // Not a host name — try capability routing (e.g. --host gpu). A
-          // "Multiple hosts tagged…" error is actionable and must surface;
-          // only "no host tagged" falls through to the generic unknown-host msg.
-          try {
-            host = await resolveHostByCap(hostName, options.any);
-          } catch (e) {
-            const msg = (e as Error).message ?? '';
-            if (msg.startsWith('Multiple hosts')) {
-              console.error(chalk.red(msg));
-              process.exit(1);
-            }
-          }
-        }
-        if (!host) {
-          console.error(chalk.red(`Unknown host "${hostName}". List hosts: agents hosts list`));
+
+        // The forwarding contract (RUN_OPTION_FORWARDING): options that cannot
+        // cross the SSH boundary fail loud BEFORE dispatch — never a silent
+        // drop. Value-aware: only reject what was actually passed.
+        const hostRejects: string[] = [];
+        if (options.secrets.length > 0) hostRejects.push(RUN_OPTION_REJECT_MESSAGES.secrets);
+        if (options.secretsKeys) hostRejects.push(RUN_OPTION_REJECT_MESSAGES.secretsKeys);
+        if (options.allowExpired) hostRejects.push(RUN_OPTION_REJECT_MESSAGES.allowExpired);
+        if (options.resumeCheckpoint) hostRejects.push(RUN_OPTION_REJECT_MESSAGES.resumeCheckpoint);
+        if (options.resume === true) hostRejects.push(RUN_OPTION_REJECT_MESSAGES.resumeBare);
+        if (hostRejects.length > 0) {
+          for (const msg of hostRejects) console.error(chalk.red(msg));
           process.exit(1);
+        }
+        // Shared resolution (name → capability tag → error). A password-auth
+        // device throws DeviceOffloadUnsupportedError inside the helper and
+        // propagates untouched — it's printed cleanly by the top-level catch in
+        // index.ts (covers every resolveHost caller).
+        let host;
+        try {
+          host = await resolveHostRunTarget(hostName, { any: options.any });
+        } catch (e) {
+          if (e instanceof HostResolutionError) {
+            console.error(chalk.red(e.message));
+            process.exit(1);
+          }
+          throw e;
         }
         try {
           const [runAgent, rawRunVersion] = agentSpec.split('@');
@@ -810,10 +818,12 @@ export function registerRunCommand(program: Command): void {
               agent: runAgent,
               version: resumeId ? undefined : runVersion,
               strategy: resumeId ? undefined : runStrategy,
+              fallback: options.fallback,
               prompt,
               mode: options.mode,
               model: options.model,
               effort: options.effort,
+              env: options.env,
               addDir: hostAddDirs,
               json: options.json,
               verbose: options.verbose,
@@ -838,32 +848,37 @@ export function registerRunCommand(program: Command): void {
             console.error(chalk.red('A prompt is required for headless host runs: agents run <agent> "<task>" --host <name>'));
             process.exit(1);
           }
-          const hostSessionId = runAgent === 'claude' && !resumeId ? randomUUID() : undefined;
-          const { task, exitCode } = await dispatchToHost(host, {
+          // Session-id mint, detached dispatch, and local session-index
+          // registration all live in the shared helper (lib/hosts/run-target.ts).
+          const { task, exitCode } = await dispatchPromptToHost(host, {
             agent: runAgent,
             version: resumeId ? undefined : runVersion,
             strategy: resumeId ? undefined : runStrategy,
+            fallback: options.fallback,
             prompt,
             mode: options.mode,
             model: options.model,
             effort: options.effort,
+            env: options.env,
             addDir: hostAddDirs,
+            timeout: options.timeout,
+            loop: options.loop,
+            maxIterations: options.maxIterations,
+            budget: options.budget,
+            until: options.until,
+            interval: options.interval,
             json: options.json,
             verbose: options.verbose,
-            timeout: options.timeout,
             yes: options.yes,
             acp: options.acp,
+            autoSecrets: options.autoSecrets,
             remoteCwd: hostCwd,
-            sessionId: hostSessionId,
             name: options.name,
             resume: resumeId,
             follow: options.follow !== false,
+            passthroughArgs,
             copyCreds: hostCopyCreds,
           });
-          // Register the dispatched run in the LOCAL session index so it shows
-          // up in `agents sessions` and resolves by id/name, even though its
-          // transcript lives on the host. No-op when no session id was captured.
-          registerHostSession(task, { cwd: process.cwd(), prompt });
           if (options.follow === false) {
             // The handle the caller uses to check on the run: the name if given,
             // else the real host-task id (never the old literal `<id>`). Steer
@@ -1164,7 +1179,9 @@ export function registerRunCommand(program: Command): void {
 
         // Auto-inject secrets bundles declared in the workflow's frontmatter `secrets:` field.
         // Union with any --secrets flags the user passed; dedupe. Skip when --no-auto-secrets is set.
-        if (!options.noAutoSecrets) {
+        // (Commander stores the negated flag as `autoSecrets: false` — the old
+        // `noAutoSecrets` read was never populated, making the flag a no-op.)
+        if (options.autoSecrets !== false) {
           const declared = workflowFrontmatter?.secrets ?? [];
           if (declared.length > 0) {
             const existing = new Set(options.secrets);
