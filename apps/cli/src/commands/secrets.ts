@@ -51,6 +51,7 @@ import {
   type SecretsPolicy,
   type VarMeta,
 } from '../lib/secrets/bundles.js';
+import { encryptForFallback, decryptForFallback, type EncFile } from '../lib/secrets/filestore.js';
 import {
   getKeychainToken,
   getKeychainTokens,
@@ -394,6 +395,58 @@ export function bundleEnvToDotenv(env: Record<string, string>): string {
 }
 
 /**
+ * Encrypt a resolved env map to an offline bundle file using AES-256-GCM
+ * (the same EncFile envelope as the per-item file store). Inner plaintext is
+ * JSON so multi-line values round-trip losslessly. Written with mode 0600;
+ * the passphrase must be supplied explicitly — never auto-provisioned.
+ */
+export function exportBundleToFile(
+  env: Record<string, string>,
+  filePath: string,
+  passphrase: string,
+): void {
+  const enc = encryptForFallback(JSON.stringify(env), passphrase);
+  fs.writeFileSync(filePath, JSON.stringify(enc), { mode: 0o600 });
+}
+
+/**
+ * Decrypt and parse an offline bundle file produced by exportBundleToFile.
+ * Throws on a missing file, an invalid JSON envelope, or a wrong passphrase.
+ */
+export function importBundleFromFile(
+  filePath: string,
+  passphrase: string,
+): Record<string, string> {
+  const raw = fs.readFileSync(filePath, 'utf-8');
+  let enc: EncFile;
+  try {
+    enc = JSON.parse(raw) as EncFile;
+  } catch {
+    throw new Error(`Encrypted bundle file ${filePath} is corrupt (not valid JSON).`);
+  }
+  let plaintext: string;
+  try {
+    plaintext = decryptForFallback(enc, passphrase);
+  } catch {
+    throw new Error(`Failed to decrypt bundle file ${filePath}. Wrong passphrase or tampered file.`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(plaintext);
+  } catch {
+    throw new Error(`Decrypted bundle file ${filePath} has invalid content (expected JSON).`);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`Bundle file ${filePath} has unexpected structure.`);
+  }
+  const result: Record<string, string> = {};
+  for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+    result[k] = typeof v === 'string' ? v : String(v);
+  }
+  return result;
+}
+
+/**
  * Browse `agents secrets <args>` on one or more remote hosts over SSH and print
  * each host's stdout verbatim (lossless — no parsing). With >1 host the output
  * is grouped under a `── <host> ──` header. `tty` forces an interactive ssh
@@ -662,6 +715,55 @@ function countExpiringSoon(meta: Record<string, VarMeta> | undefined): number {
     if (d >= 0 && d < 30) n++;
   }
   return n;
+}
+
+/**
+ * Resolve an existing import target bundle (inheriting its backend) or create a
+ * new one with the requested backend. Refuses to silently downgrade a
+ * keychain-backed bundle to `file` — shared by every `import` source so the
+ * guard can't drift between them.
+ */
+function resolveImportBundle(name: string, backendOpt: string | undefined): SecretsBundle {
+  const requestedBackend = parseBackendOpt(backendOpt);
+  if (bundleExists(name)) {
+    const bundle = readBundle(name);
+    if (requestedBackend === 'file' && bundle.backend !== 'file') {
+      throw new Error(
+        `Bundle '${name}' already exists with a keychain backend; ` +
+        `--backend file cannot change it. Delete it first to recreate as file-backed.`
+      );
+    }
+    return bundle;
+  }
+  return { name, backend: requestedBackend === 'file' ? 'file' : undefined, vars: {} };
+}
+
+/**
+ * Apply KEY=VALUE entries into a bundle (keychain item or plaintext literal),
+ * honoring `--force`, then persist. Returns the added/skipped tally. Shared by
+ * the .env, --from-file, and --from-ssh import paths.
+ */
+function applyEnvToBundle(
+  bundle: SecretsBundle,
+  env: Record<string, string>,
+  opts: { force?: boolean; allPlaintext?: boolean }
+): { added: number; skipped: number } {
+  const store = bundleItemStore(bundle.backend, { noAcl: bundlePolicy(bundle) === 'never' });
+  let added = 0;
+  let skipped = 0;
+  for (const [key, value] of Object.entries(env)) {
+    if (!opts.force && key in bundle.vars) { skipped++; continue; }
+    if (opts.allPlaintext) {
+      bundle.vars[key] = { value };
+    } else {
+      const item = secretsKeychainItem(bundle.name, key);
+      store.set(item, value);
+      bundle.vars[key] = keychainRef(key);
+    }
+    added++;
+  }
+  writeBundle(bundle);
+  return { added, skipped };
 }
 
 /** Register the `agents secrets` command tree. */
@@ -1391,6 +1493,9 @@ Examples:
     .option('--backend <backend>', 'When creating the bundle: keychain (default) or file (passphrase-encrypted, headless-readable)', 'keychain')
     .option('--force', 'Overwrite an existing key in the bundle')
     .option('--purge', 'With --from icloud: delete the iCloud copies after a successful import (iCloud propagates the deletion to your other devices)')
+    .option('--from-file <path>', 'Import from an AES-256-GCM encrypted offline bundle file (needs AGENTS_SECRETS_PASSPHRASE; symmetric counterpart of export --to-file)')
+    .option('--from-ssh', 'Pull the bundle from a fleet peer over SSH and import it locally (requires --host)')
+    .option('--host <peer>', 'SSH peer to pull from when using --from-ssh (host alias or user@host)')
     .action(async (bundleName: string | undefined, opts: {
       from?: string;
       from1password?: boolean;
@@ -1399,8 +1504,52 @@ Examples:
       backend?: string;
       force?: boolean;
       purge?: boolean;
+      fromFile?: string;
+      fromSsh?: boolean;
+      host?: string;
     }) => {
       try {
+        // A single import can name only one source. --from-file / --from-ssh are
+        // early-return paths, so guard them against each other and the --from /
+        // --from-1password pair (which parseImportSource guards on its own).
+        const namedFileOrSsh = [
+          opts.fromFile ? '--from-file' : null,
+          opts.fromSsh ? '--from-ssh' : null,
+        ].filter(Boolean);
+        if (namedFileOrSsh.length > 1 || (namedFileOrSsh.length > 0 && (opts.from || opts.from1password))) {
+          throw new Error(
+            '--from-file, --from-ssh, and --from/--from-1password are mutually exclusive; pick one import source.'
+          );
+        }
+        if (opts.fromFile) {
+          const passphrase = process.env.AGENTS_SECRETS_PASSPHRASE ?? '';
+          if (!passphrase) {
+            throw new Error(
+              '--from-file needs AGENTS_SECRETS_PASSPHRASE set to decrypt the bundle file.'
+            );
+          }
+          const env = importBundleFromFile(opts.fromFile, passphrase);
+          const resolvedBundleName = bundleName ?? (await pickBundleName('import into'));
+          const bundle = resolveImportBundle(resolvedBundleName, opts.backend);
+          const { added, skipped } = applyEnvToBundle(bundle, env, opts);
+          console.log(chalk.green(`Imported ${added} key(s) from file${skipped ? `, skipped ${skipped} (already set, pass --force)` : ''}.`));
+          return;
+        }
+
+        if (opts.fromSsh) {
+          if (!opts.host) {
+            throw new Error('--from-ssh requires --host <peer>.');
+          }
+          assertValidSshTarget(opts.host);
+          const resolvedBundleName = bundleName ?? (await pickBundleName('import into'));
+          const target = await resolveSshTarget(opts.host);
+          const env = await remoteResolveEnv(target, resolvedBundleName, { osLookupName: opts.host });
+          const bundle = resolveImportBundle(resolvedBundleName, opts.backend);
+          const { added, skipped } = applyEnvToBundle(bundle, env, opts);
+          console.log(chalk.green(`Imported ${added} key(s) from ${opts.host}${skipped ? `, skipped ${skipped} (already set, pass --force)` : ''}.`));
+          return;
+        }
+
         const source = parseImportSource(opts);
         if (opts.purge && source.kind !== 'icloud') {
           throw new Error('--purge only applies to --from icloud.');
@@ -1421,50 +1570,20 @@ Examples:
         }
 
         const resolvedBundleName = bundleName ?? (await pickBundleName('import into'));
-        // Read the bundle if it exists (inheriting its backend); otherwise
-        // create it with the requested backend so a single `import --backend
-        // file` works (this is what `export --host ... --remote-backend file`
-        // drives on the remote).
-        let bundle: SecretsBundle;
-        if (bundleExists(resolvedBundleName)) {
-          bundle = readBundle(resolvedBundleName);
-          if (requestedBackend === 'file' && bundle.backend !== 'file') {
-            throw new Error(
-              `Bundle '${resolvedBundleName}' already exists with a keychain backend; ` +
-              `--backend file cannot change it. Delete it first to recreate as file-backed.`
-            );
-          }
-        } else {
-          bundle = {
-            name: resolvedBundleName,
-            backend: requestedBackend === 'file' ? 'file' : undefined,
-            vars: {},
-          };
-        }
-        const store = bundleItemStore(bundle.backend, { noAcl: bundlePolicy(bundle) === 'never' });
-        let added = 0;
-        let skipped = 0;
+        // resolveImportBundle inherits an existing bundle's backend (and refuses
+        // to downgrade keychain -> file) or creates it with the requested backend
+        // so a single `import --backend file` works (what `export --host ...
+        // --remote-backend file` drives on the remote).
+        const bundle = resolveImportBundle(resolvedBundleName, opts.backend);
 
         if (source.kind === '1password') {
           assertOpAvailable();
           const vault = await resolveVault(source.vault);
           const items = listItems(vault);
           const { secrets, skipped: opSkipped } = extractSecrets(items, vault);
-          for (const { envKey, value } of secrets) {
-            if (!opts.force && envKey in bundle.vars) {
-              skipped++;
-              continue;
-            }
-            if (opts.allPlaintext) {
-              bundle.vars[envKey] = { value };
-            } else {
-              const item = secretsKeychainItem(resolvedBundleName, envKey);
-              store.set(item, value);
-              bundle.vars[envKey] = keychainRef(envKey);
-            }
-            added++;
-          }
-          writeBundle(bundle);
+          const env: Record<string, string> = {};
+          for (const { envKey, value } of secrets) env[envKey] = value;
+          const { added, skipped } = applyEnvToBundle(bundle, env, opts);
           if (opSkipped.length) {
             console.log(chalk.yellow(`Skipped ${opSkipped.length} item(s) with no importable fields.`));
           }
@@ -1472,21 +1591,7 @@ Examples:
         } else {
           const raw = readImportDotenv(source.path);
           const pairs = parseDotenv(raw);
-          for (const [key, value] of Object.entries(pairs)) {
-            if (!opts.force && key in bundle.vars) {
-              skipped++;
-              continue;
-            }
-            if (opts.allPlaintext) {
-              bundle.vars[key] = { value };
-            } else {
-              const item = secretsKeychainItem(resolvedBundleName, key);
-              store.set(item, value);
-              bundle.vars[key] = keychainRef(key);
-            }
-            added++;
-          }
-          writeBundle(bundle);
+          const { added, skipped } = applyEnvToBundle(bundle, pairs, opts);
           console.log(chalk.green(`Imported ${added} key(s)${skipped ? `, skipped ${skipped} (already set, pass --force)` : ''}.`));
         }
       } catch (err) {
@@ -1506,6 +1611,7 @@ Examples:
     .option('--remote-backend <backend>', 'Backend for the bundle on the remote (with --host): keychain (default) or file (passphrase-encrypted, headless-readable). file forwards AGENTS_SECRETS_PASSPHRASE over stdin.', 'keychain')
     .option('--force', 'Overwrite existing keys/items on the target (used with --to-1password and --host)')
     .option('--format <shell|json>', 'Output for --plaintext export: shell (default) or json (lossless, machine-readable; used by remote resolve)', 'shell')
+    .option('--to-file <path>', 'Write the bundle as an AES-256-GCM encrypted offline file (needs AGENTS_SECRETS_PASSPHRASE; symmetric counterpart of import --from-file)')
     .action(async (bundleName: string | undefined, opts: {
       plaintext?: boolean;
       to1password?: boolean;
@@ -1514,10 +1620,25 @@ Examples:
       remoteBackend?: string;
       force?: boolean;
       format?: string;
+      toFile?: string;
     }) => {
       try {
         const { readAndResolveBundleEnv, bundleToEnvPrefix, isReservedEnvName } = await import('../lib/secrets/bundles.js');
         const resolvedBundleName = bundleName ?? (await pickBundleName('export'));
+
+        if (opts.toFile) {
+          const passphrase = process.env.AGENTS_SECRETS_PASSPHRASE ?? '';
+          if (!passphrase) {
+            throw new Error(
+              '--to-file needs AGENTS_SECRETS_PASSPHRASE set to encrypt the bundle. ' +
+              'Set it for this command, then supply the same value when importing.'
+            );
+          }
+          const { env } = readAndResolveBundleEnv(resolvedBundleName, { caller: 'export --to-file', agentOnly: isHeadlessSecretsContext() });
+          exportBundleToFile(env, opts.toFile, passphrase);
+          console.log(chalk.green(`Exported ${Object.keys(env).length} key(s) to ${opts.toFile}`));
+          return;
+        }
 
         // The presence of --host selects SSH push: --host is the destination
         // and carries the mode (no separate --to-ssh needed — it would be
