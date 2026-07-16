@@ -4,6 +4,16 @@
 
 ### Security
 
+- **The Windows `computer` daemon now requires authentication.** `computer-helper-win`
+  previously started with `authed = expectedToken == null` and the CLI never provisioned a
+  token, so it ran open on `127.0.0.1` — and loopback TCP on Windows is not user/session
+  scoped, letting **any** local process drive full screen capture, input injection, and
+  program launch. The daemon now **refuses to start without a `--token-file`**
+  (`native/computer-win/Program.cs`), and `agents computer setup --host` generates a
+  shared-secret token, writes it on the remote with an owner-only ACL, registers the task
+  with `--token-file`, and persists it locally so `start --host` authenticates
+  (`apps/cli/src/lib/ssh-tunnel.ts`). Existing token-less setups must re-run
+  `agents computer setup --host <device>` (the daemon will otherwise refuse to start).
 - **Plugin exec-surface detection now sees inline manifest `hooks`/`mcpServers`.**
   `inspectPluginCapabilities` classified a plugin as having an execution surface only
   from filesystem artifacts (a `hooks/` dir, a `.mcp.json` file), but the official plugin
