@@ -89,6 +89,40 @@ simply started reusing sockets. It degrades safely: if the socket can't be opene
 ssh falls back to a fresh connection, and on Windows (no `ControlMaster`) the
 helper returns `[]`.
 
+### 2b. Host-key pinning: a managed `known_hosts` (RUSH-1767)
+
+`accept-new` in the baseline is trust-on-first-use: it silently accepts whatever
+key answers on the first connect and never re-checks it, so a
+machine-in-the-middle present in that window is trusted forever. The CLI keeps its
+own `known_hosts` store — `~/.agents/.cache/devices/known_hosts` (mode 0600),
+separate from `~/.ssh/known_hosts` — so a device's key can be *pinned*
+([`known-hosts.ts`](../src/lib/devices/known-hosts.ts)):
+
+```
+UserKnownHostsFile=<managed store>   StrictHostKeyChecking=yes   ← once pinned
+UserKnownHostsFile=<managed store>   StrictHostKeyChecking=accept-new  ← first connect
+```
+
+`agents ssh <device>` learns the key on first connect (`accept-new`, written into
+the managed store) and verifies it with `StrictHostKeyChecking=yes` on every
+subsequent connect — a later key swap is refused, not re-accepted. `run --host
+--copy-creds` **refuses** a host that isn't pinned there and, when it does run,
+prepends the strict host-key opts (they must come *before* the baseline —
+`sshConnectOpts` — because ssh honors the first value seen for each option) over a
+fresh, non-multiplexed connection, so credentials never ride an unverified
+connect. A registered device earns its pin the ordinary way — connect once with
+`agents ssh <device>`. But a bare `~/.ssh/config` `Host` alias (or ad-hoc literal)
+is **not** a registered device, so `agents ssh <alias>` dead-ends at "Unknown
+device" and could never pin it; for that case the `--copy-creds` gate pins the
+target itself with `pinHostKey` (ssh-keyscan against the alias's real
+`HostName`/`Port`, resolved via `ssh -G`) before shipping anything, so
+`--copy-creds` works for ssh-config-alias hosts instead of dead-ending.
+**Remaining:** the broad `accept-new` baseline still governs
+non-credential fan-outs (`sessions --host`, the browser driver, `fleet run`),
+which still use OpenSSH default `~/.ssh/known_hosts`, not the managed store, so
+they neither pin into it nor verify against it. Wiring those call sites onto the
+managed store (so they verify strictly too) is follow-up.
+
 ### 3. The follow loop: one round-trip per cycle (P1)
 
 The old loop made two calls per cycle — `tail -c +offset` for new log bytes, then
