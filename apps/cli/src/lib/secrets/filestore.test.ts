@@ -23,7 +23,21 @@ vi.mock('child_process', async () => {
   return { ...actual, spawnSync: spawnSyncMock };
 });
 
-import { fileStore, getPassphrase, _resetFileStoreForTest } from './filestore.js';
+import { execSync } from 'child_process';
+import { fileStore, getPassphrase, disableTtyEchoOrThrow, _resetFileStoreForTest } from './filestore.js';
+
+describe('disableTtyEchoOrThrow (RUSH-1764: fail closed so a passphrase never echoes)', () => {
+  it('throws (fail closed) when echo cannot be disabled — never falls through', () => {
+    // A real command that exits non-zero stands in for "stty unavailable".
+    expect(() => disableTtyEchoOrThrow(() => { execSync('exit 7', { stdio: 'ignore' }); }))
+      .toThrow(/cleartext|echo could not be disabled/i);
+  });
+
+  it('does not throw when echo is disabled successfully', () => {
+    // A real no-op command succeeds; the guard passes through.
+    expect(() => disableTtyEchoOrThrow(() => { execSync('true', { stdio: 'ignore' }); })).not.toThrow();
+  });
+});
 
 describe('filestore passphrase policy (allowAutoProvision)', () => {
   let tmpRoot: string;

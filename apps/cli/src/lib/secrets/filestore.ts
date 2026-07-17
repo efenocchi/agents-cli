@@ -76,19 +76,35 @@ finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
   return (res.stdout?.toString() ?? '').replace(/\r?\n$/, '');
 }
 
+/**
+ * Turn off terminal echo on the controlling TTY, or throw — fail CLOSED. If echo
+ * cannot be disabled (`stty` missing, no controlling terminal) we must NOT fall
+ * through and read the passphrase anyway: that echoes the secret to the screen
+ * and into scrollback (RUSH-1764). Refuse and point the user at the environment
+ * variable instead. `run` performs the echo-disable and throws iff it fails.
+ * Exported so the fail-closed contract has direct test coverage.
+ */
+export function disableTtyEchoOrThrow(run: () => void): void {
+  try {
+    run();
+  } catch {
+    throw new Error(
+      'Refusing to prompt for AGENTS_SECRETS_PASSPHRASE: terminal echo could not be ' +
+      'disabled (stty unavailable or no controlling TTY), so the passphrase would be ' +
+      'shown in cleartext. Set AGENTS_SECRETS_PASSPHRASE in the environment instead.'
+    );
+  }
+}
+
 function readPassphraseFromTty(): string {
   if (process.platform === 'win32') return readPassphraseFromTtyWindows();
   const fd = fs.openSync('/dev/tty', 'r+');
   let echoDisabled = false;
   try {
     fs.writeSync(fd, 'Enter AGENTS_SECRETS_PASSPHRASE: ');
-    try {
-      execSync('stty -echo < /dev/tty', { stdio: 'ignore' });
-      echoDisabled = true;
-    } catch {
-      // stty not available — fall through; passphrase will echo. Better
-      // than refusing to function.
-    }
+    // Fail closed: if echo can't be turned off, abort rather than echo the secret.
+    disableTtyEchoOrThrow(() => execSync('stty -echo < /dev/tty', { stdio: 'ignore' }));
+    echoDisabled = true;
     let pass = '';
     const buf = Buffer.alloc(1);
     while (true) {

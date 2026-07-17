@@ -6,6 +6,7 @@
  * freshest credential; getAccountInfo falls back to the active HOME config so
  * non-active versions still report the account-global sign-in state.
  */
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -24,7 +25,7 @@ vi.mock('./state.js', async () => {
   };
 });
 
-import { switchConfigSymlink, carryForwardAuthFiles } from './shims.js';
+import { switchConfigSymlink, carryForwardAuthFiles, readAuthFileIdentity } from './shims.js';
 import { getAccountInfo } from './agents.js';
 
 const tempDirs: string[] = [];
@@ -56,9 +57,192 @@ function writeDroidAuth(home: string, body: string, mtimeMs?: number): void {
   }
 }
 
+/** Minimal JWT — only the payload segment is ever decoded (matches agents.ts). */
+function makeJwt(payload: Record<string, unknown>): string {
+  const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  return `${b64({ alg: 'ES256', typ: 'JWT' })}.${b64(payload)}.sig`;
+}
+
+/**
+ * Write a Droid credential the REAL way: a JSON blob carrying a WorkOS
+ * access-token JWT, encrypted AES-256-GCM as `ivB64:tagB64:ctB64`, keyed by the
+ * base64 contents of auth.v2.key (identical to agents.test.ts writeDroidCredential
+ * and to what the CLI writes). Identity derives from the JWT's email/org/sub, so
+ * the guard sees the account through the same decrypt path production uses.
+ * Returns the exact ciphertext written so callers can assert byte-equality after
+ * a carry. `.key` is per-account (a fresh random key) so a foreign source can
+ * never be decrypted with the destination account's key — exactly production.
+ */
+function writeDroidCred(
+  home: string,
+  claims: Record<string, unknown>,
+  mtimeMs: number,
+): string {
+  const dir = path.join(home, '.factory');
+  fs.mkdirSync(dir, { recursive: true });
+  const key = crypto.randomBytes(32);
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const credential = JSON.stringify({
+    access_token: makeJwt(claims),
+    refresh_token: 'rt',
+    active_organization_id: (claims.org_id as string) ?? null,
+  });
+  const ct = Buffer.concat([cipher.update(credential, 'utf-8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  const blob = [iv, tag, ct].map(b => b.toString('base64')).join(':');
+  fs.writeFileSync(path.join(dir, 'auth.v2.file'), blob, { mode: 0o600 });
+  fs.writeFileSync(path.join(dir, 'auth.v2.key'), key.toString('base64'), { mode: 0o600 });
+  const t = new Date(mtimeMs);
+  fs.utimesSync(path.join(dir, 'auth.v2.file'), t, t);
+  fs.utimesSync(path.join(dir, 'auth.v2.key'), t, t);
+  return blob;
+}
+
+/** Kimi credential dir (~/.kimi-code) — exact JSON shape from agents.test.ts. */
+function writeKimiCred(home: string, userId: string, mtimeMs: number): void {
+  const dir = path.join(TEST_VERSIONS_DIR, 'kimi', home, 'home', '.kimi-code', 'credentials');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, 'kimi-code.json');
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      access_token: makeJwt({ user_id: userId, sub: userId, scope: 'kimi-code' }),
+      refresh_token: makeJwt({ type: 'refresh' }),
+      token_type: 'Bearer',
+    }),
+    { mode: 0o600 },
+  );
+  const t = new Date(mtimeMs);
+  fs.utimesSync(file, t, t);
+}
+
+/** Antigravity token dir (~/.gemini/antigravity-cli) — { token: { refresh_token } }. */
+function writeAntigravityCred(home: string, refreshToken: string, mtimeMs: number): void {
+  const dir = path.join(TEST_VERSIONS_DIR, 'antigravity', home, 'home', '.gemini', 'antigravity-cli');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, 'antigravity-oauth-token');
+  fs.writeFileSync(
+    file,
+    JSON.stringify({ token: { access_token: 'ya29.x', refresh_token: refreshToken, token_type: 'Bearer' } }),
+    { mode: 0o600 },
+  );
+  const t = new Date(mtimeMs);
+  fs.utimesSync(file, t, t);
+}
+
 afterEach(() => {
   delete process.env.AGENTS_REAL_HOME;
   for (const d of tempDirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
+});
+
+describe('carryForwardAuthFiles — account-identity guard (RUSH-1764)', () => {
+  beforeEach(() => { makeHome(); });
+
+  it('droid: does NOT carry a NEWER foreign-account credential over an existing login', () => {
+    const v1 = droidHome('latest');    // foreign account B, newer mtime
+    const v2 = droidHome('0.159.1');   // active account A, older mtime
+    // REAL AES-256-GCM credential with a distinct per-account key — a foreign
+    // source can't even be decrypted with account A's key (identity mismatch).
+    const blobA = writeDroidCred(v2, { email: 'a@x.com', org_id: 'orgA' }, 1_000_000);
+    writeDroidCred(v1, { email: 'b@x.com', org_id: 'orgB' }, 2_000_000);
+
+    carryForwardAuthFiles('droid', path.join(v2, '.factory'));
+
+    // Account B's newer file must NOT have replaced account A's login — the
+    // ciphertext AND the key are still account A's, so the login stays intact.
+    expect(fs.readFileSync(path.join(v2, '.factory', 'auth.v2.file'), 'utf8')).toBe(blobA);
+  });
+
+  it('droid: DOES carry a newer refreshed credential for the SAME account', () => {
+    const v1 = droidHome('latest');
+    const v2 = droidHome('0.159.1');
+    writeDroidCred(v2, { email: 'a@x.com', org_id: 'orgA' }, 1_000_000);
+    const refreshed = writeDroidCred(v1, { email: 'a@x.com', org_id: 'orgA' }, 2_000_000);
+
+    carryForwardAuthFiles('droid', path.join(v2, '.factory'));
+
+    // Same email+org -> same identity -> the newer refreshed blob is carried.
+    expect(fs.readFileSync(path.join(v2, '.factory', 'auth.v2.file'), 'utf8')).toBe(refreshed);
+  });
+
+  it('droid: seeds an EMPTY target from the freshest source (no identity to protect yet)', () => {
+    const v1 = droidHome('latest');
+    const v2 = droidHome('0.159.1'); // no auth files written -> empty target
+    const blobA = writeDroidCred(v1, { email: 'a@x.com', org_id: 'orgA' }, 2_000_000);
+
+    carryForwardAuthFiles('droid', path.join(v2, '.factory'));
+
+    expect(fs.readFileSync(path.join(v2, '.factory', 'auth.v2.file'), 'utf8')).toBe(blobA);
+  });
+
+  it('kimi: does NOT carry a NEWER foreign-account credential over an existing login', () => {
+    writeKimiCred('0.159.1', 'USER_A', 1_000_000); // active account A, older
+    writeKimiCred('latest', 'USER_B', 2_000_000);  // foreign account B, newer
+    const destDir = path.join(TEST_VERSIONS_DIR, 'kimi', '0.159.1', 'home', '.kimi-code');
+
+    carryForwardAuthFiles('kimi', destDir);
+
+    const body = JSON.parse(fs.readFileSync(path.join(destDir, 'credentials', 'kimi-code.json'), 'utf8'));
+    const payload = JSON.parse(Buffer.from(body.access_token.split('.')[1], 'base64url').toString());
+    expect(payload.user_id).toBe('USER_A'); // account B's newer file was refused
+  });
+
+  it('antigravity: does NOT carry a NEWER foreign-account token over an existing login', () => {
+    writeAntigravityCred('1.0.12', 'REFRESH_A', 1_000_000); // active account A, older
+    writeAntigravityCred('1.0.13', 'REFRESH_B', 2_000_000); // foreign account B, newer
+    const destDir = path.join(TEST_VERSIONS_DIR, 'antigravity', '1.0.12', 'home', '.gemini', 'antigravity-cli');
+
+    carryForwardAuthFiles('antigravity', destDir);
+
+    const body = JSON.parse(fs.readFileSync(path.join(destDir, 'antigravity-oauth-token'), 'utf8'));
+    expect(body.token.refresh_token).toBe('REFRESH_A'); // account B's newer token was refused
+  });
+});
+
+describe('readAuthFileIdentity — decodes each agent REAL format', () => {
+  beforeEach(() => { makeHome(); });
+
+  it('returns null for a missing dir and an undecryptable droid credential', () => {
+    const v = droidHome('x'); // dir exists, no auth files
+    expect(readAuthFileIdentity('droid', path.join(v, '.factory'))).toBeNull();
+    expect(readAuthFileIdentity('droid', path.join(v, 'nope'))).toBeNull();
+    // Plaintext (not the AES-GCM format) can't be decrypted -> no identity.
+    fs.writeFileSync(path.join(v, '.factory', 'auth.v2.file'), 'not-encrypted');
+    fs.writeFileSync(path.join(v, '.factory', 'auth.v2.key'), 'KEY');
+    expect(readAuthFileIdentity('droid', path.join(v, '.factory'))).toBeNull();
+  });
+
+  it('droid: equal for the SAME account (token differs), distinct for a DIFFERENT account', () => {
+    const a1 = droidHome('a1');
+    const a2 = droidHome('a2');
+    const b = droidHome('b');
+    writeDroidCred(a1, { email: 'a@x.com', org_id: 'orgA' }, 1_000_000);
+    writeDroidCred(a2, { email: 'a@x.com', org_id: 'orgA' }, 2_000_000); // fresh key+token, same account
+    writeDroidCred(b, { email: 'b@x.com', org_id: 'orgB' }, 1_000_000);
+    const idA1 = readAuthFileIdentity('droid', path.join(a1, '.factory'));
+    expect(idA1).not.toBeNull();
+    expect(readAuthFileIdentity('droid', path.join(a2, '.factory'))).toBe(idA1);
+    expect(readAuthFileIdentity('droid', path.join(b, '.factory'))).not.toBe(idA1);
+  });
+
+  it('kimi: identity from the access-token user_id claim', () => {
+    writeKimiCred('a', 'USER_A', 1_000_000);
+    writeKimiCred('b', 'USER_B', 1_000_000);
+    const dirA = path.join(TEST_VERSIONS_DIR, 'kimi', 'a', 'home', '.kimi-code');
+    const dirB = path.join(TEST_VERSIONS_DIR, 'kimi', 'b', 'home', '.kimi-code');
+    expect(readAuthFileIdentity('kimi', dirA)).toBe('kimi:user=USER_A');
+    expect(readAuthFileIdentity('kimi', dirA)).not.toBe(readAuthFileIdentity('kimi', dirB));
+  });
+
+  it('antigravity: identity from the refresh_token; null when absent', () => {
+    writeAntigravityCred('a', 'REFRESH_A', 1_000_000);
+    const dirA = path.join(TEST_VERSIONS_DIR, 'antigravity', 'a', 'home', '.gemini', 'antigravity-cli');
+    expect(readAuthFileIdentity('antigravity', dirA)).toBe('antigravity:sub=REFRESH_A');
+    // No refresh_token -> no identity.
+    fs.writeFileSync(path.join(dirA, 'antigravity-oauth-token'), JSON.stringify({ token: {} }));
+    expect(readAuthFileIdentity('antigravity', dirA)).toBeNull();
+  });
 });
 
 describe('carryForwardAuthFiles / switchConfigSymlink — auth survives version switch (RUSH-1318)', () => {

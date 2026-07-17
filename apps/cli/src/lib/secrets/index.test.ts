@@ -11,6 +11,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import {
   assertValueStorable,
+  buildAddGenericPasswordArgs,
   computeRekeyPlan,
   deleteKeychainToken,
   getKeychainToken,
@@ -28,6 +29,19 @@ import {
   withRawKeychainServiceNames,
   type KeychainBackend,
 } from './index.js';
+
+describe('buildAddGenericPasswordArgs (RUSH-1764: value never in argv)', () => {
+  it('omits the secret value from argv — it travels over stdin instead', () => {
+    const secret = 'sk-super-secret-value-1234567890';
+    const args = buildAddGenericPasswordArgs('alice', 'linear-api-key');
+    // The whole point: the value must not appear anywhere in the command line.
+    expect(args.some((a) => a.includes(secret))).toBe(false);
+    expect(args).not.toContain(secret);
+    // Still the right item write: upsert (-U), account (-a), service (-s), no -w.
+    expect(args).toEqual(['add-generic-password', '-U', '-a', 'alice', '-s', 'linear-api-key']);
+    expect(args).not.toContain('-w');
+  });
+});
 
 describe('assertValueStorable', () => {
   const multiline = '-----BEGIN KEY-----\nabc\ndef\n-----END KEY-----\n';

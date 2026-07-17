@@ -925,6 +925,16 @@ function parseBatchRecords(out: string, record: (service: string, value: string)
  * predates that path rejects the unknown command (exit 2) and this throws,
  * rather than silently falling back to an ACL'd `set` (which would behave like
  * `always`). Ignored by the Linux/Windows/test backends, which have no ACL. */
+/**
+ * argv for writing a bare (non-`agents-cli.`) keychain item via
+ * `/usr/bin/security add-generic-password`, deliberately WITHOUT the value: the
+ * secret travels over stdin (see setKeychainToken) so it never lands in argv or
+ * a `ps` snapshot. Exported so a test can assert the value is absent from argv.
+ */
+export function buildAddGenericPasswordArgs(account: string, item: string): string[] {
+  return ['add-generic-password', '-U', '-a', account, '-s', item];
+}
+
 export function setKeychainToken(item: string, value: string, opts?: { noAcl?: boolean }): void {
   // Validate the CLEARTEXT name (a hashed storage name is always clean), then
   // resolve the storage name.
@@ -945,12 +955,21 @@ export function setKeychainToken(item: string, value: string, opts?: { noAcl?: b
   // /usr/bin/security read can't satisfy without popping the legacy password
   // sheet. -U upserts so repeated sets overwrite in place.
   if (!isOurItem(item)) {
-    const sec = spawnSync('/usr/bin/security', [
-      'add-generic-password', '-U',
-      '-a', os.userInfo().username,
-      '-s', item,
-      '-w', value,
-    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    // The secret VALUE must never appear in argv — a `ps` snapshot on a shared
+    // host would leak it (RUSH-1764). `security add-generic-password` reads the
+    // password from stdin when `-w` is omitted (readpassphrase(3) falls back to
+    // fd 0 when it has no controlling terminal), so we pipe the value instead of
+    // passing it on the command line. The item stays ACL-free (no biometry gate),
+    // so the no-prompt /usr/bin/security read path in getKeychainToken still
+    // works. Values are newline-free on darwin (assertValueStorable above), so
+    // one stdin line carries the whole secret. `timeout` bounds the call so a
+    // context that unexpectedly wants a TTY prompt fails loudly instead of
+    // hanging — never a silent fall-through that would re-expose the value.
+    const sec = spawnSync('/usr/bin/security', buildAddGenericPasswordArgs(os.userInfo().username, item), {
+      input: `${value}\n`,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 10_000,
+    });
     if (sec.status !== 0) {
       const msg = sec.stderr?.toString().trim();
       throw new Error(msg || `Failed to write keychain item '${item}'.`);

@@ -267,4 +267,21 @@ describe('buildWindowsStdinImportCommand', () => {
     expect(script).toContain('agents secrets import \'linear.app\' --from $tmp;');
     expect(script).not.toContain('--force');
   });
+
+  it('creates + writes the temp file INSIDE the try so a crash still cleans it up (RUSH-1764)', () => {
+    const script = decodeWindows(buildWindowsStdinImportCommand('linear.app'));
+    // GetTempFileName + WriteAllText must sit after `try {`, so the finally's
+    // Remove-Item runs even if WriteAllText throws. The old code created the
+    // secret-bearing temp file BEFORE the try, leaking it on a mid-write crash.
+    const tryIdx = script.indexOf('try {');
+    const tmpIdx = script.indexOf('[System.IO.Path]::GetTempFileName()');
+    const writeIdx = script.indexOf('[System.IO.File]::WriteAllText($tmp, $in)');
+    const finallyIdx = script.indexOf('finally');
+    expect(tryIdx).toBeGreaterThanOrEqual(0);
+    expect(tmpIdx).toBeGreaterThan(tryIdx);
+    expect(writeIdx).toBeGreaterThan(tmpIdx);
+    expect(finallyIdx).toBeGreaterThan(writeIdx);
+    // The finally guards on $tmp so a GetTempFileName that itself throws is safe.
+    expect(script).toContain('if ($tmp) { Remove-Item -LiteralPath $tmp -Force');
+  });
 });

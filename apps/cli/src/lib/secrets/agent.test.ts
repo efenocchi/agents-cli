@@ -1,10 +1,11 @@
 import * as fs from 'fs';
 import * as os from 'os';
+import * as net from 'net';
 import * as path from 'path';
 import { spawn } from 'child_process';
 import { describe, it, expect } from 'vitest';
 import type { SecretsBundle } from './bundles.js';
-import { handleAgentRequest, shouldSelfHealForUpgrade, shouldTeardownVersionSkewedBroker, realBundleCount, shouldWipeOnWatchEvent, agentEvictSync, startHostedBroker, runSecretsAgent, agentPing, secretsAgentServiceInstalled, retireLegacySecretsAgentService, clampHoldMs, DEFAULT_TTL_MS, MIN_HOLD_MS, MAX_HOLD_MS, META_CACHE_PREFIX, type StoredBundle, type Request } from './agent.js';
+import { handleAgentRequest, isRequestAuthorized, makeConnectionHandler, shouldSelfHealForUpgrade, shouldTeardownVersionSkewedBroker, realBundleCount, shouldWipeOnWatchEvent, agentEvictSync, startHostedBroker, runSecretsAgent, agentPing, secretsAgentServiceInstalled, retireLegacySecretsAgentService, clampHoldMs, DEFAULT_TTL_MS, MIN_HOLD_MS, MAX_HOLD_MS, META_CACHE_PREFIX, type StoredBundle, type Response, type Request } from './agent.js';
 
 /**
  * These tests target the broker's store semantics — the part with real bug
@@ -488,3 +489,100 @@ describe('clampHoldMs (configurable 24h hold cap)', () => {
     expect(clampHoldMs(MIN_HOLD_MS + 0.9)).toBe(MIN_HOLD_MS);
   });
 });
+
+describe('isRequestAuthorized (RUSH-1760: authorization gate)', () => {
+  it('always allows ping, with or without a token expected', () => {
+    expect(isRequestAuthorized({ cmd: 'ping' }, 'tok')).toBe(true);
+    expect(isRequestAuthorized({ cmd: 'ping' }, null)).toBe(true);
+  });
+
+  it('rejects load/get/lock/status without a matching token', () => {
+    expect(isRequestAuthorized({ cmd: 'get', name: 'p' }, 'tok')).toBe(false);
+    expect(isRequestAuthorized({ cmd: 'get', name: 'p', token: 'wrong' }, 'tok')).toBe(false);
+    expect(isRequestAuthorized(loadReq('p', {}, 1000), 'tok')).toBe(false);
+    expect(isRequestAuthorized({ cmd: 'lock' }, 'tok')).toBe(false);
+    expect(isRequestAuthorized({ cmd: 'status' }, 'tok')).toBe(false);
+  });
+
+  it('allows a command carrying the correct token', () => {
+    expect(isRequestAuthorized({ cmd: 'get', name: 'p', token: 'tok' }, 'tok')).toBe(true);
+    expect(isRequestAuthorized({ ...loadReq('p', {}, 1000), token: 'tok' }, 'tok')).toBe(true);
+    expect(isRequestAuthorized({ cmd: 'status', token: 'tok' }, 'tok')).toBe(true);
+  });
+
+  it('fails closed when no token is expected (token file missing)', () => {
+    expect(isRequestAuthorized({ cmd: 'get', name: 'p', token: 'anything' }, null)).toBe(false);
+    expect(isRequestAuthorized({ cmd: 'status', token: 'x' }, '')).toBe(false);
+  });
+});
+
+// Unix-domain sockets on a filesystem path are POSIX-only here; skip on Windows.
+(process.platform === 'win32' ? describe.skip : describe)(
+  'makeConnectionHandler — auth gate over a real socket (RUSH-1760)',
+  () => {
+    function roundtrip(sock: string, req: unknown): Promise<any> {
+      return new Promise((resolve, reject) => {
+        const c = net.createConnection(sock);
+        let buf = '';
+        c.on('error', reject);
+        c.on('connect', () => c.write(JSON.stringify(req) + '\n'));
+        c.setEncoding('utf-8');
+        c.on('data', (d: string) => {
+          buf += d;
+          const nl = buf.indexOf('\n');
+          if (nl < 0) return;
+          try { resolve(JSON.parse(buf.slice(0, nl))); } catch (e) { reject(e); }
+          try { c.destroy(); } catch { /* ignore */ }
+        });
+      });
+    }
+
+    it('rejects unauthenticated load/get (store untouched) and accepts tokenized ones', async () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-gate-'));
+      const sock = path.join(dir, 'g.sock');
+      const store = freshStore();
+      const TOKEN = 'cap-token-xyz';
+      const handle = (req: Request): Response => handleAgentRequest(store, req);
+      const server = net.createServer(makeConnectionHandler(handle, () => TOKEN));
+      await new Promise<void>((res) => server.listen(sock, () => res()));
+
+      try {
+        // The RUSH-1760 hole: an unauthenticated `load` must be rejected and must
+        // NOT mutate the store.
+        const bad = await roundtrip(sock, { cmd: 'load', name: 'prod', bundle: bundle('prod'), env: { K: 'v' }, ttlMs: 60_000 });
+        expect(bad).toEqual({ ok: false, error: 'unauthorized' });
+        expect(store.has('prod')).toBe(false);
+
+        // Wrong token is likewise rejected.
+        expect(await roundtrip(sock, { cmd: 'get', name: 'prod', token: 'nope' }))
+          .toEqual({ ok: false, error: 'unauthorized' });
+
+        // Correct token: load lands, and an authorized get reads it back.
+        expect(await roundtrip(sock, { cmd: 'load', name: 'prod', bundle: bundle('prod'), env: { K: 'v' }, ttlMs: 60_000, token: TOKEN }))
+          .toEqual({ ok: true, cmd: 'load' });
+        expect(store.has('prod')).toBe(true);
+        expect(await roundtrip(sock, { cmd: 'get', name: 'prod', token: TOKEN }))
+          .toMatchObject({ ok: true, cmd: 'get', hit: true, env: { K: 'v' } });
+      } finally {
+        server.close();
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('answers ping without a token even when one is expected', async () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-gate-'));
+      const sock = path.join(dir, 'p.sock');
+      const server = net.createServer(makeConnectionHandler(
+        (req) => handleAgentRequest(freshStore(), req),
+        () => 'some-token',
+      ));
+      await new Promise<void>((res) => server.listen(sock, () => res()));
+      try {
+        expect(await roundtrip(sock, { cmd: 'ping' })).toMatchObject({ ok: true, cmd: 'ping' });
+      } finally {
+        server.close();
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  },
+);

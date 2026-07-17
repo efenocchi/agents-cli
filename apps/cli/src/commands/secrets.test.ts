@@ -371,8 +371,11 @@ describe('exportBundleToFile / importBundleFromFile file round-trip', () => {
     try {
       exportBundleToFile({ KEY: 'val' }, filePath, PASS);
       const stat = fs.statSync(filePath);
-      // POSIX-only: Windows (NTFS) has no 0600 bit; Node reports 0o666 regardless.
-      if (process.platform !== 'win32') expect(stat.mode & 0o777).toBe(0o600);
+      // POSIX perms don't survive on Windows — Node reports 0o666 regardless of
+      // the mode we pass, so asserting 0o600 there tests the OS, not us.
+      if (process.platform !== 'win32') {
+        expect(stat.mode & 0o777).toBe(0o600);
+      }
       // The raw file must not expose plaintext keys.
       const raw = fs.readFileSync(filePath, 'utf-8');
       expect(raw).not.toContain('KEY');

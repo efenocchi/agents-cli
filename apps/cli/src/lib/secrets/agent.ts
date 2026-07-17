@@ -28,6 +28,7 @@ import * as net from 'net';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { randomBytes } from 'crypto';
 import { spawn, spawnSync, execFileSync, type ChildProcess } from 'child_process';
 import { getHelpersDir, readMeta } from '../state.js';
 import { isAlive } from '../platform/process.js';
@@ -137,6 +138,41 @@ function pidPath(): string {
 }
 
 /**
+ * Path of the per-broker capability token. It lives in the 0700 agent dir and is
+ * written 0600, so only the same UID that owns the broker can read it — the file
+ * permission IS the authorization boundary. See isRequestAuthorized.
+ */
+function tokenPath(): string {
+  return path.join(agentDir(), 'agent.token');
+}
+
+/**
+ * Read the current broker capability token, or null if none is present. Clients
+ * read it fresh per request and attach it to every non-ping command; a broker
+ * restart mints a new token, so a stale read simply fails authorization and the
+ * caller falls back to a direct keychain read (soft, never a hard error).
+ */
+export function readAgentToken(): string | null {
+  try {
+    const t = fs.readFileSync(tokenPath(), 'utf-8').trim();
+    return t.length > 0 ? t : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Mint + persist a fresh capability token (0600) at socket-bind time. Only the
+ * process that actually binds the socket calls this, so a losing starter never
+ * clobbers the live owner's token. Returns the token for in-memory comparison. */
+function writeAgentToken(): string {
+  const token = randomBytes(32).toString('hex');
+  const fp = tokenPath();
+  fs.writeFileSync(fp, token, { mode: 0o600 });
+  try { fs.chmodSync(fp, 0o600); } catch { /* dir 0700 already gates it */ }
+  return token;
+}
+
+/**
  * Argv for re-invoking THIS cli with a hidden subcommand, so a side-by-side dev
  * build spawns its own helpers rather than the registry-installed one. We always
  * go through `process.execPath` (the node binary) with the JS entrypoint as the
@@ -223,10 +259,10 @@ export async function uninstallSecretsAgentService(): Promise<void> {
 
 export type Request =
   | { cmd: 'ping' }
-  | { cmd: 'get'; name: string }
-  | { cmd: 'load'; name: string; bundle: SecretsBundle; env: Record<string, string>; ttlMs: number }
-  | { cmd: 'lock'; name?: string }
-  | { cmd: 'status' };
+  | { cmd: 'get'; name: string; token?: string }
+  | { cmd: 'load'; name: string; bundle: SecretsBundle; env: Record<string, string>; ttlMs: number; token?: string }
+  | { cmd: 'lock'; name?: string; token?: string }
+  | { cmd: 'status'; token?: string };
 
 export type Response =
   | { ok: true; cmd: 'ping'; version: number; cliVersion: string }
@@ -314,7 +350,62 @@ export function shouldWipeOnWatchEvent(chunk: string): boolean {
   return /\bSLEEP\b/.test(chunk);
 }
 
+/**
+ * Authorization gate applied to every request BEFORE handleAgentRequest touches
+ * the store (RUSH-1760). A bare same-UID socket connection is no longer trusted
+ * to load/get arbitrary bundle env: each command except the liveness `ping` must
+ * carry the per-broker capability token, which lives in a 0600 file inside the
+ * 0700 agent dir and so is readable only by the UID that owns the broker.
+ *
+ * Fail closed: a missing/empty expected token (no token file) rejects every
+ * command but ping. `ping` stays unauthenticated — it exposes only the protocol
+ * and cli version, and clients need it to detect a reachable broker before they
+ * have any reason to read the token. Pure + exported for direct unit testing.
+ */
+export function isRequestAuthorized(req: Request, expectedToken: string | null): boolean {
+  if (req.cmd === 'ping') return true;
+  if (!expectedToken) return false;
+  return req.token === expectedToken;
+}
+
 type BrokerConnectionHandler = (conn: net.Socket) => void;
+
+/**
+ * Build the socket `connection` handler shared by both brokers (standalone and
+ * daemon-hosted): newline-framed JSON in, one response line out, with the
+ * authorization gate (isRequestAuthorized) applied before `handle`. `token`
+ * resolves the currently-expected capability token per request so a token
+ * rotation on broker restart is picked up without rebuilding the handler.
+ */
+export function makeConnectionHandler(
+  handle: (req: Request) => Response,
+  token: () => string | null,
+): BrokerConnectionHandler {
+  return (conn: net.Socket) => {
+    conn.setEncoding('utf-8');
+    let buf = '';
+    conn.on('data', (chunk) => {
+      buf += chunk;
+      let nl: number;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        if (!line.trim()) continue;
+        let resp: Response;
+        try {
+          const req = JSON.parse(line) as Request;
+          resp = isRequestAuthorized(req, token())
+            ? handle(req)
+            : { ok: false, error: 'unauthorized' };
+        } catch (err) {
+          resp = { ok: false, error: (err as Error).message };
+        }
+        conn.write(JSON.stringify(resp) + '\n');
+      }
+    });
+    conn.on('error', () => { /* client vanished mid-request; ignore */ });
+  };
+}
 
 /**
  * Bind the shared broker socket without stealing it from another live owner.
@@ -336,6 +427,10 @@ async function bindBrokerSocket(
       server.once('error', onError);
       server.listen(sock, () => {
         try { fs.chmodSync(sock, 0o600); } catch { /* dir 0700 already gates it */ }
+        // Mint the capability token here — the one moment this process is the
+        // confirmed socket owner — so a losing starter never clobbers the live
+        // owner's token (RUSH-1760).
+        try { writeAgentToken(); } catch { /* dir 0700 gates the socket regardless */ }
         resolve(server);
       });
     });
@@ -461,27 +556,7 @@ export async function runSecretsAgent(
     return resp;
   };
 
-  const onConnection = (conn: net.Socket) => {
-    conn.setEncoding('utf-8');
-    let buf = '';
-    conn.on('data', (chunk) => {
-      buf += chunk;
-      let nl: number;
-      while ((nl = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, nl);
-        buf = buf.slice(nl + 1);
-        if (!line.trim()) continue;
-        let resp: Response;
-        try {
-          resp = handle(JSON.parse(line) as Request);
-        } catch (err) {
-          resp = { ok: false, error: (err as Error).message };
-        }
-        conn.write(JSON.stringify(resp) + '\n');
-      }
-    });
-    conn.on('error', () => { /* client vanished mid-request; ignore */ });
-  };
+  const onConnection = makeConnectionHandler(handle, readAgentToken);
 
   let server: net.Server | null = null;
   do {
@@ -583,27 +658,7 @@ export async function startHostedBroker(): Promise<{ close(): void } | null> {
   const sock = socketPath(); // agentDir() creates the 0700 dir as a side effect
 
   const handle = (req: Request): Response => handleAgentRequest(store, req);
-  const onConn = (conn: net.Socket) => {
-    conn.setEncoding('utf-8');
-    let buf = '';
-    conn.on('data', (chunk) => {
-      buf += chunk;
-      let nl: number;
-      while ((nl = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, nl);
-        buf = buf.slice(nl + 1);
-        if (!line.trim()) continue;
-        let resp: Response;
-        try {
-          resp = handle(JSON.parse(line) as Request);
-        } catch (err) {
-          resp = { ok: false, error: (err as Error).message };
-        }
-        conn.write(JSON.stringify(resp) + '\n');
-      }
-    });
-    conn.on('error', () => { /* client vanished mid-request; ignore */ });
-  };
+  const onConn = makeConnectionHandler(handle, readAgentToken);
 
   const server = await bindBrokerSocket(sock, onConn);
   if (!server) return null;
@@ -647,6 +702,9 @@ export async function startHostedBroker(): Promise<{ close(): void } | null> {
 /** Open the socket, send one request, resolve the one response. Async path —
  * used by the unlock/lock/status commands, which already run in async actions. */
 function request(req: Request, timeoutMs = 2000): Promise<Response | null> {
+  // Attach the capability token to every command except ping (the auth gate;
+  // RUSH-1760). ping stays tokenless so a client can probe reachability first.
+  const authedReq: Request = req.cmd === 'ping' ? req : { ...req, token: readAgentToken() ?? undefined };
   return new Promise((resolve) => {
     const conn = net.createConnection(socketPath());
     let buf = '';
@@ -660,7 +718,7 @@ function request(req: Request, timeoutMs = 2000): Promise<Response | null> {
     };
     const timer = setTimeout(() => finish(null), timeoutMs);
     conn.on('error', () => finish(null));
-    conn.on('connect', () => conn.write(JSON.stringify(req) + '\n'));
+    conn.on('connect', () => conn.write(JSON.stringify(authedReq) + '\n'));
     conn.setEncoding('utf-8');
     conn.on('data', (chunk: string) => {
       buf += chunk;
@@ -687,14 +745,15 @@ export function agentSocketExists(): boolean {
  * -e: [execPath, <socket>, <name>].
  */
 const SYNC_GET_PROGRAM = `
-const net = require('net');
-const sock = process.argv[1], name = process.argv[2];
+const net = require('net'), fs = require('fs');
+const sock = process.argv[1], name = process.argv[2], tokenPath = process.argv[3];
+let token; try { token = fs.readFileSync(tokenPath, 'utf-8').trim() || undefined; } catch (e) {}
 const c = net.createConnection(sock);
 let buf = '';
 const miss = () => { try { c.destroy(); } catch (e) {} process.exit(3); };
 const timer = setTimeout(miss, 2000);
 c.on('error', miss);
-c.on('connect', () => c.write(JSON.stringify({ cmd: 'get', name }) + '\\n'));
+c.on('connect', () => c.write(JSON.stringify({ cmd: 'get', name, token }) + '\\n'));
 c.setEncoding('utf-8');
 c.on('data', (d) => {
   buf += d;
@@ -715,7 +774,7 @@ c.on('data', (d) => {
  */
 export function agentGetSync(name: string): { bundle: SecretsBundle; env: Record<string, string> } | null {
   if (!agentSocketExists()) return null;
-  const r = spawnSync(process.execPath, ['-e', SYNC_GET_PROGRAM, socketPath(), name], {
+  const r = spawnSync(process.execPath, ['-e', SYNC_GET_PROGRAM, socketPath(), name, tokenPath()], {
     encoding: 'utf-8',
     timeout: 3000,
   });
@@ -777,14 +836,15 @@ export function agentReachableSync(): boolean {
  * argv after -e: [execPath, <socket>, <name>].
  */
 const SYNC_LOCK_PROGRAM = `
-const net = require('net');
-const sock = process.argv[1], name = process.argv[2];
+const net = require('net'), fs = require('fs');
+const sock = process.argv[1], name = process.argv[2], tokenPath = process.argv[3];
+let token; try { token = fs.readFileSync(tokenPath, 'utf-8').trim() || undefined; } catch (e) {}
 const c = net.createConnection(sock);
 let buf = '';
 const down = () => { try { c.destroy(); } catch (e) {} process.exit(3); };
 const timer = setTimeout(down, 2000);
 c.on('error', down);
-c.on('connect', () => c.write(JSON.stringify({ cmd: 'lock', name }) + '\\n'));
+c.on('connect', () => c.write(JSON.stringify({ cmd: 'lock', name, token }) + '\\n'));
 c.setEncoding('utf-8');
 c.on('data', (d) => {
   buf += d;
@@ -808,7 +868,7 @@ export function agentEvictSync(name: string): void {
   if (!onDarwin()) return;
   if (!agentSocketExists()) return;
   try {
-    spawnSync(process.execPath, ['-e', SYNC_LOCK_PROGRAM, socketPath(), name], { timeout: 3000 });
+    spawnSync(process.execPath, ['-e', SYNC_LOCK_PROGRAM, socketPath(), name, tokenPath()], { timeout: 3000 });
   } catch { /* best-effort */ }
 }
 

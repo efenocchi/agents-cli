@@ -1116,6 +1116,19 @@ export function decryptDroidAuthPayload(base: string): DroidAuthPayload | null {
   const filePath = resolveAccountCredentialPath(base, '.factory', 'auth.v2.file');
   const keyPath = resolveAccountCredentialPath(base, '.factory', 'auth.v2.key');
   if (!filePath || !keyPath) return null;
+  return decryptDroidAuthFile(filePath, keyPath);
+}
+
+/**
+ * Decrypt a Droid `auth.v2.file` (AES-256-GCM `ivB64:tagB64:ctB64`) using the
+ * raw 32-byte key stored base64 in `auth.v2.key`, given the EXACT paths to both.
+ * Same crypto as decryptDroidAuthPayload but without the account-global HOME
+ * fallback, so the identity of a SPECIFIC version home resolves against only
+ * that home's files (carryForwardAuthFiles needs per-dir identity). Returns null
+ * on any failure (missing file/key, wrong key length, bad GCM tag, malformed
+ * JSON). Never throws.
+ */
+export function decryptDroidAuthFile(filePath: string, keyPath: string): DroidAuthPayload | null {
   try {
     const blob = fs.readFileSync(filePath, 'utf-8').trim();
     const key = Buffer.from(fs.readFileSync(keyPath, 'utf-8').trim(), 'base64');
@@ -1130,6 +1143,68 @@ export function decryptDroidAuthPayload(base: string): DroidAuthPayload | null {
     ]).toString('utf-8');
     const cred = JSON.parse(plaintext);
     return cred && typeof cred === 'object' ? (cred as DroidAuthPayload) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Stable account identity for a *file-auth* agent's credential directory
+ * (droid / kimi / antigravity), or null when the directory holds no decodable
+ * account claim. Unlike a naive top-level JSON key-scan (which matched NO real
+ * credential file), this decrypts / decodes each agent's REAL on-disk format so
+ * the identity resolves against production credentials:
+ *   - droid: AES-256-GCM auth.v2.file (+ auth.v2.key) -> WorkOS access-token JWT
+ *     -> email / org_id / sub.
+ *   - kimi: credentials/kimi-code.json -> access-token JWT -> user_id / sub.
+ *   - antigravity: antigravity-oauth-token -> token.refresh_token -> JWT sub
+ *     when the token is a JWT, else the raw refresh-token value (opaque Google
+ *     consumer tokens are stable per login).
+ * Two directories for the SAME account compare equal; two DIFFERENT accounts
+ * compare distinct. Used by carryForwardAuthFiles to refuse overwriting one
+ * account's login with a credential that belongs to a DIFFERENT account
+ * (RUSH-1764). Never throws.
+ */
+export function readAuthAccountIdentity(agent: AgentId, configDir: string): string | null {
+  try {
+    switch (agent) {
+      case 'droid': {
+        const payload = decryptDroidAuthFile(
+          path.join(configDir, 'auth.v2.file'),
+          path.join(configDir, 'auth.v2.key'),
+        );
+        const claims =
+          typeof payload?.access_token === 'string' ? decodeJwtPayload(payload.access_token) : null;
+        if (!claims) return null;
+        return buildIdentityKey(agent, [
+          ['email', normalizeIdentityPart(claims.email)],
+          ['org', normalizeIdentityPart(claims.org_id ?? payload?.active_organization_id)],
+          ['sub', normalizeIdentityPart(claims.sub)],
+        ]);
+      }
+      case 'kimi': {
+        const data = JSON.parse(
+          fs.readFileSync(path.join(configDir, 'credentials', 'kimi-code.json'), 'utf-8'),
+        );
+        const accessToken = data?.access_token;
+        const claims = typeof accessToken === 'string' ? decodeJwtPayload(accessToken) : null;
+        return buildIdentityKey(agent, [
+          ['user', normalizeIdentityPart(claims?.user_id ?? claims?.sub)],
+        ]);
+      }
+      case 'antigravity': {
+        const data = JSON.parse(
+          fs.readFileSync(path.join(configDir, 'antigravity-oauth-token'), 'utf-8'),
+        );
+        const refreshToken = data?.token?.refresh_token;
+        if (typeof refreshToken !== 'string' || !refreshToken) return null;
+        const claims = decodeJwtPayload(refreshToken);
+        const sub = normalizeIdentityPart(claims?.sub ?? claims?.user_id);
+        return buildIdentityKey(agent, [['sub', sub ?? refreshToken]]);
+      }
+      default:
+        return null;
+    }
   } catch {
     return null;
   }
