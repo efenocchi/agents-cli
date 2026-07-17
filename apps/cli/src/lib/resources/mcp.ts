@@ -13,9 +13,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'yaml';
-import * as TOML from 'smol-toml';
 import type { AgentId, Layer, ResolvedItem, ResourceHandler, ResourceKind } from './types.js';
 import { capableAgents } from '../capabilities.js';
+import { getProjectMcpConfigPath } from '../agents.js';
+import { writeMcpConfig } from '../mcp.js';
 import {
   getSystemMcpDir,
   getUserMcpDir,
@@ -168,341 +169,15 @@ export function getMcpConfigPath(agent: AgentId, versionHome: string): string | 
 }
 
 /**
- * Strip JSON comments (for JSONC files).
+ * Dispatch MCP items to the agent-specific config writer.
  */
-function stripJsonComments(content: string): string {
-  let result = '';
-  let inString = false;
-  let escape = false;
-  let i = 0;
-
-  while (i < content.length) {
-    const char = content[i];
-    const next = content[i + 1];
-
-    if (escape) {
-      result += char;
-      escape = false;
-      i++;
-      continue;
-    }
-
-    if (char === '\\' && inString) {
-      result += char;
-      escape = true;
-      i++;
-      continue;
-    }
-
-    if (char === '"') {
-      inString = !inString;
-      result += char;
-      i++;
-      continue;
-    }
-
-    if (!inString) {
-      if (char === '/' && next === '/') {
-        while (i < content.length && content[i] !== '\n') {
-          i++;
-        }
-        continue;
-      }
-      if (char === '/' && next === '*') {
-        i += 2;
-        while (i < content.length && !(content[i] === '*' && content[i + 1] === '/')) {
-          i++;
-        }
-        i += 2;
-        continue;
-      }
-    }
-
-    result += char;
-    i++;
-  }
-
-  return result;
-}
-
-/**
- * Write MCP servers to Claude settings.json format.
- */
-function syncToClaudeConfig(configPath: string, items: McpItem[]): void {
-  let config: Record<string, unknown> = {};
-  if (fs.existsSync(configPath)) {
-    try {
-      config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    } catch {
-      config = {};
-    }
-  }
-
-  const mcpServers: Record<string, unknown> = {};
-  for (const item of items) {
-    if (item.transport === 'stdio') {
-      mcpServers[item.name] = {
-        command: item.command,
-        args: item.args || [],
-        env: item.env || {},
-      };
-    } else {
-      mcpServers[item.name] = {
-        url: item.url,
-        ...(item.headers && { headers: item.headers }),
-      };
-    }
-  }
-
-  config.mcpServers = mcpServers;
-
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
-}
-
-/**
- * Write MCP servers to Codex config.toml format.
- */
-function syncToCodexConfig(configPath: string, items: McpItem[]): void {
-  let config: Record<string, unknown> = {};
-  if (fs.existsSync(configPath)) {
-    try {
-      config = TOML.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
-    } catch {
-      config = {};
-    }
-  }
-
-  const mcpServers: Record<string, unknown> = {};
-  for (const item of items) {
-    if (item.transport === 'stdio') {
-      mcpServers[item.name] = {
-        command: item.command,
-        args: item.args || [],
-        ...(item.env && { env: item.env }),
-      };
-    }
-    // Codex may not support HTTP MCPs
-  }
-
-  config.mcp_servers = mcpServers;
-
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, TOML.stringify(config), 'utf-8');
-}
-
-/**
- * Write MCP servers to Grok config.toml format ([mcp_servers] section).
- */
-function syncToGrokConfig(configPath: string, items: McpItem[]): void {
-  let config: Record<string, unknown> = {};
-  if (fs.existsSync(configPath)) {
-    try {
-      config = TOML.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
-    } catch {
-      config = {};
-    }
-  }
-
-  const mcpServers: Record<string, unknown> = {};
-  for (const item of items) {
-    if (item.transport === 'stdio') {
-      mcpServers[item.name] = {
-        command: item.command,
-        args: item.args || [],
-        ...(item.env && { env: item.env }),
-      };
-    } else if (item.transport === 'http' || item.transport === 'sse') {
-      mcpServers[item.name] = {
-        url: item.url,
-        ...(item.headers && { headers: item.headers }),
-      };
-    }
-  }
-
-  config.mcp_servers = mcpServers;
-
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, TOML.stringify(config), 'utf-8');
-}
-
-function syncToHermesConfig(configPath: string, items: McpItem[]): void {
-  let config: Record<string, unknown> = {};
-  if (fs.existsSync(configPath)) {
-    try {
-      const parsed = yaml.parse(fs.readFileSync(configPath, 'utf-8'));
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        config = parsed as Record<string, unknown>;
-      }
-    } catch {
-      config = {};
-    }
-  }
-
-  const mcpServers: Record<string, unknown> = {};
-  for (const item of items) {
-    if (item.transport === 'stdio') {
-      mcpServers[item.name] = {
-        command: item.command,
-        args: item.args || [],
-        ...(item.env && { env: item.env }),
-      };
-    } else {
-      mcpServers[item.name] = {
-        url: item.url,
-      };
-    }
-  }
-
-  config.mcp_servers = mcpServers;
-
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, yaml.stringify(config), 'utf-8');
-}
-
-/**
- * Write MCP servers to OpenCode opencode.jsonc format.
- */
-function syncToOpenCodeConfig(configPath: string, items: McpItem[]): void {
-  let config: Record<string, unknown> = {};
-  if (fs.existsSync(configPath)) {
-    try {
-      const content = stripJsonComments(fs.readFileSync(configPath, 'utf-8'));
-      config = JSON.parse(content);
-    } catch {
-      config = {};
-    }
-  }
-
-  const mcp: Record<string, unknown> = {};
-  for (const item of items) {
-    if (item.transport === 'stdio') {
-      // OpenCode uses command as array
-      const commandArray = [item.command, ...(item.args || [])];
-      mcp[item.name] = {
-        type: 'local',
-        command: commandArray,
-        ...(item.env && { env: item.env }),
-      };
-    } else {
-      mcp[item.name] = {
-        type: 'remote',
-        url: item.url,
-      };
-    }
-  }
-
-  config.mcp = mcp;
-
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
-}
-
-/**
- * Write MCP servers to Cursor mcp.json format.
- */
-function syncToCursorConfig(configPath: string, items: McpItem[]): void {
-  let config: Record<string, unknown> = {};
-  if (fs.existsSync(configPath)) {
-    try {
-      config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    } catch {
-      config = {};
-    }
-  }
-
-  const mcpServers: Record<string, unknown> = {};
-  for (const item of items) {
-    if (item.transport === 'stdio') {
-      mcpServers[item.name] = {
-        command: item.command,
-        args: item.args || [],
-        env: item.env || {},
-      };
-    } else {
-      mcpServers[item.name] = {
-        url: item.url,
-      };
-    }
-  }
-
-  config.mcpServers = mcpServers;
-
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
-}
-
-/**
- * Write MCP servers to Gemini settings.json format.
- */
-function syncToGeminiConfig(configPath: string, items: McpItem[]): void {
-  let config: Record<string, unknown> = {};
-  if (fs.existsSync(configPath)) {
-    try {
-      config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    } catch {
-      config = {};
-    }
-  }
-
-  const mcpServers: Record<string, unknown> = {};
-  for (const item of items) {
-    if (item.transport === 'stdio') {
-      mcpServers[item.name] = {
-        command: item.command,
-        args: item.args || [],
-        env: item.env || {},
-      };
-    } else {
-      mcpServers[item.name] = {
-        url: item.url,
-      };
-    }
-  }
-
-  config.mcpServers = mcpServers;
-
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
-}
-
-/**
- * Write MCP servers to OpenClaw openclaw.json format.
- */
-function syncToOpenClawConfig(configPath: string, items: McpItem[]): void {
-  let config: Record<string, unknown> = {};
-  if (fs.existsSync(configPath)) {
-    try {
-      config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    } catch {
-      config = {};
-    }
-  }
-
-  if (!config.mcp || typeof config.mcp !== 'object') {
-    config.mcp = {};
-  }
-
-  const servers: Record<string, unknown> = {};
-  for (const item of items) {
-    if (item.transport === 'stdio') {
-      servers[item.name] = {
-        command: item.command,
-        args: item.args,
-        env: item.env,
-      };
-    } else {
-      servers[item.name] = {
-        url: item.url,
-        transport: item.transport,
-      };
-    }
-  }
-
-  (config.mcp as Record<string, unknown>).servers = servers;
-
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+function syncToAgentConfig(
+  agent: AgentId,
+  configPath: string,
+  items: McpItem[],
+  mode: 'overwrite' | 'merge' = 'overwrite'
+): void {
+  writeMcpConfig(agent, configPath, items as import('../mcp.js').WritableMcpServer[], mode);
 }
 
 /**
@@ -584,41 +259,23 @@ export const McpHandler: ResourceHandler<McpItem> = {
       return;
     }
 
+    // Sync resolved MCPs to the version home (user-level agent config).
     const configPath = getMcpConfigPath(agent, versionHome);
-    if (!configPath) {
-      return;
+    if (configPath) {
+      const mcpItems = items.map((r) => r.item);
+      syncToAgentConfig(agent, configPath, mcpItems, 'overwrite');
     }
 
-    const mcpItems = items.map((r) => r.item);
-
-    switch (agent) {
-      case 'claude':
-        syncToClaudeConfig(configPath, mcpItems);
-        break;
-      case 'codex':
-        syncToCodexConfig(configPath, mcpItems);
-        break;
-      case 'opencode':
-        syncToOpenCodeConfig(configPath, mcpItems);
-        break;
-      case 'cursor':
-        syncToCursorConfig(configPath, mcpItems);
-        break;
-      case 'gemini':
-        syncToGeminiConfig(configPath, mcpItems);
-        break;
-      case 'openclaw':
-        syncToOpenClawConfig(configPath, mcpItems);
-        break;
-      case 'grok':
-        syncToGrokConfig(configPath, mcpItems);
-        break;
-      case 'hermes':
-        syncToHermesConfig(configPath, mcpItems);
-        break;
-      case 'forge':
-        syncToCursorConfig(configPath, mcpItems);
-        break;
+    // Sync project-layer MCPs to the agent's project-level config path so each
+    // agent CLI can discover them alongside its user-level config. Merge so we
+    // do not clobber entries added manually or by the agent's own CLI.
+    const projectAgentsDir = cwd ? getProjectAgentsDir(cwd) : null;
+    if (projectAgentsDir) {
+      const projectItems = items.filter((r) => r.layer === 'project').map((r) => r.item);
+      if (projectItems.length > 0) {
+        const projectConfigPath = getProjectMcpConfigPath(agent, path.dirname(projectAgentsDir));
+        syncToAgentConfig(agent, projectConfigPath, projectItems, 'merge');
+      }
     }
   },
 
