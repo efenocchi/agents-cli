@@ -106,9 +106,48 @@ describe('resolveDesired', () => {
     expect(() => resolveDesired(m, ctx)).toThrow(/not a registered device/);
   });
 
+  it('SKIPS an unresolved device instead of aborting the whole reconcile', () => {
+    // bootstrap could not register `ghost-box` (off-tailnet) — the run must still
+    // reconcile the resolvable devices, not throw for every one of them.
+    const m = parseFleetManifest({ defaults: { agents: ['claude@latest'] }, devices: { s1: {}, 'ghost-box': {} } });
+    const out = resolveDesired(m, { ...ctx, unresolved: ['ghost-box'] });
+    expect(out.map((d) => d.device)).toEqual(['s1']); // ghost-box skipped, s1 kept
+  });
+
+  it('still throws for an unregistered name that is NOT unresolved (genuine misconfig, no bootstrap)', () => {
+    const m = parseFleetManifest({ defaults: {}, devices: { s1: {}, 'typo-box': {} } });
+    expect(() => resolveDesired(m, ctx)).toThrow(/typo-box/);
+  });
+
   it('never targets the source machine', () => {
     const m = parseFleetManifest({ defaults: { agents: ['claude@latest'] }, devices: { s0: {}, s1: {} } });
     const out = resolveDesired(m, ctx);
     expect(out.map((d) => d.device)).toEqual(['s1']);
+  });
+});
+
+describe('parseFleetManifest — additive capture fields', () => {
+  it('accepts secrets.bundles and routines', () => {
+    const m = parseFleetManifest({
+      devices: 'all',
+      secrets: { bundles: ['attio', 'ssh-keys'] },
+      routines: ['review-open-prs'],
+    });
+    expect(m.secrets?.bundles).toEqual(['attio', 'ssh-keys']);
+    expect(m.routines).toEqual(['review-open-prs']);
+  });
+
+  it('is backward-compatible: a manifest with none of the new fields still parses', () => {
+    const m = parseFleetManifest({ defaults: { agents: ['claude@latest'] }, devices: 'all' });
+    expect(m.secrets).toBeUndefined();
+    expect(m.routines).toBeUndefined();
+  });
+
+  it('rejects non-string secrets.bundles', () => {
+    expect(() => parseFleetManifest({ devices: 'all', secrets: { bundles: [1] } })).toThrow(/secrets\.bundles/);
+  });
+
+  it('rejects non-string routines', () => {
+    expect(() => parseFleetManifest({ devices: 'all', routines: [1, 2] })).toThrow(/routines/);
   });
 });

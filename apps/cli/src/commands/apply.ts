@@ -16,6 +16,7 @@ import chalk from 'chalk';
 import { setHelpSections } from '../lib/help.js';
 import { machineId } from '../lib/session/sync/config.js';
 import { loadDevices, isControlDevice, type DeviceProfile } from '../lib/devices/registry.js';
+import { ensureDevicesRegistered } from '../lib/devices/sync.js';
 import { readFleetFile, resolveDesired } from '../lib/fleet/manifest.js';
 import { snapshotAuth, materializeAuth, parseAuthBundle, KEYCHAIN_BOUND_ON_MAC } from '../lib/fleet/auth-sync.js';
 import {
@@ -146,6 +147,15 @@ function renderPlan(plan: FleetPlan): void {
   if (noToken.length > 0) {
     console.log(chalk.yellow(`  manual login needed (no portable token on source): ${noToken.join(', ')}`));
   }
+  // Secrets bundles are declared once for the fleet; surface the distinct set to
+  // recreate on any device missing them (values are keychain-local, never pushed).
+  const bundles = [...new Set(rows.flatMap((r) => r.secretsNeeded))];
+  if (bundles.length > 0) {
+    const shown = bundles.slice(0, 12);
+    const more = bundles.length - shown.length;
+    const list = shown.join(', ') + (more > 0 ? `, +${more} more` : '');
+    console.log(chalk.yellow(`  ${bundles.length} secrets bundle(s) to recreate where missing (keychain-local, never pushed): ${list}`));
+  }
 }
 
 /** padEnd on the visible width, ignoring chalk color codes. Exported for tests. */
@@ -163,6 +173,25 @@ async function runApply(opts: ApplyOptions): Promise<void> {
   const manifest = readFleetFile(path.resolve(file));
   const source = machineId();
 
+  // Fresh-machine bootstrap: an explicit `devices:` map may name boxes this
+  // machine has never registered (e.g. a freshly-cloned agents.yaml). Resolve
+  // those names live from Tailscale and register them BEFORE resolveDesired
+  // validates the roster — so replication needs only the repo, never committed
+  // IPs/usernames. `devices: all` needs no bootstrap (it targets what's already
+  // registered + online).
+  let unresolved: string[] = [];
+  if (manifest.devices !== 'all') {
+    const wanted = Object.keys(manifest.devices).filter((n) => n !== source);
+    const boot = await ensureDevicesRegistered(wanted);
+    unresolved = boot.unresolved;
+    if (boot.registered.length > 0) {
+      console.log(chalk.gray(`Registered ${boot.registered.length} device(s) from Tailscale: ${boot.registered.join(', ')}`));
+    }
+    if (boot.unresolved.length > 0) {
+      console.log(chalk.yellow(`Not resolvable on Tailscale — skipped, reconcile continues for the rest: ${boot.unresolved.join(', ')}`));
+    }
+  }
+
   const registry = await loadDevices();
   // Control devices (a cockpit) never run agents — exclude them from the
   // reconcile set entirely so `agents apply` doesn't try to install/sync/login
@@ -171,7 +200,9 @@ async function runApply(opts: ApplyOptions): Promise<void> {
   const online = all.filter((d) => d.tailscale?.online === true).map((d) => d.name);
   const registered = all.map((d) => d.name);
 
-  let desired = resolveDesired(manifest, { onlineDevices: online, registeredDevices: registered, source });
+  // Unresolved names are skipped (surfaced above), never fatal — a manifest
+  // naming an asleep box must not abort the reconcile for every other device.
+  let desired = resolveDesired(manifest, { onlineDevices: online, registeredDevices: registered, source, unresolved });
   if (opts.device) {
     desired = desired.filter((d) => d.device === opts.device);
     if (desired.length === 0) throw new Error(`Device '${opts.device}' is not a target in this manifest.`);
@@ -204,7 +235,7 @@ async function runApply(opts: ApplyOptions): Promise<void> {
   const probes = new Map<string, DeviceProbe>(probeList.map((p) => [p.device, p]));
 
   const targetCliVersion = localCliVersion();
-  let plan = diffFleet(desired, probes, { targetCliVersion, sourceAuth });
+  let plan = diffFleet(desired, probes, { targetCliVersion, sourceAuth, secretsBundles: manifest.secrets?.bundles });
 
   // --only filter.
   if (opts.only) {
@@ -222,7 +253,10 @@ async function runApply(opts: ApplyOptions): Promise<void> {
 
   const isDry = opts.plan || opts.dryRun;
   if (isDry) return;
-  if (plan.actions.filter((a) => a.kind !== 'needs-login').length === 0) {
+  // `needs-login`/`needs-secret` are surfaced manual reminders, not executable
+  // mutations — exclude them so an otherwise-converged fleet still says "nothing
+  // to do" instead of looping forever on un-actionable surfacing.
+  if (plan.actions.filter((a) => a.kind !== 'needs-login' && a.kind !== 'needs-secret').length === 0) {
     console.log(chalk.green('\nNothing to do — fleet already matches the profile.'));
     return;
   }

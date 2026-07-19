@@ -77,7 +77,27 @@ export function parseFleetManifest(raw: unknown): FleetManifest {
     throw new Error(`fleet: devices must be the string 'all' or a mapping of device -> overrides (got ${JSON.stringify(o.devices)}).`);
   }
 
-  return { defaults, devices };
+  const manifest: FleetManifest = { defaults, devices };
+
+  // Additive, backward-compatible extras (captured by `agents fleet capture`).
+  if (o.secrets !== undefined) {
+    if (typeof o.secrets !== 'object' || o.secrets === null || Array.isArray(o.secrets)) {
+      throw new Error('fleet: secrets must be a mapping with a `bundles:` list.');
+    }
+    const bundles = (o.secrets as Record<string, unknown>).bundles;
+    if (bundles !== undefined && !isStringArray(bundles)) {
+      throw new Error('fleet: secrets.bundles must be a list of bundle names (e.g. [attio]).');
+    }
+    manifest.secrets = { bundles: bundles as string[] | undefined };
+  }
+  if (o.routines !== undefined) {
+    if (!isStringArray(o.routines)) {
+      throw new Error('fleet: routines must be a list of routine names.');
+    }
+    manifest.routines = o.routines;
+  }
+
+  return manifest;
 }
 
 /** Read a YAML file and extract + validate its `fleet:` block. */
@@ -118,6 +138,12 @@ export interface ResolveContext {
   registeredDevices: string[];
   /** The source machine, always excluded from the target set. */
   source: string;
+  /** Names the bootstrap could not resolve from Tailscale (off-tailnet, ignored,
+   * or a typo). These are SKIPPED with the caller's warning rather than aborting
+   * the whole reconcile — a manifest naming an asleep laptop must not hard-fail
+   * every other device. Without a bootstrap, this is empty and an unregistered
+   * name still throws (genuine misconfig, caught early). */
+  unresolved?: string[];
 }
 
 /**
@@ -138,8 +164,12 @@ export function resolveDesired(manifest: FleetManifest, ctx: ResolveContext): De
     return out;
   }
 
+  const unresolved = new Set(ctx.unresolved ?? []);
   for (const [name, override] of Object.entries(manifest.devices)) {
     if (name === ctx.source) continue;
+    // Bootstrap couldn't register this name (off-tailnet / ignored / typo) —
+    // skip it (the caller already surfaced it) instead of aborting the run.
+    if (unresolved.has(name)) continue;
     if (!ctx.registeredDevices.includes(name)) {
       throw new Error(`fleet: device '${name}' is not a registered device. Run \`agents devices add ${name}\` or fix the manifest.`);
     }
