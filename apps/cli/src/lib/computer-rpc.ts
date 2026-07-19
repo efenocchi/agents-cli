@@ -182,14 +182,20 @@ export function writeComputerPeers(allowedExecPaths: string[]): void {
   fs.writeFileSync(resolvePeersPath(), JSON.stringify({ allow: allowedExecPaths }, null, 2), { mode: 0o600 });
 }
 
-// Resolve the helper executable inside the dist .app bundle. Used by the
-// stdio fallback and by install-helper to find the source bundle.
+// Resolve the helper executable inside the dist .app bundle. Used by the stdio
+// fallback and by install-helper to find the source bundle. Only TRUSTED sources
+// are listed here: a local checkout build and the bundled tarball copy. The
+// download cache is deliberately NOT a candidate — a cached bundle is
+// user-writable and must only ever be read through downloadMacHelperApp(), which
+// re-verifies its signature + Team ID + notarization on every cache hit
+// (lib/computer/download.ts). Listing the cache here would let a same-user
+// process plant a differently-signed .app that install-helper trusts.
 export function resolveHelperExec(): string | null {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const candidates = [
     // Local build (running from the agents-cli checkout). apps/cli/dist/lib -> repo root (4 up) -> native/computer-mac.
     path.resolve(here, '..', '..', '..', '..', 'native', 'computer-mac', 'dist', 'ComputerHelper.app', 'Contents', 'MacOS', 'ComputerHelper'),
-    // Bundled with the npm package (later: CDN download lands here).
+    // Bundled with the npm package.
     path.resolve(here, '..', 'computer-helper', 'ComputerHelper.app', 'Contents', 'MacOS', 'ComputerHelper'),
   ];
   for (const c of candidates) {
