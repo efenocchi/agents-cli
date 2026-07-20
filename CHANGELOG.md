@@ -367,6 +367,14 @@
   interactive-only rather than auto-selecting), and `hosts add`'s best-effort
   bootstrap reports the version state and returns instead of prompting. Source:
   `apps/cli/src/commands/exec.ts`, `apps/cli/src/commands/hosts.ts`.
+- **`agents logs <id> --json`.** The primary run-log view was text-only while its
+  `audit`/`stats` subcommands already emitted JSON — so the command an agent most
+  needs structured (what a dispatched run produced) was the one it couldn't parse.
+  `logs <id> --json` now emits a host-dispatch task as `{ kind, task, log }` and a
+  session as the redacted `{ session, events }` — the exact shape `sessions <id>
+  --json` produces, via a shared renderer, so there's one session JSON contract, not
+  two. Source: `apps/cli/src/commands/logs.ts`, `apps/cli/src/commands/sessions.ts`
+  (`renderSessionLogJson`), `apps/cli/src/lib/hosts/logs.ts` (`hostTaskLogJson`).
 
 ## 1.20.58
 
